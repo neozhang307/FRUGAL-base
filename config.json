@@ -1,0 +1,39 @@
+{
+  "execution": {
+    "mainDeviceId": 0,
+    "measurePeakMemoryUsage": true,
+    "storageDeviceId": 2,
+    "useNvlink": false
+  },
+  "generic": {
+    "availableMemoryForUMInMiB": 51131,
+    "optimize": true,
+    "repeat": 1,
+    "useUM": false,
+    "verify": false
+  },
+  "lulesh": {
+    "constrainIterationCount": true,
+    "iterationBatchSize": 1,
+    "s": 180,
+    "targetIterationCount": 100
+  },
+  "optimization": {
+    "acceptableRunningTimeFactor": 0,
+    "loadExistingPlan": false,
+    "maxPeakMemoryUsageInMiB": 0,
+    "mergeConcurrentCudaGraphNodes": false,
+    "minManagedArraySize": 1024,
+    "planPath": "optimizationPlan.json",
+    "prefetchingBandwidthInGB": 380.7,
+    "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
+    "weightOfNumberOfMigrations": 1e-05,
+    "weightOfPeakMemoryUsage": 1,
+    "weightOfTotalRunningTime": 1e-04
+  },
+  "tiledCholesky": {
+    "mode": 0,
+    "n": 40960,
+    "t": 4
+  }
+}
