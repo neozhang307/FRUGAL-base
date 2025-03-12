@@ -25,9 +25,9 @@ using namespace memopt;
 
 const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 
-size_t N;
-size_t B;
-size_t T;
+size_t N; //
+size_t B; // batch size in 1d
+size_t T; // tile amount in 1d
 
 __global__ void makeMatrixSymmetric(double *d_matrix, size_t n) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -801,7 +801,8 @@ void tiledCholesky(bool optimize, bool verify) {
 
       checkCudaErrors(cudaDeviceSynchronize());
 
-      // Update memory pointers after optimization
+      // Reset memory status after optimization run
+      // For simplicity, all data copy back to device memory
       std::map<void *, void *> oldManagedDeviceArrayToNewManagedDeviceArrayMap;
       for (int j = 0; j < T * T; j++) {
         auto oldPtr = d_tiles[j];
