@@ -13,19 +13,63 @@
 
 namespace memopt {
 
+/**
+ * @brief Helper class for constructing optimized CUDA graphs
+ * 
+ * OptimizedCudaGraphCreator handles the incremental construction of CUDA graphs
+ * by providing methods to:
+ * - Start/end stream capture operations with specific dependencies
+ * - Track new nodes added during capture
+ * - Find leaf nodes (nodes with no outgoing edges) after capture operations
+ * - Add empty nodes for dependency management
+ * 
+ * This class is essential for building the modified execution graph with
+ * memory optimization operations inserted between computation tasks.
+ */
 class OptimizedCudaGraphCreator {
  public:
+  /**
+   * @brief Constructor that sets up the graph builder
+   * 
+   * @param stream CUDA stream used for capturing operations
+   * @param graph CUDA graph where operations will be recorded
+   */
   OptimizedCudaGraphCreator(cudaStream_t stream, cudaGraph_t graph) : stream(stream), graph(graph) {}
 
+  /**
+   * @brief Starts capturing CUDA operations to the graph
+   * 
+   * Begins recording operations executed on the stream into the graph.
+   * The captured operations will depend on the specified nodes.
+   * 
+   * @param dependencies List of nodes that must execute before the captured operations
+   */
   void beginCaptureOperation(const std::vector<cudaGraphNode_t> &dependencies) {
     checkCudaErrors(cudaStreamBeginCaptureToGraph(this->stream, this->graph, dependencies.data(), nullptr, dependencies.size(), cudaStreamCaptureModeGlobal));
   }
 
+  /**
+   * @brief Ends the capture operation and returns new leaf nodes
+   * 
+   * Stops recording operations to the graph and identifies the new
+   * leaf nodes that were added during this capture operation.
+   * 
+   * @return Vector of new leaf nodes added during the capture
+   */
   std::vector<cudaGraphNode_t> endCaptureOperation() {
     checkCudaErrors(cudaStreamEndCapture(this->stream, &this->graph));
     return this->getNewLeafNodesAddedByLastCapture();
   };
 
+  /**
+   * @brief Adds an empty node to the graph
+   * 
+   * Empty nodes are used for dependency management without
+   * performing any actual computation.
+   * 
+   * @param dependencies List of nodes that the new empty node will depend on
+   * @return The newly created empty node
+   */
   cudaGraphNode_t addEmptyNode(const std::vector<cudaGraphNode_t> &dependencies) {
     cudaGraphNode_t newEmptyNode;
     checkCudaErrors(cudaGraphAddEmptyNode(&newEmptyNode, this->graph, dependencies.data(), dependencies.size()));
@@ -34,28 +78,47 @@ class OptimizedCudaGraphCreator {
   }
 
  private:
-  cudaStream_t stream;
-  cudaGraph_t graph;
-  std::vector<cudaGraphNode_t> lastDependencies;
-  std::map<cudaGraphNode_t, bool> visited;
+  cudaStream_t stream;                      ///< CUDA stream for capturing operations
+  cudaGraph_t graph;                        ///< CUDA graph being constructed
+  std::vector<cudaGraphNode_t> lastDependencies; ///< Previous dependencies used for tracking
+  std::map<cudaGraphNode_t, bool> visited;  ///< Tracks which nodes have been processed
 
+  /**
+   * @brief Identifies leaf nodes added in the most recent capture
+   * 
+   * After a capture operation, this method:
+   * 1. Gets all nodes and edges in the graph
+   * 2. Identifies which nodes have outgoing edges
+   * 3. Finds newly added nodes (not previously visited)
+   * 4. Returns those that are leaf nodes (no outgoing edges)
+   * 
+   * These leaf nodes represent the completion points of the
+   * operations added in the last capture, and are used as
+   * dependencies for subsequent operations.
+   * 
+   * @return Vector of new leaf nodes from the last capture
+   */
   std::vector<cudaGraphNode_t> getNewLeafNodesAddedByLastCapture() {
+    // Get all nodes in the graph
     size_t numNodes;
     checkCudaErrors(cudaGraphGetNodes(this->graph, nullptr, &numNodes));
     auto nodes = std::make_unique<cudaGraphNode_t[]>(numNodes);
     checkCudaErrors(cudaGraphGetNodes(this->graph, nodes.get(), &numNodes));
 
+    // Get all edges in the graph
     size_t numEdges;
     checkCudaErrors(cudaGraphGetEdges(this->graph, nullptr, nullptr, &numEdges));
     auto from = std::make_unique<cudaGraphNode_t[]>(numEdges);
     auto to = std::make_unique<cudaGraphNode_t[]>(numEdges);
     checkCudaErrors(cudaGraphGetEdges(this->graph, from.get(), to.get(), &numEdges));
 
+    // Track which nodes have outgoing edges
     std::map<cudaGraphNode_t, bool> hasOutGoingEdge;
     for (int i = 0; i < numEdges; i++) {
       hasOutGoingEdge[from[i]] = true;
     }
 
+    // Find new leaf nodes (not visited before and have no outgoing edges)
     std::vector<cudaGraphNode_t> newLeafNodes;
     for (int i = 0; i < numNodes; i++) {
       auto &node = nodes[i];
@@ -192,7 +255,7 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   // Track memory addresses that have been updated (device copies)
-  std::map<void *, void *> addressUpdate;
+  std::map<void *, void *> addressManagedToAssignedMap; //address mapping original to new device address
 
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
@@ -205,7 +268,7 @@ void Executor::executeOptimizedGraph(
     void *devicePtr;
     checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
     checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, prefetchMemcpyKind, stream));
-    addressUpdate[ptr] = devicePtr;  // Update the address mapping
+    addressManagedToAssignedMap[ptr] = devicePtr;  // Update the address mapping
   }
   
   // End capture and instantiate the initial data distribution graph
@@ -258,10 +321,10 @@ void Executor::executeOptimizedGraph(
           prefetchMemcpyKind,
           stream
         ));
-        addressUpdate[dataMovementAddress] = devicePtr;
+        addressManagedToAssignedMap[dataMovementAddress] = devicePtr;
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = addressUpdate[dataMovementAddress];
+        void *devicePtr = addressManagedToAssignedMap[dataMovementAddress];
         checkCudaErrors(cudaMemcpyAsync(
           managedDeviceArrayToHostArrayMap[dataMovementAddress],
           devicePtr,
@@ -270,7 +333,7 @@ void Executor::executeOptimizedGraph(
           stream
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        addressUpdate.erase(dataMovementAddress);
+        addressManagedToAssignedMap.erase(dataMovementAddress);
       }
       
       checkCudaErrors(cudaPeekAtLastError());
@@ -286,7 +349,7 @@ void Executor::executeOptimizedGraph(
       // Execute the task with current memory address mapping
       executeRandomTask(
         optimizedGraph.nodeIdToTaskIdMap[u],
-        addressUpdate,
+        addressManagedToAssignedMap,
         stream
       );
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -371,7 +434,7 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Clean up");
   
   // Copy any remaining device data back to storage
-  for (auto &[oldAddr, newAddr] : addressUpdate) {
+  for (auto &[oldAddr, newAddr] : addressManagedToAssignedMap) {
     checkCudaErrors(cudaMemcpy(
       managedDeviceArrayToHostArrayMap[oldAddr],
       newAddr,
@@ -526,7 +589,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   //----------------------------------------------------------------------
   
   // Track memory addresses that have been updated (device copies)
-  std::map<void *, void *> addressUpdate;
+  std::map<void *, void *> addressManagedToAssignedMap;
 
   /*******/ // DIFFERENCE: Initial data allocation is integrated with main graph capture
   /*******/ // rather than as a separate step like in executeOptimizedGraph
@@ -542,7 +605,7 @@ void Executor::executeOptimizedGraphRepeatedly(
     checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
     checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, prefetchMemcpyKind, stream));
     newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-    addressUpdate[ptr] = devicePtr;
+    addressManagedToAssignedMap[ptr] = devicePtr;
   }
 
   // Maps nodes to their dependencies in the CUDA graph
@@ -581,10 +644,10 @@ void Executor::executeOptimizedGraphRepeatedly(
           prefetchMemcpyKind,
           stream
         ));
-        addressUpdate[dataMovementAddress] = devicePtr;
+        addressManagedToAssignedMap[dataMovementAddress] = devicePtr;
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = addressUpdate[dataMovementAddress];
+        void *devicePtr = addressManagedToAssignedMap[dataMovementAddress];
         checkCudaErrors(cudaMemcpyAsync(
           managedDeviceArrayToHostArrayMap[dataMovementAddress],
           devicePtr,
@@ -593,7 +656,7 @@ void Executor::executeOptimizedGraphRepeatedly(
           stream
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        addressUpdate.erase(dataMovementAddress);
+        addressManagedToAssignedMap.erase(dataMovementAddress);
       }
       checkCudaErrors(cudaPeekAtLastError());
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -604,7 +667,7 @@ void Executor::executeOptimizedGraphRepeatedly(
       // Execute the task with current memory address mapping
       executeRandomTask(
         optimizedGraph.nodeIdToTaskIdMap[u],
-        addressUpdate,
+        addressManagedToAssignedMap,
         stream
       );
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -638,7 +701,7 @@ void Executor::executeOptimizedGraphRepeatedly(
 
   // Add cleanup operations for any remaining device memory
   newLeafNodes = getNodesWithZeroOutDegree(graph);
-  for (auto &[oldAddr, newAddr] : addressUpdate) {
+  for (auto &[oldAddr, newAddr] : addressManagedToAssignedMap) {
     // Copy any remaining device data back to storage and free device memory
     optimizedCudaGraphCreator->beginCaptureOperation(newLeafNodes);
     checkCudaErrors(cudaMemcpyAsync(
