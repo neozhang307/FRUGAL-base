@@ -29,7 +29,7 @@ namespace memopt {
  */
 struct MemoryManager {
   /** @brief Ordered list of all managed memory addresses */
-  inline static std::vector<void *> managedMemoryAddresses;
+  inline static std::vector<void *> managedMemoryAddresses; // Original Memory
   
   /** @brief Maps memory addresses to their array IDs (index in managedMemoryAddresses) */
   inline static std::map<void *, ArrayId> managedMemoryAddressToIndexMap;
