@@ -136,7 +136,7 @@ void CUPTIAPI bufferCompleted(CUcontext ctx, uint32_t streamId, uint8_t *buffer,
  * Callback handler for graph node cloning events
  * 
  * Maintains a mapping between original graph nodes and their cloned versions
- * This mapping is essential because CUDA creates clones of nodes during execution
+ * This mapping is essential because CUDA creates clones of cudagraph for execution
  */
 void CudaGraphExecutionTimelineProfiler::graphNodeClonedCallback(CUpti_GraphData *graphData) {
   uint64_t clonedNodeId, originalNodeId;
