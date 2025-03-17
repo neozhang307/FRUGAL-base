@@ -268,34 +268,70 @@ void CudaGraphExecutionTimelineProfiler::finalize() {
 /**
  * Retrieve the execution timeline for the profiled graph
  * 
- * Maps each graph node to its execution time period (start/end timestamps)
- * Must be called after finalize() has been called
+ * This function is the final step in the profiling process. It combines all the data
+ * collected during graph execution to create a complete timeline of when each node executed.
+ * 
+ * The function performs several important tasks:
+ * 1. Retrieves all nodes from the original graph
+ * 2. For each original node, finds its corresponding cloned node ID
+ * 3. Uses the cloned node ID to look up timing data from activity records
+ * 4. Creates a map from original graph nodes to their execution timestamps
+ * 
+ * The returned timeline maps each graph node (cudaGraphNode_t) to a pair of timestamps
+ * representing when that node started and finished executing.
+ * 
+ * @return CudaGraphExecutionTimeline A map from graph nodes to their execution time intervals
+ * @throws Assertion error if called before the profiler has been finalized
  */
 CudaGraphExecutionTimeline CudaGraphExecutionTimelineProfiler::getTimeline() {
-  assert(this->finalized);  // Ensure profiler has been finalized
+  // Safety check: We must have finalized the profiler before getting results
+  // This ensures all profiling data has been collected and processed
+  assert(this->finalized);  
 
-  // Get all nodes from the graph
+  // Step 1: Get all nodes from the original graph
+  // First call determines how many nodes are in the graph
   size_t numNodes;
   checkCudaErrors(cudaGraphGetNodes(this->graph, nullptr, &numNodes));
+  
+  // Allocate memory for the node array
   auto nodes = std::make_unique<cudaGraphNode_t[]>(numNodes);
+  
+  // Second call actually retrieves the nodes
   checkCudaErrors(cudaGraphGetNodes(this->graph, nodes.get(), &numNodes));
 
+  // Create the result container that we'll fill with timeline data
   CudaGraphExecutionTimeline timeline;
 
-  // For each node, look up its execution timestamps
+  // Step 2: For each node, perform the mapping chain to get its timing data
   uint64_t originalNodeId;
   for (int i = 0; i < numNodes; i++) {
-    // Get the original node ID
+    // Get the internal CUPTI ID for this original graph node
     CUPTI_CALL(cuptiGetGraphNodeId(nodes[i], &originalNodeId));
     
-    // Map from original node ID -> cloned node ID -> execution timestamps
-    // This two-step mapping is necessary because:
-    // 1. We execute with cloned nodes, not original nodes
-    // 2. Timing data is recorded for cloned nodes
-    // 3. We need to map this back to original nodes for API consistency
-    timeline[nodes[i]] = this->graphNodeIdToLifetimeMap[originalNodeIdToClonedNodeIdMap[originalNodeId]];
+    /* 
+     * Step 3: Complex mapping to get from original graph node to timing data:
+     *
+     * We need to perform two lookups:
+     * a) originalNodeIdToClonedNodeIdMap[originalNodeId] -> gives us the cloned node ID
+     *    This mapping was created during graph node cloning callbacks
+     *
+     * b) graphNodeIdToLifetimeMap[clonedNodeId] -> gives us timing data (start/end)
+     *    This mapping was created when processing activity records
+     *
+     * The reason for this complexity:
+     * - The user interacts with original graph nodes (what they created)
+     * - But CUDA internally clones these nodes for execution
+     * - CUPTI records activities for these cloned nodes
+     * - We need to connect the original nodes back to their timing data
+     */
+    uint64_t clonedNodeId = originalNodeIdToClonedNodeIdMap[originalNodeId];
+    CudaGraphNodeLifetime nodeLifetime = this->graphNodeIdToLifetimeMap[clonedNodeId];
+    
+    // Store the timing data in our result map, indexed by the original graph node
+    timeline[nodes[i]] = nodeLifetime;
   }
 
+  // Return the complete execution timeline
   return timeline;
 }
 

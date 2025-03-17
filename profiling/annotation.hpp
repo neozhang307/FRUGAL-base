@@ -86,6 +86,15 @@ __host__ void annotateNextTask(
  * 
  * This kernel serves as a stage separator in the execution timeline,
  * helping the profiling system identify logical groups of operations.
+ * 
+ * Stages are a user-defined concept that divide a CUDA graph into separate
+ * execution phases, allowing the memory optimizer to process each stage
+ * independently. This separation is crucial for applications where:
+ * 
+ * 1. Different phases have different memory access patterns or requirements
+ * 2. Memory can be completely cleared between phases
+ * 3. The overall graph is too complex to optimize as a single unit
+ * 4. Different optimization strategies are appropriate for different phases
  */
 __global__ void dummyKernelForStageSeparator();
 
@@ -95,6 +104,16 @@ __global__ void dummyKernelForStageSeparator();
  * Inserts a stage separator marker in the CUDA stream to divide the
  * computation into logical phases for the profiler. For example,
  * separating initialization from main computation, or marking iterations.
+ * 
+ * Stage separation is a powerful user-controlled optimization technique that:
+ * - Allows the optimizer to find optimal memory management plans for each stage separately
+ * - Reduces the complexity of the optimization problem by breaking it into manageable chunks
+ * - Enables a complete memory reset between stages, potentially freeing all device memory
+ * - Provides better optimization results for applications with distinct phases that have
+ *   different memory access patterns (e.g., setup, computation, finalization)
+ * 
+ * Use stage separators strategically at natural boundaries in your application where
+ * memory can be reorganized without affecting performance.
  * 
  * @param stream CUDA stream where the marker will be inserted
  */
