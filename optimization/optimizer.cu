@@ -53,28 +53,89 @@ void cleanUpDummyKernelFuncHandleRegistrations() {
   checkCudaErrors(cudaGraphDestroy(dummyKernelForStageSeparatorGraph));
 }
 
+/**
+ * Profiles a CUDA graph to obtain its execution timeline
+ * 
+ * This function profiles the execution of a CUDA graph to collect detailed timing
+ * information about when each node in the graph executes. The profiling process
+ * involves several steps:
+ * 
+ * 1. A warm-up run to ensure the GPU is in a steady state
+ * 2. Setup of the profiler to track the graph execution
+ * 3. An actual profiled run of the graph
+ * 4. Collection and processing of the timeline data
+ * 
+ * The resulting timeline maps each graph node to its execution interval (start/end timestamps),
+ * which is useful for analyzing execution patterns, overlaps, and potential optimizations.
+ * 
+ * @param graph The CUDA graph to profile
+ * @return CudaGraphExecutionTimeline A map from graph nodes to their execution time intervals
+ */
 CudaGraphExecutionTimeline getCudaGraphExecutionTimeline(cudaGraph_t graph) {
-  LOG_TRACE();
+  LOG_TRACE();  // Log function entry for debugging purposes
 
-  auto profiler = CudaGraphExecutionTimelineProfiler::getInstance();
-  profiler->initialize(graph);
-
+  // Create a stream for graph execution
   cudaStream_t stream;
   checkCudaErrors(cudaStreamCreate(&stream));
 
+  // Step 1: Warm-up execution 
+  // This eliminates first-run effects (JIT compilation, caching, etc.)
+  // that might affect timing measurements
+  cudaGraphExec_t graphExecWarmup;
+  checkCudaErrors(cudaGraphInstantiate(&graphExecWarmup, graph, nullptr, nullptr, 0));
+  checkCudaErrors(cudaGraphLaunch(graphExecWarmup, stream));
+  checkCudaErrors(cudaDeviceSynchronize());  // Wait for completion
+  checkCudaErrors(cudaGraphExecDestroy(graphExecWarmup));  // Clean up
+  checkCudaErrors(cudaDeviceSynchronize());  // Wait for completion
+  
+  // Step 2: Initialize the profiler
+  // Get the singleton instance of the timeline profiler
+  auto profiler = CudaGraphExecutionTimelineProfiler::getInstance();
+  // Setup the profiler to track this specific graph
+  // This registers CUPTI callbacks and activity tracking
+  profiler->initialize(graph);
+
+  // Step 3: Execute the graph with profiling active
+  // This is the run that will be profiled
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
-  checkCudaErrors(cudaDeviceSynchronize());
+  checkCudaErrors(cudaDeviceSynchronize());  // Wait for completion
 
+  // Step 4: Finalize profiling and collect results
+  // This flushes activity buffers and disables profiling
   profiler->finalize();
 
+  // Clean up resources
   checkCudaErrors(cudaGraphExecDestroy(graphExec));
   checkCudaErrors(cudaStreamDestroy(stream));
 
+  // Return the collected timeline
+  // This will map each original graph node to its execution interval
   return profiler->getTimeline();
 }
 
+/**
+ * Groups concurrent CUDA graph nodes together to reduce graph complexity
+ * 
+ * This function identifies nodes that execute concurrently (or with temporal overlap)
+ * and groups them together using a disjoint set data structure. This grouping reduces
+ * the complexity of the graph while preserving the essential characteristics needed
+ * for memory optimization.
+ * 
+ * The algorithm:
+ * 1. Sorts nodes by their execution start time
+ * 2. Maintains a "window" of concurrent execution
+ * 3. Merges nodes that start execution before the current window ends
+ * 4. Creates a new window when nodes no longer overlap or when size limits are reached
+ * 
+ * This temporal grouping helps simplify the optimization problem without losing
+ * critical information about execution dependencies.
+ * 
+ * @param timeline Execution timeline data for all nodes (start/end timestamps)
+ * @param disjointSet Data structure for grouping related nodes (modified by this function)
+ * @param logicalNodeSizeLimit Maximum number of nodes allowed in a merged group
+ */
 void mergeConcurrentCudaGraphNodes(
   CudaGraphExecutionTimeline &timeline,
   DisjointSet<cudaGraphNode_t> &disjointSet,
@@ -82,69 +143,132 @@ void mergeConcurrentCudaGraphNodes(
 ) {
   LOG_TRACE();
 
+  // Step 1: Create a map from lifetimes to nodes, which will automatically
+  // sort nodes by their execution start time (due to std::map ordering)
   std::map<CudaGraphNodeLifetime, cudaGraphNode_t> lifetimeToCudaGraphNodeMap;
   for (auto &[node, lifetime] : timeline) {
     lifetimeToCudaGraphNodeMap[lifetime] = node;
   }
 
-  uint64_t currentWindowEnd = 0;
-  cudaGraphNode_t currentWindowRepresentativeNode = nullptr;
+  // Step 2: Process nodes in order of execution start time
+  uint64_t currentWindowEnd = 0;  // Timestamp when current execution window ends
+  cudaGraphNode_t currentWindowRepresentativeNode = nullptr;  // Representative node for current window
+  
   for (auto &[lifetime, node] : lifetimeToCudaGraphNodeMap) {
-    // Ignore mem alloc node and mem free node
+    // Special case: Skip memory allocation/deallocation nodes
+    // These are handled separately and shouldn't be merged with computation
     cudaGraphNodeType nodeType;
     checkCudaErrors(cudaGraphNodeGetType(node, &nodeType));
     if (nodeType == cudaGraphNodeTypeMemAlloc || nodeType == cudaGraphNodeTypeMemFree) {
       continue;
     }
 
+    // Verify that the node has valid timestamps
+    // (first = start time, second = end time)
     assert(lifetime.first != 0 && lifetime.second != 0);
 
-    if (currentWindowRepresentativeNode != nullptr && lifetime.first <= currentWindowEnd && disjointSet.getSetSize(currentWindowRepresentativeNode) < logicalNodeSizeLimit) {
+    // Step 3: Determine if this node should be merged with the current window
+    // Conditions for merging:
+    // 1. We have an active window (not the first node)
+    // 2. This node starts before the current window ends (temporal overlap)
+    // 3. The merged set size would remain under our size limit
+    if (currentWindowRepresentativeNode != nullptr && 
+        lifetime.first <= currentWindowEnd && 
+        disjointSet.getSetSize(currentWindowRepresentativeNode) < logicalNodeSizeLimit) {
+      
+      // Merge this node with the current window's representative node
       disjointSet.unionUnderlyingSets(currentWindowRepresentativeNode, node);
+      
+      // Extend the current window end time if this node finishes later
       currentWindowEnd = std::max(currentWindowEnd, lifetime.second);
     } else {
+      // Step 4: Start a new window with this node as the representative
       currentWindowRepresentativeNode = node;
       currentWindowEnd = lifetime.second;
     }
   }
 }
 
+/**
+ * Helper function that traverses the graph using DFS to map nodes to their controlling annotation nodes
+ * 
+ * This recursive function walks through the graph and assigns each node to its "governing" annotation node.
+ * Annotation nodes in CUDA graphs contain metadata about memory access patterns for a group of nodes.
+ * Nodes between two annotation nodes are considered to be under the control of the preceding annotation.
+ * 
+ * The function works by:
+ * 1. Keeping track of the current annotation node as it traverses the graph
+ * 2. Updating the current annotation node when a new annotation node is encountered
+ * 3. Mapping each traversed node to its governing annotation node
+ * 
+ * @param currentNode The graph node currently being processed
+ * @param currentAnnotationNode The most recent annotation node encountered in this traversal path
+ * @param edges Adjacency list representation of the graph's edges
+ * @param nodeToAnnotationMap Output map that will associate each node with its governing annotation
+ */
 void mapNodeToAnnotationDfs(
   cudaGraphNode_t currentNode,
   cudaGraphNode_t currentAnnotationNode,
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> &edges,
   std::map<cudaGraphNode_t, cudaGraphNode_t> &nodeToAnnotationMap
 ) {
+  // If we've already visited this node, stop to avoid cycles
   if (nodeToAnnotationMap.find(currentNode) != nodeToAnnotationMap.end()) {
     return;
   }
 
   bool isAnnotationNode = false;
 
+  // Determine if the current node is an annotation node:
+  // 1. Either it's the first node we're visiting (root node)
   if (!currentAnnotationNode) {
     isAnnotationNode = true;
-  } else if (compareKernelNodeFunctionHandle(currentNode, dummyKernelForAnnotationHandle)) {
+  } 
+  // 2. Or it's a dummy kernel specifically used for annotation
+  else if (compareKernelNodeFunctionHandle(currentNode, dummyKernelForAnnotationHandle)) {
     isAnnotationNode = true;
   }
 
+  // If we found a new annotation node, update our reference
   if (isAnnotationNode) {
     currentAnnotationNode = currentNode;
   }
 
+  // Map this node to its governing annotation node
   nodeToAnnotationMap[currentNode] = currentAnnotationNode;
 
+  // Continue DFS traversal to all children/successors
   for (auto nextNode : edges[currentNode]) {
     mapNodeToAnnotationDfs(nextNode, currentAnnotationNode, edges, nodeToAnnotationMap);
   }
 }
 
+/**
+ * Maps each node in a CUDA graph to its controlling annotation node
+ * 
+ * This function creates a mapping between every node in the graph and the annotation node
+ * that governs it. Annotation nodes contain metadata about memory access patterns for all
+ * operations that follow them in the graph until the next annotation node is encountered.
+ * 
+ * The mapping is built by performing a depth-first traversal of the graph, tracking
+ * the current annotation node at each step. This approach ensures that each node is 
+ * correctly associated with the annotation that governs its execution.
+ * 
+ * The resulting map is crucial for analyzing memory dependencies and optimizing data
+ * movement in the execution plan.
+ * 
+ * @param originalGraph The CUDA graph to analyze
+ * @param edges Adjacency list representation of the graph's edges
+ * @param nodeToAnnotationMap Output map that will associate each node with its governing annotation
+ */
 void mapNodeToAnnotation(
   cudaGraph_t originalGraph,
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> &edges,
   std::map<cudaGraphNode_t, cudaGraphNode_t> &nodeToAnnotationMap
 ) {
-  LOG_TRACE();
+  LOG_TRACE();  // Log function entry for debugging/tracing
 
+  // Start DFS traversal from the root node of the graph
   auto rootNode = getRootNode(originalGraph);
   mapNodeToAnnotationDfs(rootNode, nullptr, edges, nodeToAnnotationMap);
 }
@@ -200,24 +324,54 @@ void mergeDataDependency(OptimizationInput::TaskGroup::DataDependency &dataDepen
   dataDependency.outputs.insert(additionalDataDependency.outputs.begin(), additionalDataDependency.outputs.end());
 }
 
+/**
+ * Extracts data dependencies for each computational task in the CUDA graph
+ * 
+ * This function analyzes the graph to identify which memory buffers are used as inputs
+ * and outputs by each task. It works by:
+ * 
+ * 1. Creating a reverse mapping from annotation nodes to their associated computational nodes
+ * 2. For each annotation node:
+ *    - Extracting the task ID and explicit data dependencies from the annotation
+ *    - If automatic inference is enabled, analyzing the kernel parameters to detect additional
+ *      data dependencies not explicitly specified in annotations
+ * 
+ * The collected data dependency information is critical for memory optimization, as it
+ * allows the system to determine:
+ * - When memory buffers need to be present on the device
+ * - Which buffers can be temporarily moved off the device to free space
+ * - How to schedule data transfers to minimize overhead and maximize overlap
+ * 
+ * @param nodes Vector of all CUDA graph nodes
+ * @param nodeToAnnotationMap Mapping from computational nodes to their annotation nodes
+ * @param taskIdToDataDependencyMap Output map that will store dependencies for each task ID
+ */
 void getTaskDataDependencies(
   std::vector<cudaGraphNode_t> &nodes,
   std::map<cudaGraphNode_t, cudaGraphNode_t> &nodeToAnnotationMap,
   std::map<TaskId, OptimizationInput::TaskGroup::DataDependency> &taskIdToDataDependencyMap
 ) {
+  // Create parser for analyzing kernel data dependencies automatically
   MemRedAnalysisParser analysisParser;
 
+  // Build a reverse mapping from annotation nodes to their computational nodes
+  // This allows us to process all nodes governed by a single annotation at once
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> annotationToNodesMap;
   for (const auto [node, annotationNode] : nodeToAnnotationMap) {
     annotationToNodesMap[annotationNode].push_back(node);
   }
 
+  // Process each annotation node and its associated computational nodes
   for (auto [annotationNode, nodes] : annotationToNodesMap) {
+    // Extract the task ID from the annotation node
     const TaskId taskId = getTaskId(annotationNode);
+    
+    // Initialize data dependency structure and extract explicit dependencies
     OptimizationInput::TaskGroup::DataDependency dataDependency;
     bool inferDataDependency;
     getDataDependencyFromAnnotationNode(annotationNode, dataDependency, inferDataDependency);
 
+    // If automatic inference is enabled for this task, analyze the kernel parameters
     if (inferDataDependency) {
       // This task's data dependency should be inferred from compiler pass
       // and kernel parameters.
@@ -227,60 +381,122 @@ void getTaskDataDependencies(
 
         // Currently, only kernel's data dependency can be analyzed automatically.
         if (nodeType == cudaGraphNodeTypeKernel) {
-          // Skip dummy kernels
+          // Skip dummy kernels (annotation and stage separator nodes)
           if (!compareKernelNodeFunctionHandle(node, dummyKernelForAnnotationHandle)
               && !compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
+            // Analyze kernel parameters and merge the detected dependencies
             mergeDataDependency(dataDependency, analysisParser.getKernelDataDependency(node));
           }
         }
       }
     }
 
+    // Store the complete data dependency information for this task
     taskIdToDataDependencyMap[taskId] = dataDependency;
   }
 }
 
+/**
+ * Helper function that traverses the graph with DFS (Depth-first search) to map nodes to execution stages
+ * 
+ * This recursive function assigns stage indices to nodes in a CUDA graph by traversing
+ * the graph in depth-first order. The stage index increments whenever a special
+ * "stage separator" node is encountered during traversal.
+ * 
+ * Stage separation is important for multi-phase applications where different phases
+ * have distinct memory requirements and optimization strategies. For example:
+ * - Initial data preparation (Stage 0)
+ * - Main computation (Stage 1)
+ * - Result collection (Stage 2)
+ * 
+ * @param currentNode The graph node currently being processed
+ * @param currentStageIndex The current stage index in this traversal path
+ * @param edges Adjacency list representation of the graph's edges
+ * @param nodeToStageIndexMap Output map that will associate each node with its stage index
+ */
 void mapNodeToStageDfs(
   cudaGraphNode_t currentNode,
   int currentStageIndex,
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> &edges,
   std::map<cudaGraphNode_t, int> &nodeToStageIndexMap
 ) {
+  // If we've already visited this node, stop to avoid cycles and duplicate work
   if (nodeToStageIndexMap.find(currentNode) != nodeToStageIndexMap.end()) {
     return;
   }
 
+  // Check if this node is a stage separator by comparing its function handle
+  // Stage separators are special dummy kernel nodes inserted specifically to mark stage boundaries
   bool isStageSeparatorNode = compareKernelNodeFunctionHandle(currentNode, dummyKernelForStageSeparatorHandle);
 
-  // The separator node belongs to the previous stage
+  // Assign the current stage index to this node
+  // Note: The separator node itself belongs to the current (previous) stage
   nodeToStageIndexMap[currentNode] = currentStageIndex;
 
+  // If this was a separator node, increment the stage index for all subsequent nodes
   if (isStageSeparatorNode) {
     currentStageIndex++;
   }
 
+  // Continue DFS traversal to all successors, passing the potentially updated stage index
   for (auto nextNode : edges[currentNode]) {
     mapNodeToStageDfs(nextNode, currentStageIndex, edges, nodeToStageIndexMap);
   }
 }
 
+/**
+ * Maps each node in a CUDA graph to its execution stage
+ * 
+ * This function creates a mapping between every node in the graph and the execution
+ * stage it belongs to. Stages are separated by special "stage separator" nodes in the graph.
+ * 
+ * Stage-based processing enables:
+ * 1. Breaking down large applications into manageable chunks
+ * 2. Applying different memory optimization strategies to different stages
+ * 3. Clearing/resetting memory between stages for more efficient usage
+ * 4. Handling workflows with dramatically different memory access patterns
+ * 
+ * @param originalGraph The CUDA graph to analyze
+ * @param edges Adjacency list representation of the graph's edges
+ * @param nodeToStageIndexMap Output map that will associate each node with its stage index
+ */
 void mapNodeToStage(
   cudaGraph_t originalGraph,
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> &edges,
   std::map<cudaGraphNode_t, int> &nodeToStageIndexMap
 ) {
-  LOG_TRACE();
+  LOG_TRACE();  // Log function entry for debugging/tracing
 
+  // Start DFS traversal from the root node of the graph
+  // Initial stage index is 0
   auto rootNode = getRootNode(originalGraph);
   mapNodeToStageDfs(rootNode, 0, edges, nodeToStageIndexMap);
 }
 
+/**
+ * @brief Construct a structured optimization problem from raw CUDA graph profiling data
+ * 
+ * This function transforms the profiling data collected from a CUDA graph execution
+ * into a structured optimization problem. It organizes nodes into task groups,
+ * establishes dependencies between tasks and task groups, calculates execution times,
+ * and collects memory access patterns. The resulting structure becomes the input to
+ * the memory optimization algorithms.
+ * 
+ * @param originalGraph Original CUDA graph that was profiled
+ * @param nodes List of all nodes in the graph
+ * @param edges Adjacency list representation of graph edges
+ * @param timeline Execution timeline data for each node
+ * @param disjointSet Sets of nodes belonged to the same task
+ * @param nodeToAnnotationMap Maps nodes to their annotation nodes (containing memory access metadata)
+ * @param taskIdToDataDependencyMap Maps tasks to their input/output memory dependencies
+ * @return OptimizationInput Structured representation of the optimization problem
+ */
 OptimizationInput constructOptimizationInput(
   cudaGraph_t originalGraph,
   std::vector<cudaGraphNode_t> &nodes,
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> &edges,
   CudaGraphExecutionTimeline &timeline,
-  DisjointSet<cudaGraphNode_t> &disjointSet,
+  DisjointSet<cudaGraphNode_t> &disjointSet, 
   std::map<cudaGraphNode_t, cudaGraphNode_t> &nodeToAnnotationMap,
   std::map<TaskId, OptimizationInput::TaskGroup::DataDependency> &taskIdToDataDependencyMap
 ) {
@@ -288,28 +504,72 @@ OptimizationInput constructOptimizationInput(
 
   OptimizationInput optimizationInput;
 
+  /**
+   * Maps disjoint set roots to task group IDs for consistent grouping
+   * 
+   * This mapping ensures that all CUDA graph nodes that have been grouped together
+   * in the same disjoint set are assigned to the same TaskGroup in the OptimizationInput.
+   * The key is the root node of a disjoint set (representing a group of related nodes),
+   * and the value is the TaskGroupId in optimizationInput.nodes where these nodes belong.
+   */
   std::map<cudaGraphNode_t, TaskGroupId> disjointSetRootToTaskGroupIdMap;
 
+  /**
+   * Helper function to get or create a task group ID for a CUDA graph node
+   * 
+   * This function bridges between the disjoint sets (which group related nodes)
+   * and the task groups in the OptimizationInput structure. For each node, it:
+   * 
+   * 1. Looks up the node's TaskId from its annotation
+   * 2. Finds which disjoint set the node belongs to (via its root)
+   * 3. Creates a new task group if this is the first node from this disjoint set
+   *    or uses an existing task group if we've seen nodes from this set before
+   * 4. Adds the node's TaskId to the appropriate task group
+   * 
+   * This ensures that all task nodes (due to executing concurrently (runtime)
+   * or sharing annotations (user defined)) are consistently assigned to the same task group,
+   * preserving the logical structure of the computation.
+   */
   auto getTaskGroupId = [&](cudaGraphNode_t u) {
+    // Get the TaskId from the node's annotation
     auto uTaskId = getTaskId(nodeToAnnotationMap[u]);
+    
+    // Find the root of the disjoint set that contains this node
+    // This identifies which group of related nodes this node belongs to
     auto uRoot = disjointSet.findRoot(u);
 
+    // Variable to hold the task group ID (index in optimizationInput.nodes)
     size_t uTaskGroupId;
+    
+    // Check if we've already created a task group for this disjoint set
     if (disjointSetRootToTaskGroupIdMap.count(uRoot) == 0) {
-      optimizationInput.nodes.emplace_back();
-      uTaskGroupId = optimizationInput.nodes.size() - 1;
+      // This is the first node we've seen from this disjoint set
+      // Create a new task group for this set of related nodes
+      optimizationInput.nodes.emplace_back();  // Add a new empty TaskGroup
+      uTaskGroupId = optimizationInput.nodes.size() - 1;  // Get its index
+      
+      // Remember this mapping for future nodes from the same disjoint set
       disjointSetRootToTaskGroupIdMap[uRoot] = uTaskGroupId;
     } else {
+      // We've already seen nodes from this disjoint set
+      // Use the same task group we assigned previously
       uTaskGroupId = disjointSetRootToTaskGroupIdMap[uRoot];
     }
 
+    // Add this node's TaskId to the appropriate task group
+    // Note: The same TaskId might be added multiple times if multiple nodes
+    // in the CUDA graph represent the same logical task
     optimizationInput.nodes[uTaskGroupId].nodes.insert(uTaskId);
 
     return uTaskGroupId;
   };
 
-  // Add nodes and edges for both task groups and tasks
+  //---------- BUILD DEPENDENCY GRAPH ----------
+  
+  // Track edges we've already added to avoid duplicates between task groups
   std::set<std::pair<TaskGroupId, TaskGroupId>> existingEdges;
+  
+  // Process each edge in the original graph
   for (const auto &[u, destinations] : edges) {
     auto uTaskId = getTaskId(nodeToAnnotationMap[u]);
     auto uTaskGroupId = getTaskGroupId(u);
@@ -317,12 +577,15 @@ OptimizationInput constructOptimizationInput(
     for (auto v : destinations) {
       auto vTaskId = getTaskId(nodeToAnnotationMap[v]);
       auto vTaskGroupId = getTaskGroupId(v);
+      
       if (uTaskId == vTaskId) {
+        // Skip self-dependencies
         continue;
       } else if (uTaskGroupId == vTaskGroupId) {
+        // Internal edge within the same task group
         optimizationInput.nodes[uTaskGroupId].edges[uTaskId].push_back(vTaskId);
       } else {
-        // Edges between task groups need deduping
+        // Edge between different task groups (need to deduplicate)
         if (existingEdges.count(std::make_pair(uTaskGroupId, vTaskGroupId)) == 0) {
           existingEdges.insert(std::make_pair(uTaskGroupId, vTaskGroupId));
           optimizationInput.edges[uTaskGroupId].push_back(vTaskGroupId);
@@ -331,51 +594,71 @@ OptimizationInput constructOptimizationInput(
     }
   }
 
-  // Gather information about tasks
+  //---------- GATHER EXECUTION TIMELINES ----------
+  //---------- TASK LEVEL ---------
+
+  // Maps for storing execution timeline information
   std::map<TaskId, cudaGraphNode_t> taskIdToAnnotationNodeMap;
   std::map<TaskId, std::vector<std::pair<uint64_t, uint64_t>>> taskIdToNodeLifetimes;
+  
+  // Track global execution span
   uint64_t globalMinStart = std::numeric_limits<uint64_t>::max(), globalMaxEnd = 0;
+  
+  // Process each node to collect timing information
   for (cudaGraphNode_t u : nodes) {
     auto uTaskId = getTaskId(nodeToAnnotationMap[u]);
 
+    // Remember annotation node for each task
     if (taskIdToAnnotationNodeMap.count(uTaskId) == 0) {
       taskIdToAnnotationNodeMap[uTaskId] = nodeToAnnotationMap[u];
     }
 
-    // Ignore annotation node
+    // Skip annotation nodes (they don't have actual execution time)
     const bool isAnnotationNode = nodeToAnnotationMap[u] == u;
     if (isAnnotationNode) continue;
 
-    // Ignore mem alloc node and mem free node
+    // Skip memory allocation/deallocation nodes
     cudaGraphNodeType nodeType;
     checkCudaErrors(cudaGraphNodeGetType(u, &nodeType));
     if (nodeType == cudaGraphNodeTypeMemAlloc || nodeType == cudaGraphNodeTypeMemFree) {
       continue;
     }
 
+    // Record this node's execution lifetime
     taskIdToNodeLifetimes[uTaskId].push_back(timeline[u]);
 
+    // Update global execution span
     globalMinStart = std::min(globalMinStart, timeline[u].first);
     globalMaxEnd = std::max(globalMaxEnd, timeline[u].second);
   }
 
-  // Add task group running time and data dependency
+  //---------- CALCULATE TASK GROUP CHARACTERISTICS ----------
+  
+  // For each task group, calculate running time and combine data dependencies
   for (auto &taskGroup : optimizationInput.nodes) {
+    // Collect lifetimes of all nodes in this task group
     std::vector<std::pair<uint64_t, uint64_t>> nodeLifetimes;
     for (auto taskId : taskGroup.nodes) {
+      // Merge data dependencies from all tasks in this group
       mergeDataDependency(taskGroup.dataDependency, taskIdToDataDependencyMap[taskId]);
+      
+      // Collect execution timelines
       nodeLifetimes.insert(nodeLifetimes.end(), taskIdToNodeLifetimes[taskId].begin(), taskIdToNodeLifetimes[taskId].end());
     }
 
+    // Sort lifetimes by start time for accurate running time calculation
     std::sort(nodeLifetimes.begin(), nodeLifetimes.end());
 
+    // Calculate total running time accounting for overlapping executions
     uint64_t accumulatedRunningTime = 0;
     uint64_t currentWindowEnd = 0;
     for (auto nodeLifetime : nodeLifetimes) {
       if (currentWindowEnd < nodeLifetime.first) {
+        // No overlap with previous execution
         accumulatedRunningTime += nodeLifetime.second - nodeLifetime.first;
         currentWindowEnd = nodeLifetime.second;
       } else {
+        // Partial overlap - only count the non-overlapping portion
         if (currentWindowEnd < nodeLifetime.second) {
           accumulatedRunningTime += nodeLifetime.second - currentWindowEnd;
           currentWindowEnd = nodeLifetime.second;
@@ -383,22 +666,30 @@ OptimizationInput constructOptimizationInput(
       }
     }
 
+    // Convert from nanoseconds to seconds
     taskGroup.runningTime = static_cast<float>(accumulatedRunningTime) * 1e-9f;
   }
 
+  // Calculate total execution time of original graph (in seconds)
   optimizationInput.originalTotalRunningTime = static_cast<float>(globalMaxEnd - globalMinStart) * 1e-9f;
 
+  // Configure initial memory placement policy
   optimizationInput.forceAllArraysToResideOnHostInitiallyAndFinally = false;
 
+  // Set stage index (0 for single-stage graphs)
   optimizationInput.stageIndex = 0;
 
-  // Print statistics
+  //---------- CALCULATE PERFORMANCE STATISTICS ----------
+  
   double averageTaskGroupRunningTime = 0.0;
   double averageTaskGroupDataDependencySizeInGiB = 0.0;
   double averageTaskGroupProcessingSpeed = 0.0;
+  
+  // Process each task group
   for (const auto &tg : optimizationInput.nodes) {
     averageTaskGroupRunningTime += tg.runningTime;
 
+    // Calculate total memory accessed by this task group
     size_t s = 0;
     for (auto p : tg.dataDependency.inputs) {
       s += MemoryManager::managedMemoryAddressToSizeMap[p];
@@ -407,14 +698,19 @@ OptimizationInput constructOptimizationInput(
       s += MemoryManager::managedMemoryAddressToSizeMap[p];
     }
 
+    // Convert bytes to GiB and accumulate statistics
     averageTaskGroupDataDependencySizeInGiB += (double)s / 1024.0 / 1024.0 / 1024.0;
-
+    
+    // Calculate data processing speed (GiB/s)
     averageTaskGroupProcessingSpeed += (double)s / 1024.0 / 1024.0 / 1024.0 / tg.runningTime;
   }
+  
+  // Calculate averages
   averageTaskGroupRunningTime /= optimizationInput.nodes.size();
   averageTaskGroupDataDependencySizeInGiB /= optimizationInput.nodes.size();
   averageTaskGroupProcessingSpeed /= optimizationInput.nodes.size();
 
+  // Log statistics for analysis
   LOG_TRACE_WITH_INFO("Number of task groups: %d", (int)optimizationInput.nodes.size());
   LOG_TRACE_WITH_INFO("Average task group running time (s): %.12lf", averageTaskGroupRunningTime);
   LOG_TRACE_WITH_INFO("Average task group data dependency size (GiB): %.12lf", averageTaskGroupDataDependencySizeInGiB);
@@ -598,37 +894,78 @@ Optimizer *Optimizer::getInstance() {
   return instance;
 }
 
+/**
+ * @brief Profile a CUDA graph execution and generate an optimized execution plan with memory management
+ * 
+ * This function is the core of the memory optimization system. It performs the following steps:
+ * 1. Profile the execution of the original CUDA graph to understand task dependencies, 
+ *    execution timelines, and memory access patterns
+ * 2. Analyze the annotated graph to extract task groups and data dependencies
+ * 3. Generate an optimized execution plan that includes data movement operations to
+ *    efficiently manage GPU memory usage
+ * 
+ * The returned plan allows execution of computations larger than available GPU memory by
+ * intelligently scheduling when data should be on GPU and when it can be temporarily moved
+ * to host memory or secondary storage.
+ * 
+ * @param originalGraph The original CUDA graph to optimize
+ * @return OptimizationOutput An optimized execution plan with data movement operations
+ */
 OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
+  // Start timing the optimization process
   SystemWallClock clock;
   clock.start();
 
+  // Check if we should load an existing plan instead of recomputing
   if (ConfigurationManager::getConfig().optimization.loadExistingPlan) {
     return loadOptimizationOutput(ConfigurationManager::getConfig().optimization.planPath);
   }
 
+  // Register handles for annotation and stage separator dummy kernels
   registerDummyKernelHandles();
   ScopeGuard scopeGuard([]() -> void { cleanUpDummyKernelFuncHandleRegistrations(); });
 
+  //---------- PROFILING PHASE ----------
+  
+  // Execute the graph once to capture its execution timeline
   auto timeline = getCudaGraphExecutionTimeline(originalGraph);
 
+  // Extract the graph structure (nodes and edges)
   std::vector<cudaGraphNode_t> nodes;
   std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> edges;
   extractGraphNodesAndEdges(originalGraph, nodes, edges);
 
+  // Map each node to its corresponding annotation node (containing metadata)
   std::map<cudaGraphNode_t, cudaGraphNode_t> nodeToAnnotationMap;
   mapNodeToAnnotation(originalGraph, edges, nodeToAnnotationMap);
 
+  // Initialize disjoint set for grouping "task" related nodes
   DisjointSet<cudaGraphNode_t> disjointSet;
 
+  // Optional: merge nodes that execute concurrently to reduce graph complexity
   if (ConfigurationManager::getConfig().optimization.mergeConcurrentCudaGraphNodes) {
     mergeConcurrentCudaGraphNodes(timeline, disjointSet, std::numeric_limits<int>::max());
   }
 
+  // Merge nodes that share the same annotation (same logical task)
   mergeNodesWithSameAnnotation(nodes, nodeToAnnotationMap, disjointSet);
 
+  // Extract data dependencies for each task from their annotations
   std::map<TaskId, OptimizationInput::TaskGroup::DataDependency> taskIdToDataDependencyMap;
+  // Extract from annotation or extract from LLVM preposss pass 
   getTaskDataDependencies(nodes, nodeToAnnotationMap, taskIdToDataDependencyMap);
 
+  //---------- STAGE ANALYSIS ----------
+  
+  /**
+   * Detect if the graph is divided into multiple optimization stages
+   * 
+   * Stages are user-defined segments of computation separated by special marker nodes
+   * (dummyKernelForStageSeparator). Each stage can be independently optimized, which:
+   * 1. Simplifies the optimization problem by breaking it into smaller chunks
+   * 2. Allows complete memory resets between stages
+   * 3. Enables different optimization strategies for different execution phases
+   */
   bool hasOnlyOneStage = true;
   for (auto node : nodes) {
     if (compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
@@ -637,20 +974,38 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     }
   }
 
+  // If multiple stages exist, map each node to its corresponding stage index
   std::map<cudaGraphNode_t, int> nodeToStageIndexMap;
   if (!hasOnlyOneStage) {
     mapNodeToStage(originalGraph, edges, nodeToStageIndexMap);
   }
 
+  //---------- OPTIMIZATION PHASE ----------
+  
   if (hasOnlyOneStage) {
+    /**
+     * Single-stage optimization path
+     * 
+     * When the graph has no stage separators, we treat it as a single optimization 
+     * problem with these characteristics:
+     * - All memory must be managed across the entire execution timeline
+     * - Memory constraints must be satisfied for the entire computation
+     * - Optimization complexity increases with graph size and complexity
+     */
+    
+    // Construct a single optimization input from the entire graph's profiling data
     auto optimizationInput = constructOptimizationInput(originalGraph, nodes, edges, timeline, disjointSet, nodeToAnnotationMap, taskIdToDataDependencyMap);
 
+    // Report profiling time
     clock.end();
     LOG_TRACE_WITH_INFO("Time for profiling (seconds): %.4f", clock.getTimeInSeconds());
 
+    // Apply the two-step optimization strategy to generate a complete execution plan
     auto optimizationOutput = this->optimize<TwoStepOptimizationStrategy>(optimizationInput);
 
+    // Check if optimization succeeded (a feasible plan was found)
     if (optimizationOutput.optimal) {
+      // Save the plan to file for potential reuse in future runs
       writeOptimizationOutputToFile(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
       return optimizationOutput;
     } else {
@@ -658,22 +1013,43 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
       exit(-1);
     }
   } else {
+    /**
+     * Multi-stage optimization path
+     * 
+     * When the graph contains stage separators, we:
+     * - Break the optimization problem into separate stages
+     * - Optimize each stage independently with simpler constraints
+     * - Complete memory reset occurs between stages (all arrays move to host)
+     * - Merge the individual stage plans into a cohesive execution plan
+     * 
+     * This approach makes optimization more tractable for complex applications
+     * and allows specialized handling of different execution phases.
+     */
+    
+    // Construct separate optimization inputs for each stage
     auto optimizationInputs = constructOptimizationInputsForStages(
       originalGraph, nodes, edges, timeline, disjointSet, nodeToAnnotationMap, taskIdToDataDependencyMap, nodeToStageIndexMap
     );
 
+    // Report profiling time
     clock.end();
     LOG_TRACE_WITH_INFO("Time for profiling (seconds): %.4f", clock.getTimeInSeconds());
 
+    // Apply optimization strategy to each stage independently
     std::vector<OptimizationOutput> optimizationOutputs;
     for (int i = 0; i < optimizationInputs.size(); i++) {
+      // Optimize this stage and add its plan to our collection
       optimizationOutputs.push_back(this->optimize<TwoStepOptimizationStrategy>(optimizationInputs[i]));
+      
+      // Verify that a feasible solution was found for this stage
       if (optimizationOutputs.rbegin()->optimal == false) {
         LOG_TRACE_WITH_INFO("Could not find any feasible solution for stage %d", i);
         exit(-1);
       }
     }
 
+    // Merge the individual stage plans into a single cohesive execution plan
+    // This creates a unified plan that properly transitions between stages
     auto mergedOptimizationOutput = mergeOptimizationOutputs(optimizationOutputs);
     writeOptimizationOutputToFile(mergedOptimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
     return mergedOptimizationOutput;
