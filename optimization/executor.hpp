@@ -18,6 +18,7 @@ namespace memopt {
  * @param stream CUDA stream on which to execute the task
  */
 typedef std::function<void(int taskId, std::map<void *, void *> addressMapping, cudaStream_t stream)> ExecuteRandomTask;
+typedef std::function<void(int taskId, cudaStream_t stream)> ExecuteRandomTaskBase;
 
 /**
  * @brief Callback function type for determining when to stop iterative execution
@@ -79,7 +80,23 @@ class Executor {
     float &runningTime,
     std::map<void *, void *> &managedDeviceArrayToHostArrayMap
   );
-
+  /**
+   * @brief Executes an optimized computation graph once
+   * 
+   * This method runs a graph that has been optimized to reduce memory usage
+   * by dynamically managing data transfers between the main GPU and storage.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTask Callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   * @param managedDeviceArrayToHostArrayMap Mapping between device and storage memory addresses
+   */
+  void executeOptimizedGraph(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTaskBase executeRandomTaskBase,
+    float &runningTime,
+    std::map<void *, void *> &managedDeviceArrayToHostArrayMap
+  );
   /**
    * @brief Executes an optimized computation graph repeatedly
    * 

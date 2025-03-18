@@ -24,6 +24,21 @@ void executeOptimizedGraph(
 
 /// @brief
 /// @param optimizedGraph
+/// @param executeRandomTaskBase
+/// @param runningTime
+///   (Output) The running time
+/// @param managedDeviceArrayToHostArrayMap
+///   (Output) The mapping between old managed device array addresses and
+///   new host array addresses where old arrays are moved to.
+void executeOptimizedGraph(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime,
+  std::map<void *, void *> &managedDeviceArrayToHostArrayMap
+);
+
+/// @brief
+/// @param optimizedGraph
 /// @param executeRandomTask
 /// @param shouldContinue
 /// @param runningTime

@@ -27,6 +27,21 @@ void executeOptimizedGraph(
   );
 }
 
+void executeOptimizedGraph(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime,
+  std::map<void *, void *> &managedDeviceArrayToHostArrayMap
+) {
+  LOG_TRACE();
+  Executor::getInstance()->executeOptimizedGraph(
+    optimizedGraph,
+    executeRandomTaskBase,
+    runningTime,
+    managedDeviceArrayToHostArrayMap
+  );
+}
+
 void executeOptimizedGraphRepeatedly(
   OptimizationOutput &optimizedGraph,
   ExecuteRandomTask executeRandomTask,
