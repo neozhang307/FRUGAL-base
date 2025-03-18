@@ -18,6 +18,7 @@ namespace memopt {
  * - Memory addresses of GPU allocations
  * - Sizes of each allocation
  * - Application inputs and outputs (for data dependency tracking)
+ * - Mappings between original device pointers and relocated host/device pointers
  * 
  * This system enables memory optimization strategies like:
  * - Data offloading (moving data between GPU and host/secondary GPU)
@@ -39,6 +40,32 @@ struct MemoryManager {
   
   /** @brief Tracks which arrays are application inputs/outputs (for data dependency analysis) */
   inline static std::set<void *> applicationInputs, applicationOutputs;
+  
+  /** @brief Maps original device pointers to their current relocated pointers */
+  inline static std::map<void *, void *> deviceToStorageArrayMap;
+
+  /** @brief Maps original device pointers to their current relocated pointers */
+  inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
+
+  /**
+   * @brief Gets the updated address of a pointer if it has been relocated
+   *
+   * This function checks if the given pointer exists in the address update map
+   * and returns the updated address if found, otherwise returns the original address.
+   * 
+   * @tparam T Type of data stored in the array
+   * @param addressUpdate Map containing original addresses mapped to their new locations
+   * @param oldAddress Original pointer address to check for updates
+   * @return Updated pointer address if found in map, otherwise the original address
+   */
+  template <typename T>
+  static T* getAddress(T *oldAddress) {
+    auto it = managedMemoryAddressToAssignedMap.find(static_cast<void *>(oldAddress));
+    if (it != managedMemoryAddressToAssignedMap.end()) {
+      return static_cast<T *>(it->second);
+    }
+    return oldAddress;
+  }
 };
 
 /**
@@ -65,6 +92,9 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
     MemoryManager::managedMemoryAddresses.push_back(ptr);
     MemoryManager::managedMemoryAddressToIndexMap[ptr] = MemoryManager::managedMemoryAddresses.size() - 1;
     MemoryManager::managedMemoryAddressToSizeMap[ptr] = size;
+    
+    // Initialize the mapping to point to itself (no relocation yet)
+    MemoryManager::deviceToStorageArrayMap[ptr] = ptr;
   }
 }
 
@@ -129,6 +159,8 @@ inline void updateManagedMemoryAddress(const std::map<void *, void *> oldAddress
     MemoryManager::managedMemoryAddressToSizeMap[newAddr] = oldManagedMemoryAddressToSizeMap[oldAddr];
     // Maintain the same array ID
     MemoryManager::managedMemoryAddressToIndexMap[newAddr] = i;
+    // Update the device-to-host mapping
+    MemoryManager::deviceToStorageArrayMap[oldAddr] = newAddr;
 
     // Update application input registry if this was an input
     if (MemoryManager::applicationInputs.count(oldAddr) > 0) {
