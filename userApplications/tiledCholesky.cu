@@ -388,12 +388,7 @@ class TiledCholeskyTaskManager {
   double *one, *minusOne;
   TaskManager* taskManager;
 
-  // Method to directly execute a task using the TaskManager
-  void executeTaskUsingTaskManager(int taskId, cudaStream_t stream) {
-    if (taskManager) {
-      taskManager->executeWithStream(taskId, stream);
-    }
-  }
+
 
   // Get access to the TaskManager
   TaskManager* getTaskManager() {
