@@ -56,7 +56,7 @@ __host__ void annotateNextTask(
 
   // Define a lambda to check if a memory address is managed by our system
   auto isManagedArray = [&](void *arr) {
-    return MemoryManager::managedMemoryAddressToIndexMap.count(arr) > 0; //return 0 (not exist) or 1 (exist)
+    return MemoryManager::getInstance().isManaged(arr);
   };
 
   // Filter out any memory addresses not tracked by our memory manager

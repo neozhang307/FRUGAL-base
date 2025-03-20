@@ -33,7 +33,9 @@ OptimizationOutput NoOptimizationStrategy::run(OptimizationInput &input) {
   
   // Place all managed data on the device initially
   // No data movement operations will be generated - everything stays on GPU
-  for (int i = 0; i < MemoryManager::managedMemoryAddresses.size(); i++) {
+  auto& memManager = MemoryManager::getInstance();
+  auto& addresses = memManager.getEditableManagedAddresses();
+  for (int i = 0; i < addresses.size(); i++) {
     output.arraysInitiallyAllocatedOnDevice.push_back(i);
   }
 

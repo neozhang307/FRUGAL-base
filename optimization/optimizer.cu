@@ -691,11 +691,12 @@ OptimizationInput constructOptimizationInput(
 
     // Calculate total memory accessed by this task group
     size_t s = 0;
+    auto &memManager = MemoryManager::getInstance();
     for (auto p : tg.dataDependency.inputs) {
-      s += MemoryManager::managedMemoryAddressToSizeMap[p];
+      s += memManager.getSize(p);
     }
     for (auto p : tg.dataDependency.outputs) {
-      s += MemoryManager::managedMemoryAddressToSizeMap[p];
+      s += memManager.getSize(p);
     }
 
     // Convert bytes to GiB and accumulate statistics

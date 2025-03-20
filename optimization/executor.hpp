@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 
 #include "optimizationOutput.hpp"
 
@@ -18,6 +19,16 @@ namespace memopt {
  * @param stream CUDA stream on which to execute the task
  */
 typedef std::function<void(int taskId, std::map<void *, void *> addressMapping, cudaStream_t stream)> ExecuteRandomTask;
+
+/**
+ * @brief Simplified task execution callback that doesn't require address mapping
+ * 
+ * This variant is useful when the application handles memory address translation internally
+ * or when using the TaskManager for memory management.
+ * 
+ * @param taskId The identifier of the task to execute
+ * @param stream CUDA stream on which to execute the task
+ */
 typedef std::function<void(int taskId, cudaStream_t stream)> ExecuteRandomTaskBase;
 
 /**
@@ -29,6 +40,9 @@ typedef std::function<void(int taskId, cudaStream_t stream)> ExecuteRandomTaskBa
  * @return true if execution should continue, false if it should stop
  */
 typedef std::function<bool()> ShouldContinue;
+
+// Forward declaration
+class OptimizedCudaGraphCreator;
 
 /**
  * @brief Executes optimized CUDA graphs with memory management
@@ -80,14 +94,16 @@ class Executor {
     float &runningTime,
     std::map<void *, void *> &managedDeviceArrayToHostArrayMap
   );
+
   /**
-   * @brief Executes an optimized computation graph once
+   * @brief Executes an optimized computation graph once with base task execution
    * 
    * This method runs a graph that has been optimized to reduce memory usage
    * by dynamically managing data transfers between the main GPU and storage.
+   * Uses the simplified task execution callback that does not require address mapping.
    * 
    * @param optimizedGraph The optimized computation graph to execute
-   * @param executeRandomTask Callback function to execute specific tasks
+   * @param executeRandomTaskBase Simplified callback function to execute specific tasks
    * @param runningTime Output parameter for recording execution time
    * @param managedDeviceArrayToHostArrayMap Mapping between device and storage memory addresses
    */
@@ -97,6 +113,7 @@ class Executor {
     float &runningTime,
     std::map<void *, void *> &managedDeviceArrayToHostArrayMap
   );
+
   /**
    * @brief Executes an optimized computation graph repeatedly
    * 
@@ -123,6 +140,29 @@ class Executor {
   );
 
  protected:
+  /**
+   * @brief Helper method for initializing data distribution
+   * 
+   * Moves all managed memory to storage and initializes needed data on device.
+   * 
+   * @param optimizedGraph The optimization plan to execute
+   * @param mainDeviceId ID of the main computation device
+   * @param storageDeviceId ID of the storage device
+   * @param useNvlink Whether to use NVLink for data transfers
+   * @param managedDeviceArrayToHostArrayMap Output map for device-to-storage mappings
+   * @param stream CUDA stream to use for operations
+   * @return cudaGraphExec_t Executable graph for initial data setup
+   */
+  cudaGraphExec_t initializeDataDistribution(
+    OptimizationOutput &optimizedGraph,
+    int mainDeviceId, 
+    int storageDeviceId,
+    bool useNvlink,
+    std::map<void *, void *> &managedDeviceArrayToHostArrayMap,
+    cudaStream_t stream,
+    cudaMemcpyKind prefetchMemcpyKind
+  );
+
   /**
    * @brief Default constructor (protected to enforce singleton pattern)
    */

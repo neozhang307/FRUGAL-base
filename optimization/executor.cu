@@ -224,15 +224,17 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
 
   // Move all managed data to storage (host or secondary GPU)
-  for (auto ptr : MemoryManager::managedMemoryAddresses) {
+  auto& memManager = MemoryManager::getInstance();
+  auto& managedAddresses = memManager.getEditableManagedAddresses();
+  for (auto ptr : managedAddresses) {
     void *newPtr;
     if (ConfigurationManager::getConfig().execution.useNvlink) {
       // Allocate on secondary GPU
       checkCudaErrors(cudaSetDevice(storageDeviceId));
-      checkCudaErrors(cudaMalloc(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
+      checkCudaErrors(cudaMalloc(&newPtr, memManager.getSize(ptr)));
     } else {
       // Allocate on host memory
-      checkCudaErrors(cudaMallocHost(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
+      checkCudaErrors(cudaMallocHost(&newPtr, memManager.getSize(ptr)));
     }
 
     // Create mapping and copy data to storage
@@ -240,7 +242,7 @@ void Executor::executeOptimizedGraph(
     checkCudaErrors(cudaMemcpy(
       newPtr,
       ptr,
-      MemoryManager::managedMemoryAddressToSizeMap[ptr],
+      memManager.getSize(ptr),
       cudaMemcpyDefault
     ));
     checkCudaErrors(cudaFree(ptr));  // Free original device memory
@@ -255,20 +257,20 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   // Track memory addresses that have been updated (device copies)
-  // std::map<void *, void *> MemoryManager::managedMemoryAddressToAssignedMap; //address mapping original to new device address
-  MemoryManager::managedMemoryAddressToAssignedMap.clear();
+  // address mapping original to new device address
+  memManager.clearCurrentMappings();
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
-    auto ptr = MemoryManager::managedMemoryAddresses[arrayId];
-    auto size = MemoryManager::managedMemoryAddressToSizeMap[ptr];
+    auto ptr = memManager.getPointerByArrayId(arrayId);
+    auto size = memManager.getSizeByArrayId(arrayId);
     auto newPtr = managedDeviceArrayToHostArrayMap[ptr];
 
     // Allocate on device and copy data from storage
     void *devicePtr;
     checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
     checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, prefetchMemcpyKind, stream));
-    MemoryManager::managedMemoryAddressToAssignedMap[ptr] = devicePtr;  // Update the address mapping
+    memManager.updateCurrentMapping(ptr, devicePtr);  // Update the address mapping
   }
   
   // End capture and instantiate the initial data distribution graph
@@ -307,8 +309,8 @@ void Executor::executeOptimizedGraph(
       
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = MemoryManager::managedMemoryAddresses[dataMovement.arrayId];
-      auto dataMovementSize = MemoryManager::managedMemoryAddressToSizeMap[dataMovementAddress];
+      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
       if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
@@ -321,10 +323,10 @@ void Executor::executeOptimizedGraph(
           prefetchMemcpyKind,
           stream
         ));
-        MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress] = devicePtr;
+        memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress];
+        void *devicePtr = memManager.getCurrentAddressMap().at(dataMovementAddress);
         checkCudaErrors(cudaMemcpyAsync(
           managedDeviceArrayToHostArrayMap[dataMovementAddress],
           devicePtr,
@@ -333,7 +335,7 @@ void Executor::executeOptimizedGraph(
           stream
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        MemoryManager::managedMemoryAddressToAssignedMap.erase(dataMovementAddress);
+        memManager.removeCurrentMapping(dataMovementAddress);
       }
       
       checkCudaErrors(cudaPeekAtLastError());
@@ -349,7 +351,7 @@ void Executor::executeOptimizedGraph(
       // Execute the task with current memory address mapping
       executeRandomTask(
         optimizedGraph.nodeIdToTaskIdMap[u],
-        MemoryManager::managedMemoryAddressToAssignedMap,
+        memManager.getEditableCurrentAddressMap(),
         stream
       );
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -434,11 +436,12 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Clean up");
   
   // Copy any remaining device data back to storage
-  for (auto &[oldAddr, newAddr] : MemoryManager::managedMemoryAddressToAssignedMap) {
+  auto &currentAddressMap = memManager.getEditableCurrentAddressMap();
+  for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpy(
       managedDeviceArrayToHostArrayMap[oldAddr],
       newAddr,
-      MemoryManager::managedMemoryAddressToSizeMap[oldAddr],
+      memManager.getSize(oldAddr),
       offloadMemcpyKind
     ));
     checkCudaErrors(cudaFree(newAddr));
@@ -552,27 +555,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
 
   // Move all managed data to storage (host or secondary GPU)
-  for (auto ptr : MemoryManager::managedMemoryAddresses) {
-    void *newPtr;
-    if (ConfigurationManager::getConfig().execution.useNvlink) {
-      // Allocate on secondary GPU
-      checkCudaErrors(cudaSetDevice(storageDeviceId));
-      checkCudaErrors(cudaMalloc(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
-    } else {
-      // Allocate on host memory
-      checkCudaErrors(cudaMallocHost(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
-    }
-
-    // Create mapping and copy data to storage
-    managedDeviceArrayToHostArrayMap[ptr] = newPtr;
-    checkCudaErrors(cudaMemcpy(
-      newPtr,
-      ptr,
-      MemoryManager::managedMemoryAddressToSizeMap[ptr],
-      cudaMemcpyDefault
-    ));
-    checkCudaErrors(cudaFree(ptr));
-  }
+  MemoryManager::getInstance().moveAllManagedMemoryToStorage(mainDeviceId, storageDeviceId, ConfigurationManager::getConfig().execution.useNvlink, managedDeviceArrayToHostArrayMap);
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(mainDeviceId));
@@ -589,14 +572,14 @@ void Executor::executeOptimizedGraphRepeatedly(
   //----------------------------------------------------------------------
   
   // Track memory addresses that have been updated (device copies)
-  // std::map<void *, void *> addressManagedToAssignedMap;
-  MemoryManager::managedMemoryAddressToAssignedMap.clear();
+  auto &memManager = MemoryManager::getInstance();
+  memManager.clearCurrentMappings();
   /*******/ // DIFFERENCE: Initial data allocation is integrated with main graph capture
   /*******/ // rather than as a separate step like in executeOptimizedGraph
   std::vector<cudaGraphNode_t> newLeafNodes;
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
-    auto ptr = MemoryManager::managedMemoryAddresses[arrayId];
-    auto size = MemoryManager::managedMemoryAddressToSizeMap[ptr];
+    auto ptr = memManager.getPointerByArrayId(arrayId);
+    auto size = memManager.getSizeByArrayId(arrayId);
     auto newPtr = managedDeviceArrayToHostArrayMap[ptr];
 
     // Allocate on device and copy data from storage
@@ -605,7 +588,7 @@ void Executor::executeOptimizedGraphRepeatedly(
     checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
     checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, prefetchMemcpyKind, stream));
     newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-    MemoryManager::managedMemoryAddressToAssignedMap[ptr] = devicePtr;
+    memManager.updateCurrentMapping(ptr, devicePtr);
   }
 
   // Maps nodes to their dependencies in the CUDA graph
@@ -630,8 +613,8 @@ void Executor::executeOptimizedGraphRepeatedly(
       // Handle data movement nodes (prefetch or offload)
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = MemoryManager::managedMemoryAddresses[dataMovement.arrayId];
-      auto dataMovementSize = MemoryManager::managedMemoryAddressToSizeMap[dataMovementAddress];
+      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
       if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
@@ -644,10 +627,10 @@ void Executor::executeOptimizedGraphRepeatedly(
           prefetchMemcpyKind,
           stream
         ));
-        MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress] = devicePtr;
+        memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress];
+        void *devicePtr = memManager.getCurrentAddressMap().at(dataMovementAddress);
         checkCudaErrors(cudaMemcpyAsync(
           managedDeviceArrayToHostArrayMap[dataMovementAddress],
           devicePtr,
@@ -656,7 +639,7 @@ void Executor::executeOptimizedGraphRepeatedly(
           stream
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        MemoryManager::managedMemoryAddressToAssignedMap.erase(dataMovementAddress);
+        memManager.removeCurrentMapping(dataMovementAddress);
       }
       checkCudaErrors(cudaPeekAtLastError());
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -667,7 +650,7 @@ void Executor::executeOptimizedGraphRepeatedly(
       // Execute the task with current memory address mapping
       executeRandomTask(
         optimizedGraph.nodeIdToTaskIdMap[u],
-        MemoryManager::managedMemoryAddressToAssignedMap,
+        memManager.getEditableCurrentAddressMap(),
         stream
       );
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -701,13 +684,14 @@ void Executor::executeOptimizedGraphRepeatedly(
 
   // Add cleanup operations for any remaining device memory
   newLeafNodes = getNodesWithZeroOutDegree(graph);
-  for (auto &[oldAddr, newAddr] : MemoryManager::managedMemoryAddressToAssignedMap) {
+  auto &currentAddressMap = memManager.getEditableCurrentAddressMap(); 
+  for (auto &[oldAddr, newAddr] : currentAddressMap) {
     // Copy any remaining device data back to storage and free device memory
     optimizedCudaGraphCreator->beginCaptureOperation(newLeafNodes);
     checkCudaErrors(cudaMemcpyAsync(
       managedDeviceArrayToHostArrayMap[oldAddr],
       newAddr,
-      MemoryManager::managedMemoryAddressToSizeMap[oldAddr],
+      memManager.getSize(oldAddr),
       offloadMemcpyKind,
       stream
     ));
@@ -871,29 +855,8 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
-
-  // Move all managed data to storage (host or secondary GPU)
-  for (auto ptr : MemoryManager::managedMemoryAddresses) {
-    void *newPtr;
-    if (ConfigurationManager::getConfig().execution.useNvlink) {
-      // Allocate on secondary GPU
-      checkCudaErrors(cudaSetDevice(storageDeviceId));
-      checkCudaErrors(cudaMalloc(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
-    } else {
-      // Allocate on host memory
-      checkCudaErrors(cudaMallocHost(&newPtr, MemoryManager::managedMemoryAddressToSizeMap[ptr]));
-    }
-
-    // Create mapping and copy data to storage
-    managedDeviceArrayToHostArrayMap[ptr] = newPtr;
-    checkCudaErrors(cudaMemcpy(
-      newPtr,
-      ptr,
-      MemoryManager::managedMemoryAddressToSizeMap[ptr],
-      cudaMemcpyDefault
-    ));
-    checkCudaErrors(cudaFree(ptr));  // Free original device memory
-  }
+  MemoryManager::getInstance().moveAllManagedMemoryToStorage(mainDeviceId, storageDeviceId, ConfigurationManager::getConfig().execution.useNvlink, managedDeviceArrayToHostArrayMap);
+  // Old implementation has been replaced with the MemoryManager API call above
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(mainDeviceId));
@@ -904,20 +867,20 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   // Track memory addresses that have been updated (device copies)
-  // std::map<void *, void *> MemoryManager::managedMemoryAddressToAssignedMap; //address mapping original to new device address
-  MemoryManager::managedMemoryAddressToAssignedMap.clear();
+  auto &memManager = MemoryManager::getInstance();
+  memManager.clearCurrentMappings();
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
-    auto ptr = MemoryManager::managedMemoryAddresses[arrayId];
-    auto size = MemoryManager::managedMemoryAddressToSizeMap[ptr];
+    auto ptr = memManager.getPointerByArrayId(arrayId);
+    auto size = memManager.getSizeByArrayId(arrayId);
     auto newPtr = managedDeviceArrayToHostArrayMap[ptr];
 
     // Allocate on device and copy data from storage
     void *devicePtr;
     checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
     checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, prefetchMemcpyKind, stream));
-    MemoryManager::managedMemoryAddressToAssignedMap[ptr] = devicePtr;  // Update the address mapping
+    memManager.updateCurrentMapping(ptr, devicePtr);  // Update the address mapping
   }
   
   // End capture and instantiate the initial data distribution graph
@@ -956,8 +919,8 @@ void Executor::executeOptimizedGraph(
       
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = MemoryManager::managedMemoryAddresses[dataMovement.arrayId];
-      auto dataMovementSize = MemoryManager::managedMemoryAddressToSizeMap[dataMovementAddress];
+      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
       if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
@@ -970,10 +933,10 @@ void Executor::executeOptimizedGraph(
           prefetchMemcpyKind,
           stream
         ));
-        MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress] = devicePtr;
+        memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = MemoryManager::managedMemoryAddressToAssignedMap[dataMovementAddress];
+        void *devicePtr = memManager.getCurrentAddressMap().at(dataMovementAddress);
         checkCudaErrors(cudaMemcpyAsync(
           managedDeviceArrayToHostArrayMap[dataMovementAddress],
           devicePtr,
@@ -982,7 +945,7 @@ void Executor::executeOptimizedGraph(
           stream
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        MemoryManager::managedMemoryAddressToAssignedMap.erase(dataMovementAddress);
+        memManager.removeCurrentMapping(dataMovementAddress);
       }
       
       checkCudaErrors(cudaPeekAtLastError());
@@ -1082,11 +1045,12 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Clean up");
   
   // Copy any remaining device data back to storage
-  for (auto &[oldAddr, newAddr] : MemoryManager::managedMemoryAddressToAssignedMap) {
+  auto &currentAddressMap = memManager.getEditableCurrentAddressMap();
+  for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpy(
       managedDeviceArrayToHostArrayMap[oldAddr],
       newAddr,
-      MemoryManager::managedMemoryAddressToSizeMap[oldAddr],
+      memManager.getSize(oldAddr),
       offloadMemcpyKind
     ));
     checkCudaErrors(cudaFree(newAddr));
@@ -1109,6 +1073,64 @@ void Executor::executeOptimizedGraph(
   runningTime = cudaEventClock.getTimeInSeconds();
 }
 
+cudaGraphExec_t Executor::initializeDataDistribution(
+  OptimizationOutput &optimizedGraph,
+  int mainDeviceId, 
+  int storageDeviceId,
+  bool useNvlink,
+  std::map<void *, void *> &managedDeviceArrayToHostArrayMap,
+  cudaStream_t stream,
+  cudaMemcpyKind prefetchMemcpyKind
+) {
+  LOG_TRACE_WITH_INFO("Initialize data distribution");
+  
+  // Move all managed data to storage (host or secondary GPU) using MemoryManager
+  auto& memManager = MemoryManager::getInstance();
+  memManager.moveAllManagedMemoryToStorage(
+    mainDeviceId,
+    storageDeviceId,
+    useNvlink,
+    managedDeviceArrayToHostArrayMap
+  );
+  
+  // Reset the current assignment map
+  memManager.clearCurrentMappings();
+  
+  // Create a subgraph for initial data prefetching
+  cudaGraph_t graphForInitialDataDistribution;
+  checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+  
+  // Prefetch arrays that need to be on device initially
+  auto& currentMap = memManager.getEditableCurrentAddressMap();
+  memManager.prefetchToDevice(
+    optimizedGraph.arraysInitiallyAllocatedOnDevice,
+    managedDeviceArrayToHostArrayMap,
+    currentMap,
+    prefetchMemcpyKind,
+    stream
+  );
+  
+  // End capture and instantiate graph
+  checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
+  
+  // Create executable graph
+  cudaGraphExec_t graphExecForInitialDataDistribution;
+  checkCudaErrors(cudaGraphInstantiate(
+    &graphExecForInitialDataDistribution, 
+    graphForInitialDataDistribution, 
+    nullptr, 
+    nullptr, 
+    0
+  ));
+  
+  // Execute the initial data distribution
+  checkCudaErrors(cudaGraphLaunch(graphExecForInitialDataDistribution, stream));
+  checkCudaErrors(cudaDeviceSynchronize());
+  
+  // We'll clean up the graph itself, but return the executable for the caller to clean up
+  checkCudaErrors(cudaGraphDestroy(graphForInitialDataDistribution));
+  
+  return graphExecForInitialDataDistribution;
+}
+
 }  // namespace memopt
-
-

@@ -117,7 +117,7 @@ FirstStepSolver::Input convertToFirstStepInput(OptimizationInput &optimizationIn
           // For each memory address in the intersection:
           // 1. Look up its size in bytes from the global MemoryManager
           // 2. Add this size to our running sum
-          return runningSum + MemoryManager::managedMemoryAddressToSizeMap[memoryAddress];
+          return runningSum + MemoryManager::getInstance().getSize(memoryAddress);
         }
       );
       
@@ -187,11 +187,11 @@ SecondStepSolver::Input convertToSecondStepInput(OptimizationInput &optimization
     // Convert memory addresses to array indices for the solver
     // Record which arrays are inputs to this task group
     for (auto arrayAddress : node.dataDependency.inputs) {
-      secondStepInput.taskGroupInputArrays[i].insert(MemoryManager::managedMemoryAddressToIndexMap[arrayAddress]);
+      secondStepInput.taskGroupInputArrays[i].insert(MemoryManager::getInstance().getArrayId(arrayAddress));
     }
     // Record which arrays are outputs from this task group
     for (auto arrayAddress : node.dataDependency.outputs) {
-      secondStepInput.taskGroupOutputArrays[i].insert(MemoryManager::managedMemoryAddressToIndexMap[arrayAddress]);
+      secondStepInput.taskGroupOutputArrays[i].insert(MemoryManager::getInstance().getArrayId(arrayAddress));
     }
   }
 
@@ -199,18 +199,18 @@ SecondStepSolver::Input convertToSecondStepInput(OptimizationInput &optimization
   secondStepInput.taskGroupRunningTimes[sentinelTaskGroupIndex] = 0;
 
   // Provide information about all memory arrays in the application
-  secondStepInput.arraySizes.resize(MemoryManager::managedMemoryAddresses.size());
-  for (const auto &[ptr, index] : MemoryManager::managedMemoryAddressToIndexMap) {
-    secondStepInput.arraySizes[index] = MemoryManager::managedMemoryAddressToSizeMap[ptr];
+  secondStepInput.arraySizes.resize(MemoryManager::getInstance().getManagedAddresses().size());
+  for (const auto &[ptr, index] : MemoryManager::getInstance().getAddressToIndexMap()) {
+    secondStepInput.arraySizes[index] = MemoryManager::getInstance().getSize(ptr);
   }
 
   // Identify arrays that are application inputs (must be available at start)
-  for (auto ptr : MemoryManager::applicationInputs) {
-    secondStepInput.applicationInputArrays.insert(MemoryManager::managedMemoryAddressToIndexMap[ptr]);
+  for (auto ptr : MemoryManager::getInstance().getApplicationInputs()) {
+    secondStepInput.applicationInputArrays.insert(MemoryManager::getInstance().getArrayId(ptr));
   }
   // Identify arrays that are application outputs (must be available at end)
-  for (auto ptr : MemoryManager::applicationOutputs) {
-    secondStepInput.applicationOutputArrays.insert(MemoryManager::managedMemoryAddressToIndexMap[ptr]);
+  for (auto ptr : MemoryManager::getInstance().getApplicationOutputs()) {
+    secondStepInput.applicationOutputArrays.insert(MemoryManager::getInstance().getArrayId(ptr));
   }
 
   return secondStepInput;
@@ -338,8 +338,10 @@ OptimizationOutput convertToOptimizationOutput(
 
   // Add prefetches
   for (const auto &[startingNodeIndex, arrayIndex] : secondStepOutput.prefetches) {
-    void *arrayAddress = MemoryManager::managedMemoryAddresses[arrayIndex];
-    size_t arraySize = MemoryManager::managedMemoryAddressToSizeMap[arrayAddress];
+    auto& memManager = MemoryManager::getInstance();
+    auto& addresses = memManager.getEditableManagedAddresses();
+    void *arrayAddress = addresses[arrayIndex];
+    size_t arraySize = memManager.getSize(arrayAddress);
 
     int endingNodeIndex = startingNodeIndex;
     while (endingNodeIndex < firstStepOutput.taskGroupExecutionOrder.size()) {
@@ -362,14 +364,16 @@ OptimizationOutput convertToOptimizationOutput(
       taskGroupBodyNodes[firstStepOutput.taskGroupExecutionOrder[endingNodeIndex]]
     );
 
-    nodeWeight[dataMovementNode] = static_cast<float>(MemoryManager::managedMemoryAddressToSizeMap[arrayAddress])
+    nodeWeight[dataMovementNode] = static_cast<float>(memManager.getSize(arrayAddress))
                                    / (ConfigurationManager::getConfig().optimization.prefetchingBandwidthInGB * 1e9);
   }
 
   // Add offloadings
   for (const auto &[startingNodeIndex, arrayIndex, endingNodeIndex] : secondStepOutput.offloadings) {
-    void *arrayAddress = MemoryManager::managedMemoryAddresses[arrayIndex];
-    size_t arraySize = MemoryManager::managedMemoryAddressToSizeMap[arrayAddress];
+    auto& memManager = MemoryManager::getInstance();
+    auto& addresses = memManager.getEditableManagedAddresses();
+    void *arrayAddress = addresses[arrayIndex];
+    size_t arraySize = memManager.getSize(arrayAddress);
 
     auto dataMovementNode = optimizedGraph.addDataMovementNode(
       OptimizationOutput::DataMovement::Direction::deviceToHost,
@@ -378,7 +382,7 @@ OptimizationOutput convertToOptimizationOutput(
       taskGroupStartNodes[firstStepOutput.taskGroupExecutionOrder[endingNodeIndex]]
     );
 
-    nodeWeight[dataMovementNode] = static_cast<float>(MemoryManager::managedMemoryAddressToSizeMap[arrayAddress])
+    nodeWeight[dataMovementNode] = static_cast<float>(memManager.getSize(arrayAddress))
                                    / (ConfigurationManager::getConfig().optimization.prefetchingBandwidthInGB * 1e9);
   }
 
