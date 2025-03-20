@@ -5,9 +5,14 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <memory>
+#include <mutex>
+
+#include <cuda_runtime.h>
 
 #include "../utilities/configurationManager.hpp"
 #include "../utilities/types.hpp"
+#include "../utilities/cudaUtilities.hpp"
 
 namespace memopt {
 
@@ -28,7 +33,8 @@ namespace memopt {
  * The MemoryManager is used by the optimization system to enable execution of
  * workloads that might otherwise exceed available GPU memory.
  */
-struct MemoryManager {
+class MemoryManager {
+private:
   /** @brief Ordered list of all managed memory addresses */
   inline static std::vector<void *> managedMemoryAddresses; // Original Memory
   
@@ -47,6 +53,8 @@ struct MemoryManager {
   /** @brief Maps original device pointers to their current relocated pointers */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
 
+public:
+
   /**
    * @brief Gets the updated address of a pointer if it has been relocated
    *
@@ -60,11 +68,299 @@ struct MemoryManager {
    */
   template <typename T>
   static T* getAddress(T *oldAddress) {
-    auto it = managedMemoryAddressToAssignedMap.find(static_cast<void *>(oldAddress));
-    if (it != managedMemoryAddressToAssignedMap.end()) {
+    auto& instance = getInstance();
+    auto& mapping = instance.getCurrentAddressMap();
+    auto it = mapping.find(static_cast<void *>(oldAddress));
+    if (it != mapping.end()) {
       return static_cast<T *>(it->second);
     }
     return oldAddress;
+  }
+
+  // === Enhanced API for future code ===
+
+  /**
+   * @brief Gets the singleton instance of the MemoryManager
+   * 
+   * @return Reference to the MemoryManager instance
+   */
+  static MemoryManager& getInstance() {
+    static MemoryManager instance;
+    return instance;
+  }
+
+  // Accessor methods that wrap the static members for modern code
+  const std::vector<void*>& getManagedAddresses() const { return managedMemoryAddresses; }
+  const std::map<void*, ArrayId>& getAddressToIndexMap() const { return managedMemoryAddressToIndexMap; }
+  const std::map<void*, size_t>& getAddressToSizeMap() const { return managedMemoryAddressToSizeMap; }
+  const std::set<void*>& getApplicationInputs() const { return applicationInputs; }
+  const std::set<void*>& getApplicationOutputs() const { return applicationOutputs; }
+  const std::map<void*, void*>& getDeviceToStorageMap() const { return deviceToStorageArrayMap; }
+  const std::map<void*, void*>& getCurrentAddressMap() const { return managedMemoryAddressToAssignedMap; }
+  
+  // Editable accessors for methods that need to modify the members
+  std::vector<void*>& getEditableManagedAddresses() { return managedMemoryAddresses; }
+  std::map<void*, ArrayId>& getEditableAddressToIndexMap() { return managedMemoryAddressToIndexMap; }
+  std::map<void*, size_t>& getEditableAddressToSizeMap() { return managedMemoryAddressToSizeMap; }
+  std::set<void*>& getEditableApplicationInputs() { return applicationInputs; }
+  std::set<void*>& getEditableApplicationOutputs() { return applicationOutputs; }
+  std::map<void*, void*>& getEditableDeviceToStorageMap() { return deviceToStorageArrayMap; }
+  std::map<void*, void*>& getEditableCurrentAddressMap() { return managedMemoryAddressToAssignedMap; }
+
+  // Get size for a specific managed address
+  size_t getSize(void* addr) const {
+    auto it = managedMemoryAddressToSizeMap.find(addr);
+    if (it != managedMemoryAddressToSizeMap.end()) {
+      return it->second;
+    }
+    return 0; // Return 0 for unmanaged memory
+  }
+
+  // Get array ID for a specific managed address
+  ArrayId getArrayId(void* addr) const {
+    auto it = managedMemoryAddressToIndexMap.find(addr);
+    if (it != managedMemoryAddressToIndexMap.end()) {
+      return it->second;
+    }
+    return -1; // Invalid ID for unmanaged memory
+  }
+
+  // Check if an address is managed
+  bool isManaged(void* addr) const {
+    return managedMemoryAddressToIndexMap.count(addr) > 0;
+  }
+
+  // For new code to update current mappings
+  void updateCurrentMapping(void* originalAddr, void* currentAddr) {
+    managedMemoryAddressToAssignedMap[originalAddr] = currentAddr;
+  }
+
+  // Remove a mapping
+  void removeCurrentMapping(void* originalAddr) {
+    managedMemoryAddressToAssignedMap.erase(originalAddr);
+  }
+
+  // Clear all mappings
+  void clearCurrentMappings() {
+    managedMemoryAddressToAssignedMap.clear();
+  }
+  
+  /**
+   * @brief Prefetches data from storage to device for needed arrays
+   *
+   * This method:
+   * 1. Allocates memory on the device
+   * 2. Copies data from storage to the device
+   * 3. Updates the current address mapping
+   *
+   * @param arrayIds Array IDs to prefetch
+   * @param storageMap Map containing storage locations
+   * @param currentMap Map to update with current device locations
+   * @param memcpyKind Type of memory copy (host-to-device or device-to-device)
+   * @param stream CUDA stream to use for async operations
+   */
+  void prefetchToDevice(const std::vector<ArrayId>& arrayIds,
+                         const std::map<void*, void*>& storageMap,
+                         std::map<void*, void*>& currentMap,
+                         cudaMemcpyKind memcpyKind,
+                         cudaStream_t stream) {
+    for (auto arrayId : arrayIds) {
+      void* originalPtr = managedMemoryAddresses[arrayId];
+      void* storagePtr = storageMap.at(originalPtr);
+      size_t size = getSize(originalPtr);
+      
+      // Allocate on device and copy data from storage
+      void* devicePtr;
+      checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
+      checkCudaErrors(cudaMemcpyAsync(
+        devicePtr, 
+        storagePtr, 
+        size, 
+        memcpyKind, 
+        stream
+      ));
+      
+      // Update the current mapping
+      currentMap[originalPtr] = devicePtr;
+    }
+  }
+  
+  /**
+   * @brief Allocates memory for a managed array in storage (host or GPU)
+   * 
+   * @param ptr Original pointer to managed memory
+   * @param storageDeviceId Device ID for storage (cudaCpuDeviceId for host)
+   * @param useNvlink Whether to use NVLink for GPU-to-GPU transfers
+   * @return void* Pointer to newly allocated memory in storage
+   */
+  void* allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
+    void* newPtr = nullptr;
+    size_t size = getSize(ptr);
+    
+    if (useNvlink) {
+      // Allocate on secondary GPU
+      checkCudaErrors(cudaSetDevice(storageDeviceId));
+      checkCudaErrors(cudaMalloc(&newPtr, size));
+    } else {
+      // Allocate on host memory
+      checkCudaErrors(cudaMallocHost(&newPtr, size));
+    }
+    
+    return newPtr;
+  }
+  
+  /**
+   * @brief Transfers data from device to storage (host or secondary GPU)
+   * 
+   * @param srcPtr Source pointer (on device)
+   * @param dstPtr Destination pointer (in storage)
+   * @param memcpyKind Type of memory copy operation
+   */
+  void transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memcpyKind) {
+    size_t size = getSize(srcPtr);
+    checkCudaErrors(cudaMemcpy(dstPtr, srcPtr, size, memcpyKind));
+  }
+  
+  /**
+   * @brief Moves data from device to storage and frees device memory
+   * 
+   * This operation:
+   * 1. Allocates memory in storage
+   * 2. Copies data from device to storage
+   * 3. Frees the original device memory
+   * 4. Updates the storage mapping
+   * 
+   * @param ptr Device pointer to managed memory
+   * @param storageDeviceId Device ID for storage
+   * @param useNvlink Whether to use NVLink
+   * @param storageMap Map for tracking device-to-storage relationships
+   * @return void* Pointer to memory in storage
+   */
+  void* offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink, 
+                        std::map<void*, void*>& storageMap) {
+    // Allocate in storage
+    void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
+    
+    // Copy data from device to storage
+    transferData(ptr, storagePtr, cudaMemcpyDefault);
+    
+    // Update mapping
+    storageMap[ptr] = storagePtr;
+    
+    // Free original device memory
+    checkCudaErrors(cudaFree(ptr));
+    
+    return storagePtr;
+  }
+  
+  /**
+   * @brief Moves all managed memory to storage (host or secondary GPU)
+   *
+   * Iterates through all managed memory addresses and offloads them to storage,
+   * either host memory or a secondary GPU depending on configuration.
+   *
+   * @param storageDeviceId Device ID for storage
+   * @param useNvlink Whether to use NVLink
+   * @param storageMap Map for tracking device-to-storage relationships
+   * @param mainDeviceId Device ID to return to after offloading
+   */
+  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
+                                     std::map<void*, void*>& storageMap) {
+    // Ensure the storage map starts empty
+    storageMap.clear();
+    
+    // Move each managed memory address to storage
+    for (auto ptr : managedMemoryAddresses) {
+      offloadToStorage(ptr, storageDeviceId, useNvlink, storageMap);
+    }
+    
+    // Switch back to main GPU
+    checkCudaErrors(cudaSetDevice(mainDeviceId));
+    checkCudaErrors(cudaDeviceSynchronize());
+  }
+  
+  /**
+   * @brief Offloads data from device to storage asynchronously
+   *
+   * Similar to offloadToStorage but runs asynchronously on a stream
+   *
+   * @param originalPtr Original device pointer
+   * @param storageMap Map of storage locations
+   * @param currentMap Map of current device locations
+   * @param offloadMemcpyKind Type of memory copy for offloading
+   * @param stream CUDA stream for async operations
+   */
+  void offloadDataAsync(void* originalPtr, std::map<void*, void*>& storageMap, 
+                       std::map<void*, void*>& currentMap, cudaMemcpyKind offloadMemcpyKind,
+                       cudaStream_t stream) {
+    void* devicePtr = currentMap[originalPtr];
+    void* storagePtr = storageMap[originalPtr];
+    size_t size = getSize(originalPtr);
+    
+    // Copy data from device to storage and free device memory
+    checkCudaErrors(cudaMemcpyAsync(storagePtr, devicePtr, size, offloadMemcpyKind, stream));
+    checkCudaErrors(cudaFreeAsync(devicePtr, stream));
+    
+    // Remove from current map
+    currentMap.erase(originalPtr);
+  }
+  
+  /**
+   * @brief Prefetches data for specific array IDs
+   *
+   * This method initializes device memory for a set of arrays by:
+   * 1. Looking up array addresses by ID
+   * 2. Allocating device memory of the appropriate size
+   * 3. Copying data from storage to device 
+   * 4. Updating the address mapping
+   *
+   * @param arrayIds Array IDs to initialize
+   * @param storageMap Map of storage locations
+   * @param memcpyKind Type of memory copy for prefetching
+   * @param stream CUDA stream for async operations
+   */
+  void prefetchArraysByIds(const std::vector<int>& arrayIds,
+                         std::map<void*, void*>& storageMap,
+                         cudaMemcpyKind memcpyKind,
+                         cudaStream_t stream) {
+    for (auto arrayId : arrayIds) {
+      auto ptr = managedMemoryAddresses[arrayId];
+      auto size = managedMemoryAddressToSizeMap[ptr];
+      auto newPtr = storageMap[ptr];
+      
+      // Allocate on device and copy data from storage
+      void *devicePtr;
+      checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
+      checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, memcpyKind, stream));
+      managedMemoryAddressToAssignedMap[ptr] = devicePtr;  // Update the address mapping
+    }
+  }
+  
+  /**
+   * @brief Gets the pointer to managed memory for a specific array ID
+   *
+   * @param arrayId The ID of the array to look up
+   * @return void* Pointer to the managed memory
+   */
+  void* getPointerByArrayId(int arrayId) const {
+    if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
+      return managedMemoryAddresses[arrayId];
+    }
+    return nullptr;
+  }
+  
+  /**
+   * @brief Gets the size of managed memory for a specific array ID
+   *
+   * @param arrayId The ID of the array to look up
+   * @return size_t Size of the managed memory in bytes
+   */
+  size_t getSizeByArrayId(int arrayId) const {
+    if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
+      void* ptr = managedMemoryAddresses[arrayId];
+      return getSize(ptr);
+    }
+    return 0;
   }
 };
 
@@ -81,20 +377,22 @@ struct MemoryManager {
  */
 template <typename T>
 void registerManagedMemoryAddress(T *devPtr, size_t size) {
-  // Skip small allocations based on configuration threshold: overhead of managing bunch of small arrays is non trival. 
+  // Skip small allocations based on configuration threshold
   if (size < ConfigurationManager::getConfig().optimization.minManagedArraySize) {
     return;
   }
 
   auto ptr = static_cast<void *>(devPtr);
+  auto& memManager = MemoryManager::getInstance();
+  
   // Only register if not already tracked
-  if (MemoryManager::managedMemoryAddressToIndexMap.count(ptr) == 0) {
-    MemoryManager::managedMemoryAddresses.push_back(ptr);
-    MemoryManager::managedMemoryAddressToIndexMap[ptr] = MemoryManager::managedMemoryAddresses.size() - 1;
-    MemoryManager::managedMemoryAddressToSizeMap[ptr] = size;
+  if (memManager.getAddressToIndexMap().count(ptr) == 0) {
+    memManager.getEditableManagedAddresses().push_back(ptr);
+    memManager.getEditableAddressToIndexMap()[ptr] = memManager.getManagedAddresses().size() - 1;
+    memManager.getEditableAddressToSizeMap()[ptr] = size;
     
     // Initialize the mapping to point to itself (no relocation yet)
-    MemoryManager::deviceToStorageArrayMap[ptr] = ptr;
+    memManager.getEditableDeviceToStorageMap()[ptr] = ptr;
   }
 }
 
@@ -109,7 +407,7 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
  */
 template <typename T>
 void registerApplicationInput(T *devPtr) {
-  MemoryManager::applicationInputs.insert(static_cast<void *>(devPtr));
+  MemoryManager::getInstance().getEditableApplicationInputs().insert(static_cast<void *>(devPtr));
 }
 
 /**
@@ -123,7 +421,7 @@ void registerApplicationInput(T *devPtr) {
  */
 template <typename T>
 void registerApplicationOutput(T *devPtr) {
-  MemoryManager::applicationOutputs.insert(static_cast<void *>(devPtr));
+  MemoryManager::getInstance().getEditableApplicationOutputs().insert(static_cast<void *>(devPtr));
 }
 
 /**
@@ -138,39 +436,44 @@ void registerApplicationOutput(T *devPtr) {
  * @param oldAddressToNewAddressMap Mapping from original addresses to new addresses
  */
 inline void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAddressMap) {
+  auto& memManager = MemoryManager::getInstance();
+  
   // Save the old size mapping for reference
-  auto oldManagedMemoryAddressToSizeMap = MemoryManager::managedMemoryAddressToSizeMap;
+  auto oldManagedMemoryAddressToSizeMap = memManager.getAddressToSizeMap();
 
   // Clear existing mappings to rebuild them
-  MemoryManager::managedMemoryAddressToSizeMap.clear();
-  MemoryManager::managedMemoryAddressToIndexMap.clear();
+  memManager.getEditableAddressToSizeMap().clear();
+  memManager.getEditableAddressToIndexMap().clear();
 
   // Update all addresses and rebuild mappings
-  for (int i = 0; i < MemoryManager::managedMemoryAddresses.size(); i++) {
+  for (int i = 0; i < memManager.getManagedAddresses().size(); i++) {
     // Ensure every old address has a corresponding new address
-    assert(oldAddressToNewAddressMap.count(MemoryManager::managedMemoryAddresses[i]) == 1);
+    assert(oldAddressToNewAddressMap.count(memManager.getManagedAddresses()[i]) == 1);
 
-    const auto newAddr = oldAddressToNewAddressMap.at(MemoryManager::managedMemoryAddresses[i]);
-    const auto oldAddr = MemoryManager::managedMemoryAddresses[i];
+    const auto newAddr = oldAddressToNewAddressMap.at(memManager.getManagedAddresses()[i]);
+    const auto oldAddr = memManager.getManagedAddresses()[i];
 
     // Update address in the main list
-    MemoryManager::managedMemoryAddresses[i] = newAddr;
+    memManager.getEditableManagedAddresses()[i] = newAddr;
     // Transfer the size information to the new address
-    MemoryManager::managedMemoryAddressToSizeMap[newAddr] = oldManagedMemoryAddressToSizeMap[oldAddr];
+    memManager.getEditableAddressToSizeMap()[newAddr] = oldManagedMemoryAddressToSizeMap.at(oldAddr);
     // Maintain the same array ID
-    MemoryManager::managedMemoryAddressToIndexMap[newAddr] = i;
+    memManager.getEditableAddressToIndexMap()[newAddr] = i;
     // Update the device-to-host mapping
-    MemoryManager::deviceToStorageArrayMap[oldAddr] = newAddr;
+    memManager.getEditableDeviceToStorageMap()[oldAddr] = newAddr;
 
     // Update application input registry if this was an input
-    if (MemoryManager::applicationInputs.count(oldAddr) > 0) {
-      MemoryManager::applicationInputs.erase(oldAddr);
-      MemoryManager::applicationInputs.insert(newAddr);
+    auto& appInputs = memManager.getEditableApplicationInputs();
+    if (memManager.getApplicationInputs().count(oldAddr) > 0) {
+      appInputs.erase(oldAddr);
+      appInputs.insert(newAddr);
     }
+    
     // Update application output registry if this was an output
-    if (MemoryManager::applicationOutputs.count(oldAddr) > 0) {
-      MemoryManager::applicationOutputs.erase(oldAddr);
-      MemoryManager::applicationOutputs.insert(newAddr);
+    auto& appOutputs = memManager.getEditableApplicationOutputs();
+    if (memManager.getApplicationOutputs().count(oldAddr) > 0) {
+      appOutputs.erase(oldAddr);
+      appOutputs.insert(newAddr);
     }
   }
 }
