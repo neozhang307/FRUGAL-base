@@ -47,11 +47,14 @@ private:
   /** @brief Tracks which arrays are application inputs/outputs (for data dependency analysis) */
   inline static std::set<void *> applicationInputs, applicationOutputs;
   
-  /** @brief Maps original device pointers to their current relocated pointers */
+  /** @brief Maps original device pointers to their current relocated pointers in storage */
   inline static std::map<void *, void *> deviceToStorageArrayMap;
 
-  /** @brief Maps original device pointers to their current relocated pointers */
+  /** @brief Maps original device pointers to their current relocated pointers on device */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
+  
+  /** @brief Maps device pointers to host/storage array pointers */
+  inline static std::map<void *, void *> managedDeviceToStorageMap;
   
   /** @brief Storage configuration parameters */
   struct StorageConfig {
@@ -107,6 +110,7 @@ public:
   const std::set<void*>& getApplicationOutputs() const { return applicationOutputs; }
   const std::map<void*, void*>& getDeviceToStorageMap() const { return deviceToStorageArrayMap; }
   const std::map<void*, void*>& getCurrentAddressMap() const { return managedMemoryAddressToAssignedMap; }
+  const std::map<void*, void*>& getDeviceToStorageMapping() const { return managedDeviceToStorageMap; }
   
   // Editable accessors for methods that need to modify the members
   std::vector<void*>& getEditableManagedAddresses() { return managedMemoryAddresses; }
@@ -116,6 +120,7 @@ public:
   std::set<void*>& getEditableApplicationOutputs() { return applicationOutputs; }
   std::map<void*, void*>& getEditableDeviceToStorageMap() { return deviceToStorageArrayMap; }
   std::map<void*, void*>& getEditableCurrentAddressMap() { return managedMemoryAddressToAssignedMap; }
+  std::map<void*, void*>& getEditableDeviceToStorageMapping() { return managedDeviceToStorageMap; }
 
   // Get size for a specific managed address
   size_t getSize(void* addr) const {
@@ -212,6 +217,40 @@ public:
   }
   
   /**
+   * @brief Prefetches data from storage to device for needed arrays using internal maps
+   *
+   * This overload uses the internal managedDeviceToStorageMap and managedMemoryAddressToAssignedMap
+   * for simplicity when using the MemoryManager's built-in storage.
+   *
+   * @param arrayIds Array IDs to prefetch
+   * @param memcpyKind Type of memory copy (host-to-device or device-to-device)
+   * @param stream CUDA stream to use for async operations
+   */
+  void prefetchToDevice(const std::vector<ArrayId>& arrayIds,
+                         cudaMemcpyKind memcpyKind,
+                         cudaStream_t stream) {
+    for (auto arrayId : arrayIds) {
+      void* originalPtr = managedMemoryAddresses[arrayId];
+      void* storagePtr = managedDeviceToStorageMap.at(originalPtr);
+      size_t size = getSize(originalPtr);
+      
+      // Allocate on device and copy data from storage
+      void* devicePtr;
+      checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
+      checkCudaErrors(cudaMemcpyAsync(
+        devicePtr, 
+        storagePtr, 
+        size, 
+        memcpyKind, 
+        stream
+      ));
+      
+      // Update the current mapping
+      managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    }
+  }
+  
+  /**
    * @brief Allocates memory for a managed array in storage (host or GPU)
    * 
    * @param ptr Original pointer to managed memory
@@ -285,6 +324,28 @@ public:
    * Iterates through all managed memory addresses and offloads them to storage,
    * either host memory or a secondary GPU depending on configuration.
    * Uses the storage parameters previously set with configureStorage().
+   * Stores mappings in internal managedDeviceToStorageMap.
+   */
+  void moveAllManagedMemoryToStorage() {
+    // Ensure the storage map starts empty
+    managedDeviceToStorageMap.clear();
+    
+    // Move each managed memory address to storage
+    for (auto ptr : managedMemoryAddresses) {
+      offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, managedDeviceToStorageMap);
+    }
+    
+    // Switch back to main GPU
+    checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
+    checkCudaErrors(cudaDeviceSynchronize());
+  }
+  
+  /**
+   * @brief Moves all managed memory to storage (host or secondary GPU)
+   *
+   * Iterates through all managed memory addresses and offloads them to storage.
+   * Uses the storage parameters previously set with configureStorage().
+   * This overload provides the same functionality but with an external map for compatibility.
    *
    * @param storageMap Map for tracking device-to-storage relationships
    */
@@ -296,6 +357,9 @@ public:
     for (auto ptr : managedMemoryAddresses) {
       offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, storageMap);
     }
+    
+    // Also update internal map
+    managedDeviceToStorageMap = storageMap;
     
     // Switch back to main GPU
     checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
@@ -318,8 +382,25 @@ public:
     // Configure storage with the provided parameters
     configureStorage(mainDeviceId, storageDeviceId, useNvlink);
     
-    // Call the simpler version that uses the configured parameters
+    // Call the simpler version that uses the configured parameters and external map
     moveAllManagedMemoryToStorage(storageMap);
+  }
+  
+  /**
+   * @brief Moves all managed memory to storage (host or secondary GPU)
+   *
+   * Overloaded version that takes explicit parameters but uses internal map.
+   *
+   * @param mainDeviceId Device ID to return to after offloading
+   * @param storageDeviceId Device ID for storage
+   * @param useNvlink Whether to use NVLink
+   */
+  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink) {
+    // Configure storage with the provided parameters
+    configureStorage(mainDeviceId, storageDeviceId, useNvlink);
+    
+    // Call the simpler version that uses the configured parameters and internal map
+    moveAllManagedMemoryToStorage();
   }
   
   /**
