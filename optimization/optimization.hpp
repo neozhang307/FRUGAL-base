@@ -1,6 +1,7 @@
 #pragma once
 
 #include "executor.hpp"
+#include "taskManager.hpp"
 #include "optimizationOutput.hpp"
 
 namespace memopt {
