@@ -56,17 +56,17 @@ int main() {
     const TaskId TASK_RUNTIME_PARAMETERIZED = 7;
     
     // Example 1: Simple task with no pointer handling
-    taskManager.registerTask(TASK_PRINT, []() {
+    taskManager.registerTask(TASK_PRINT, [](cudaStream_t) {
         std::cout << "Executing simple task with no parameters" << std::endl;
     });
     
     // Example 2: Task with a regular pointer parameter
     taskManager.registerParameterizedTask(
         TASK_INCREMENT,
-        [](float* arr) {
+        [](cudaStream_t stream, float* arr) {
             dim3 block(256);
             dim3 grid((1024 + block.x - 1) / block.x);
-            addKernel<<<grid, block>>>(arr, 1.0f, 1024);
+            addKernel<<<grid, block, 0, stream>>>(arr, 1.0f, 1024);
             cudaDeviceSynchronize();
         },
         d_arrayA  // Regular pointer (will be used as-is in Basic mode)
@@ -75,31 +75,32 @@ int main() {
     // Example 3: Task with a managed pointer parameter
     taskManager.registerParameterizedTask(
         TASK_COPY,
-        [](float* src, float* dst) {
-            cudaMemcpy(dst, src, 1024 * sizeof(float), cudaMemcpyDeviceToDevice);
+        [](cudaStream_t stream, float* src, float* dst) {
+            cudaMemcpyAsync(dst, src, 1024 * sizeof(float), cudaMemcpyDeviceToDevice, stream);
             cudaDeviceSynchronize();
         },
         TaskManager::managed<float>(d_arrayB),  // Will be processed with MemoryManager in Managed mode
         d_arrayC                              // Regular pointer
     );
     
-    // Example 4: Task with a non-pointer parameter (CUDA stream)
+    // Example 4: Task with a non-pointer parameter (extra stream parameter - will be ignored)
     taskManager.registerParameterizedTask(
         TASK_STREAM_OP,
-        [](float* arr, cudaStream_t stream) {
+        [](cudaStream_t stream, float* arr, cudaStream_t extraStream) {
             dim3 block(256);
             dim3 grid((1024 + block.x - 1) / block.x);
+            // Use the first stream parameter (the one provided by TaskManager)
             addKernel<<<grid, block, 0, stream>>>(arr, 2.0f, 1024);
             // No synchronization - using stream
         },
         TaskManager::managed<float>(d_arrayA),  // Managed pointer
-        stream1                                 // Non-pointer parameter
+        stream1                                 // This will be passed as an extra parameter but won't be used for execution
     );
     
     // Example 5: Task with multiple parameters of different types
     taskManager.registerParameterizedTask(
         TASK_MULTIPLE_PARAMS,
-        [](float* src, float* dst, cudaStream_t stream, float multiplier, int elements) {
+        [](cudaStream_t stream, float* src, float* dst, cudaStream_t extraStream, float multiplier, int elements) {
             // Copy first
             cudaMemcpyAsync(dst, src, elements * sizeof(float), cudaMemcpyDeviceToDevice, stream);
             
@@ -114,24 +115,12 @@ int main() {
         },
         TaskManager::managed<float>(d_arrayB),  // Managed source pointer
         d_arrayC,                              // Regular destination pointer
-        stream2,                               // CUDA stream parameter
+        stream2,                               // Extra CUDA stream parameter (won't be used for execution)
         3.5f,                                  // Float scalar parameter
         numElements                            // Integer parameter
     );
     
-    // Example 6: StreamParameterizedTask - fixed arguments registered at creation time, 
-    // but only stream provided at execution time
-    taskManager.registerStreamTask(
-        TASK_STREAM_PARAMETERIZED,
-        [](float* arr, float value, cudaStream_t stream) {
-            dim3 block(256);
-            dim3 grid((1024 + block.x - 1) / block.x);
-            std::cout << "Executing StreamParameterizedTask with value " << value << std::endl;
-            addKernel<<<grid, block, 0, stream>>>(arr, value, 1024);
-        },
-        TaskManager::managed<float>(d_arrayA),  // Fixed parameter: array to modify
-        5.0f                                     // Fixed parameter: value to add
-    );
+ 
     
     // Example 7: RuntimeParameterizedTask - all arguments provided at execution time
     taskManager.registerRuntimeTask(
@@ -153,11 +142,8 @@ int main() {
     taskManager.execute(TASK_STREAM_OP, ExecutionMode::Basic);
     taskManager.execute(TASK_MULTIPLE_PARAMS, ExecutionMode::Basic);
     
-    // Execute StreamParameterizedTask with different streams
-    taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Basic, stream1);
-    taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Basic, stream2);
-    
     // Execute RuntimeParameterizedTask with different parameters
+    // When we call executeWithParams, our lambda receives the additional parameters
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Basic, 
                                   d_arrayB, 7.0f, stream1, 512);
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Basic, 
@@ -185,15 +171,14 @@ int main() {
     taskManager.execute(TASK_STREAM_OP, ExecutionMode::Managed);
     taskManager.execute(TASK_MULTIPLE_PARAMS, ExecutionMode::Managed);
     
-    // Execute StreamParameterizedTask with different streams in Managed mode
-    taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Managed, stream1);
-    taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Managed, stream2);
-    
+
     // Print what we're doing in Managed mode with RuntimeParameterizedTask
     std::cout << "Executing RuntimeParameterizedTask in Managed mode..." << std::endl;
     
     // Execute RuntimeParameterizedTask with different parameters in Managed mode
     // Use direct pointers instead of ManagedPtr - the task will handle the MemoryManager lookup
+    // ExecuteWithParams order: taskId, (optional mode), args...
+    // Args list matches what the function expects
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Managed, 
                                   d_arrayB, 10.0f, stream1, 256);
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Managed, 
