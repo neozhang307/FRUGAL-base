@@ -26,3 +26,10 @@ target_link_libraries(
   CUDA::curand
   fmt::fmt
 )
+
+add_executable(taskManagerExample taskManagerExample.cu)
+target_link_libraries(
+  taskManagerExample
+  memopt
+  fmt::fmt
+)

@@ -258,7 +258,8 @@ class TiledCholeskyTaskManager {
     void *d_workspace,
     int *d_info,
     double *one,
-    double *minusOne
+    double *minusOne,
+    TaskManager& taskManager
   ) {
     this->cusolverDnHandle = cusolverDnHandle;
     this->cusolverDnParams = cusolverDnParams;
@@ -270,6 +271,7 @@ class TiledCholeskyTaskManager {
     this->d_info = d_info;
     this->one = one;
     this->minusOne = minusOne;
+    this->taskManager = &taskManager;
   }
 
   int addTask(
@@ -289,66 +291,91 @@ class TiledCholeskyTaskManager {
     return this->tasks.size() - 1;
   }
 
-  void executeRandomTask(std::function<double *(int, int)> getMatrixBlock, int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
+
+
+  void executeRandomTaskBase(std::function<double *(int, int)> getMatrixBlock, int taskId, TaskManager *taskManager, cudaStream_t stream) {
     const auto &task = this->tasks[taskId];
 
     checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, stream));
     checkCudaErrors(cublasSetStream(cublasHandle, stream));
 
     if (task.operation == Task::OperationType::portf) {
-      checkCudaErrors(cusolverDnXpotrf(
-        cusolverDnHandle,
-        cusolverDnParams,
-        CUBLAS_FILL_MODE_LOWER,
-        B,
-        CUDA_R_64F,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)),
-        B,
-        CUDA_R_64F,
-        d_workspace,
-        workspaceInBytesOnDevice,
-        h_workspace,
-        workspaceInBytesOnHost,
-        d_info
-      ));
+      taskManager->executeWithParams(taskId,
+        MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)),
+        stream);
+      // checkCudaErrors(cusolverDnXpotrf(
+      //   cusolverDnHandle,
+      //   cusolverDnParams,
+      //   CUBLAS_FILL_MODE_LOWER,
+      //   B,
+      //   CUDA_R_64F,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)),
+      //   MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)),
+      //   B,
+      //   CUDA_R_64F,
+      //   d_workspace,
+      //   workspaceInBytesOnDevice,
+      //   h_workspace,
+      //   workspaceInBytesOnHost,
+      //   d_info
+      // ));
     } else if (task.operation == Task::OperationType::trsm) {
-      checkCudaErrors(cublasDtrsm(
-        cublasHandle,
-        CUBLAS_SIDE_RIGHT,
-        CUBLAS_FILL_MODE_LOWER,
-        CUBLAS_OP_T,
-        CUBLAS_DIAG_NON_UNIT,
-        B, B,
-        one,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), B,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), B
-      ));
+      taskManager->executeWithParams(taskId,
+        MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)),
+        MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)),
+        stream);
+      // checkCudaErrors(cublasDtrsm(
+      //   cublasHandle,
+      //   CUBLAS_SIDE_RIGHT,
+      //   CUBLAS_FILL_MODE_LOWER,
+      //   CUBLAS_OP_T,
+      //   CUBLAS_DIAG_NON_UNIT,
+      //   B, B,
+      //   one,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), B,
+      //   MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)), B,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), B
+      //   MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)), B
+      // ));
     } else if (task.operation == Task::OperationType::syrk) {
-      checkCudaErrors(cublasDsyrk(
-        cublasHandle,
-        CUBLAS_FILL_MODE_LOWER,
-        CUBLAS_OP_N,
-        B, B,
-        minusOne, tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), B,
-        one, tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), B
-      ));
+      taskManager->executeWithParams(taskId,
+        MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)),
+        MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)),
+        stream);
+      // checkCudaErrors(cublasDsyrk(
+      //   cublasHandle,
+      //   CUBLAS_FILL_MODE_LOWER,
+      //   CUBLAS_OP_N,
+      //   B, B,
+      //   minusOne, MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)), B,
+      //   // minusOne, tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), B,
+      //   one, MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)), B
+      //   // one, tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), B
+      // ));
     } else if (task.operation == Task::OperationType::gemm) {
-      checkCudaErrors(cublasGemmEx(
-        cublasHandle,
-        CUBLAS_OP_N,
-        CUBLAS_OP_T,
-        B, B, B,
-        minusOne,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), CUDA_R_64F, B,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.c.first, task.c.second)), CUDA_R_64F, B,
-        one,
-        tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), CUDA_R_64F, B,
-        CUBLAS_COMPUTE_64F,
-        CUBLAS_GEMM_DEFAULT
-      ));
+      taskManager->executeWithParams(taskId,
+        MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)),
+        MemoryManager::getAddress( getMatrixBlock(task.c.first, task.c.second)),
+        MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)),
+        stream);
+      // checkCudaErrors(cublasGemmEx(
+      //   cublasHandle,
+      //   CUBLAS_OP_N,
+      //   CUBLAS_OP_T,
+      //   B, B, B,
+      //   minusOne,
+      //   MemoryManager::getAddress( getMatrixBlock(task.b.first, task.b.second)), CUDA_R_64F, B,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.b.first, task.b.second)), CUDA_R_64F, B,
+      //   MemoryManager::getAddress( getMatrixBlock(task.c.first, task.c.second)), CUDA_R_64F, B,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.c.first, task.c.second)), CUDA_R_64F, B,
+      //   one,
+      //   MemoryManager::getAddress( getMatrixBlock(task.a.first, task.a.second)), CUDA_R_64F, B,
+      //   // tryGettingUpdatedAddress(addressUpdate, getMatrixBlock(task.a.first, task.a.second)), CUDA_R_64F, B,
+      //   CUBLAS_COMPUTE_64F,
+      //   CUBLAS_GEMM_DEFAULT
+      // ));
     }
   }
-
  private:
   std::vector<Task> tasks;
 
@@ -359,6 +386,19 @@ class TiledCholeskyTaskManager {
   void *h_workspace, *d_workspace;
   int *d_info;
   double *one, *minusOne;
+  TaskManager* taskManager;
+
+  // Method to directly execute a task using the TaskManager
+  void executeTaskUsingTaskManager(int taskId, cudaStream_t stream) {
+    if (taskManager) {
+      taskManager->executeWithStream(taskId, stream);
+    }
+  }
+
+  // Get access to the TaskManager
+  TaskManager* getTaskManager() {
+    return taskManager;
+  }
 
   template <typename T>
   T *tryGettingUpdatedAddress(std::map<void *, void *> &addressUpdate, T *oldAddress) {
@@ -577,6 +617,9 @@ void tiledCholesky(bool optimize, bool verify) {
   // Initialize the graph creator to manage operation dependencies
   auto tiledCholeskyGraphCreator = std::make_unique<TiledCholeskyGraphCreator>(s, graph);
 
+  // Create TaskManager
+  TaskManager tmanager;
+  
   // Initialize the task manager for tracking operations
   auto tiledCholeskyTaskManager = std::make_unique<TiledCholeskyTaskManager>(
     cusolverDnHandle,
@@ -588,9 +631,9 @@ void tiledCholesky(bool optimize, bool verify) {
     d_workspace,
     d_info,
     one,
-    minusOne
+    minusOne,
+    tmanager
   );
-
   // SECTION 6: TILED CHOLESKY ALGORITHM IMPLEMENTATION
   // Records the entire algorithm as a CUDA graph with dependencies
   
@@ -612,22 +655,33 @@ void tiledCholesky(bool optimize, bool verify) {
     nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::portf, {k, k});
     annotateNextTask(nextTaskId, {getMatrixBlock(k, k)}, {getMatrixBlock(k, k)}, s);
     
-    // Actual computation using cuSOLVER
-    checkCudaErrors(cusolverDnXpotrf(
-      cusolverDnHandle,
-      cusolverDnParams,
-      CUBLAS_FILL_MODE_LOWER,  // Lower triangular (for Cholesky)
-      B,                       // Matrix size
-      CUDA_R_64F,              // Data type (double)
-      getMatrixBlock(k, k),    // Input/output matrix
-      B,                       // Leading dimension
-      CUDA_R_64F,              // Output data type
-      d_workspace,             // Device workspace
-      workspaceInBytesOnDevice,
-      h_workspace,             // Host workspace
-      workspaceInBytesOnHost,
-      d_info                   // Error information
-    ));
+    // Use RuntimeTask API to support executeWithParams
+    tmanager.registerRuntimeTask(
+      nextTaskId,
+      [cusolverDnHandle, cusolverDnParams, d_workspace, workspaceInBytesOnDevice, 
+       h_workspace, workspaceInBytesOnHost, d_info](double* matrixblock_k_k, cudaStream_t stream) {
+        checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, stream));
+
+        checkCudaErrors(cusolverDnXpotrf(
+            cusolverDnHandle,
+            cusolverDnParams,
+            CUBLAS_FILL_MODE_LOWER,  // Lower triangular (for Cholesky)
+            B,               // Matrix size
+            CUDA_R_64F,              // Data type (double)
+            matrixblock_k_k,         // Input/output matrix
+            B,               // Leading dimension
+            CUDA_R_64F,              // Output data type
+            d_workspace,             // Device workspace
+            workspaceInBytesOnDevice,
+            h_workspace,             // Host workspace
+            workspaceInBytesOnHost,
+            d_info                   // Error information
+          ));
+      }
+    );
+    
+    // Execute the task with parameters (matrix block and stream)
+    tmanager.executeWithParams(nextTaskId, getMatrixBlock(k, k), s);
     
     // End graph capture
     tiledCholeskyGraphCreator->endCaptureOperation();
@@ -649,19 +703,32 @@ void tiledCholesky(bool optimize, bool verify) {
       nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::trsm, {i, k}, {k, k});
       annotateNextTask(nextTaskId, {getMatrixBlock(i, k), getMatrixBlock(k, k)}, {getMatrixBlock(i, k)}, s);
       
-      // Triangular solve using cuBLAS
-      checkCudaErrors(cublasDtrsm(
-        cublasHandle,
-        CUBLAS_SIDE_RIGHT,     // Multiply from right
-        CUBLAS_FILL_MODE_LOWER, // Lower triangular
-        CUBLAS_OP_T,           // Transpose
-        CUBLAS_DIAG_NON_UNIT,  // Non-unit diagonal
-        B, B,                  // Matrix dimensions
-        one,                   // Alpha = 1.0
-        getMatrixBlock(k, k), B, // Triangular matrix
-        getMatrixBlock(i, k), B  // Input/output matrix
-      ));
+      // Use new StreamTask API for TRSM operation
+      double* matrixBlock_k_k = getMatrixBlock(k, k);
+      double* matrixBlock_i_k = getMatrixBlock(i, k);
       
+      tmanager.registerRuntimeTask(
+        nextTaskId,
+        [cublasHandle, one](double* matrixblock_k_k, double* matrixblock_i_k, cudaStream_t stream) {
+          checkCudaErrors(cublasSetStream(cublasHandle, stream));
+          checkCudaErrors(cublasDtrsm(
+            cublasHandle,
+            CUBLAS_SIDE_RIGHT,      // Multiply from right
+            CUBLAS_FILL_MODE_LOWER, // Lower triangular
+            CUBLAS_OP_T,            // Transpose
+            CUBLAS_DIAG_NON_UNIT,   // Non-unit diagonal
+            B, B,   // Matrix dimensions
+            one,                    // Alpha = 1.0
+            matrixblock_k_k, B, // Triangular matrix
+            matrixblock_i_k, B  // Input/output matrix
+          ));
+        }
+      );
+      tmanager.executeWithParams(nextTaskId,
+        matrixBlock_k_k,
+        matrixBlock_i_k,
+        s);
+
       tiledCholeskyGraphCreator->endCaptureOperation();
     }
 
@@ -680,18 +747,28 @@ void tiledCholesky(bool optimize, bool verify) {
       
       nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::syrk, {i, i}, {i, k});
       annotateNextTask(nextTaskId, {getMatrixBlock(i, i), getMatrixBlock(i, k)}, {getMatrixBlock(i, i)}, s);
-      
+      tmanager.registerRuntimeTask(
+        nextTaskId,
+        [cublasHandle, minusOne, one](double* matrixblock_i_k, double* matrixblock_i_i, cudaStream_t stream) {
+          checkCudaErrors(cublasSetStream(cublasHandle, stream));
+          checkCudaErrors(cublasDsyrk(
+            cublasHandle,
+            CUBLAS_FILL_MODE_LOWER, // Lower triangular
+            CUBLAS_OP_N,           // No transpose
+            B, B,                  // Matrix dimensions
+            minusOne,              // Alpha = -1.0
+            matrixblock_i_k, B, // Input matrix
+            one,                   // Beta = 1.0
+            matrixblock_i_i, B  // Input/output matrix
+          ));
+        }
+      );
+      tmanager.executeWithParams(nextTaskId,
+        getMatrixBlock(i, k),
+        getMatrixBlock(i, i),
+        s);
       // Symmetric rank-k update using cuBLAS
-      checkCudaErrors(cublasDsyrk(
-        cublasHandle,
-        CUBLAS_FILL_MODE_LOWER, // Lower triangular
-        CUBLAS_OP_N,           // No transpose
-        B, B,                  // Matrix dimensions
-        minusOne,              // Alpha = -1.0
-        getMatrixBlock(i, k), B, // Input matrix
-        one,                   // Beta = 1.0
-        getMatrixBlock(i, i), B  // Input/output matrix
-      ));
+      
       
       tiledCholeskyGraphCreator->endCaptureOperation();
 
@@ -708,30 +785,39 @@ void tiledCholesky(bool optimize, bool verify) {
         
         nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::gemm, {j, i}, {j, k}, {i, k});
         annotateNextTask(nextTaskId, {getMatrixBlock(j, i), getMatrixBlock(j, k), getMatrixBlock(i, k)}, {getMatrixBlock(j, i)}, s);
-        
-        // General matrix multiplication using cuBLAS
-        checkCudaErrors(cublasGemmEx(
-          cublasHandle,
-          CUBLAS_OP_N,           // No transpose for first matrix
-          CUBLAS_OP_T,           // Transpose second matrix
-          B, B, B,               // Matrix dimensions
-          minusOne,              // Alpha = -1.0
-          getMatrixBlock(j, k), CUDA_R_64F, B, // First input matrix
-          getMatrixBlock(i, k), CUDA_R_64F, B, // Second input matrix
-          one,                   // Beta = 1.0
-          getMatrixBlock(j, i), CUDA_R_64F, B, // Input/output matrix
-          CUBLAS_COMPUTE_64F,    // Computation precision
-          CUBLAS_GEMM_DEFAULT    // Algorithm selection
-        ));
-        
-        tiledCholeskyGraphCreator->endCaptureOperation();
+        tmanager.registerRuntimeTask(
+        nextTaskId,
+        [cublasHandle, minusOne, one](double* matrixblock_j_k, double* matrixblock_i_k, double* matrixblock_j_i, cudaStream_t stream) {
+          // General matrix multiplication using cuBLAS
+            checkCudaErrors(cublasSetStream(cublasHandle, stream));
+            checkCudaErrors(cublasGemmEx(
+              cublasHandle,
+              CUBLAS_OP_N,           // No transpose for first matrix
+              CUBLAS_OP_T,           // Transpose second matrix
+              B, B, B,               // Matrix dimensions
+              minusOne,              // Alpha = -1.0
+              matrixblock_j_k, CUDA_R_64F, B, // First input matrix
+              matrixblock_i_k, CUDA_R_64F, B, // Second input matrix
+              one,                   // Beta = 1.0
+              matrixblock_j_i, CUDA_R_64F, B, // Input/output matrix
+              CUBLAS_COMPUTE_64F,    // Computation precision
+              CUBLAS_GEMM_DEFAULT    // Algorithm selection
+            ));
+        }
+      );
+        tmanager.executeWithParams(nextTaskId,
+           getMatrixBlock(j, k),
+          getMatrixBlock(i, k),
+          getMatrixBlock(j, i),
+          s);
+          tiledCholeskyGraphCreator->endCaptureOperation();
       }
     }
   }
 
   // Graph creation completed - now we can export it for debugging
   clock.logWithCurrentTime("Graph recorded");
-
+  tmanager.configureToManaged();
   LOG_TRACE_WITH_INFO("Printing original graph to graph.dot");
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "./graph.dot", 0));
 
@@ -758,11 +844,24 @@ void tiledCholesky(bool optimize, bool verify) {
     // Execute the optimized graph with memory management
     float runningTime;
     std::map<void *, void *> managedDeviceArrayToHostArrayMap;
-    executeOptimizedGraph(
+    // executeOptimizedGraph(
+    //   optimizedGraph,
+    //   // Callback for executing specific tasks
+    //   [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
+    //     tiledCholeskyTaskManager->executeRandomTask(getMatrixBlock, taskId, addressUpdate, stream);
+    //   },
+    //   runningTime,
+    //   managedDeviceArrayToHostArrayMap
+    // );
+     executeOptimizedGraph(
       optimizedGraph,
       // Callback for executing specific tasks
-      [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
-        tiledCholeskyTaskManager->executeRandomTask(getMatrixBlock, taskId, addressUpdate, stream);
+      [&](int taskId, cudaStream_t stream) {
+        // Option 1: Use the direct execution method from TiledCholeskyTaskManager
+        tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager ,stream);
+        
+        // Option 2: Use the TaskManager via TiledCholeskyTaskManager
+        // tiledCholeskyTaskManager->executeTaskUsingTaskManager(taskId, stream);
       },
       runningTime,
       managedDeviceArrayToHostArrayMap
@@ -790,15 +889,26 @@ void tiledCholesky(bool optimize, bool verify) {
       // Execute optimized graph with memory management
       float runningTime;
       std::map<void *, void *> managedDeviceArrayToHostArrayMap;
+      // executeOptimizedGraph(
+      //   optimizedGraph,
+      //   [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
+      //     tiledCholeskyTaskManager->executeRandomTask(getMatrixBlock, taskId, addressUpdate, stream);
+      //   },
+      //   runningTime,
+      //   managedDeviceArrayToHostArrayMap
+      // );
       executeOptimizedGraph(
         optimizedGraph,
-        [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
-          tiledCholeskyTaskManager->executeRandomTask(getMatrixBlock, taskId, addressUpdate, stream);
+        [&](int taskId, cudaStream_t stream) {
+          // Option 1: Use the direct execution method from TiledCholeskyTaskManager
+          tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager, stream);
+          
+          // Option 2: Use the TaskManager via TiledCholeskyTaskManager
+          // tiledCholeskyTaskManager->executeTaskUsingTaskManager(taskId, stream);
         },
         runningTime,
         managedDeviceArrayToHostArrayMap
       );
-
       checkCudaErrors(cudaDeviceSynchronize());
 
       // Reset memory status after optimization run
