@@ -555,7 +555,12 @@ void Executor::executeOptimizedGraphRepeatedly(
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
 
   // Move all managed data to storage (host or secondary GPU)
-  MemoryManager::getInstance().moveAllManagedMemoryToStorage(mainDeviceId, storageDeviceId, ConfigurationManager::getConfig().execution.useNvlink, managedDeviceArrayToHostArrayMap);
+  MemoryManager::getInstance().configureStorage(
+    mainDeviceId, 
+    storageDeviceId, 
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  MemoryManager::getInstance().moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(mainDeviceId));
@@ -855,7 +860,12 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
-  MemoryManager::getInstance().moveAllManagedMemoryToStorage(mainDeviceId, storageDeviceId, ConfigurationManager::getConfig().execution.useNvlink, managedDeviceArrayToHostArrayMap);
+  MemoryManager::getInstance().configureStorage(
+    mainDeviceId, 
+    storageDeviceId, 
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  MemoryManager::getInstance().moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   // Old implementation has been replaced with the MemoryManager API call above
   
   // Switch back to main GPU
@@ -1086,12 +1096,10 @@ cudaGraphExec_t Executor::initializeDataDistribution(
   
   // Move all managed data to storage (host or secondary GPU) using MemoryManager
   auto& memManager = MemoryManager::getInstance();
-  memManager.moveAllManagedMemoryToStorage(
-    mainDeviceId,
-    storageDeviceId,
-    useNvlink,
-    managedDeviceArrayToHostArrayMap
-  );
+  // Configure storage parameters
+  memManager.configureStorage(mainDeviceId, storageDeviceId, useNvlink);
+  // Use the simplified API that uses the configured parameters
+  memManager.moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   
   // Reset the current assignment map
   memManager.clearCurrentMappings();

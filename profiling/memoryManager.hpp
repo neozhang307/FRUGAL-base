@@ -52,6 +52,16 @@ private:
 
   /** @brief Maps original device pointers to their current relocated pointers */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
+  
+  /** @brief Storage configuration parameters */
+  struct StorageConfig {
+    int mainDeviceId;      // Main GPU device ID
+    int storageDeviceId;   // Storage device ID (CPU=-1, other values for secondary GPU)
+    bool useNvlink;        // Whether to use NVLink for GPU-to-GPU transfers
+    
+    StorageConfig() : mainDeviceId(0), storageDeviceId(-1), useNvlink(false) {}
+  };
+  inline static StorageConfig storageConfig;
 
 public:
 
@@ -143,6 +153,22 @@ public:
   // Clear all mappings
   void clearCurrentMappings() {
     managedMemoryAddressToAssignedMap.clear();
+  }
+  
+  /**
+   * @brief Configures storage parameters for memory offloading
+   *
+   * This function sets the parameters used for memory movements between device and storage.
+   * It should be called before using moveAllManagedMemoryToStorage or other memory operations.
+   *
+   * @param mainDeviceId The ID of the main GPU device
+   * @param storageDeviceId The ID of the storage device (-1 for CPU, other values for secondary GPU)
+   * @param useNvlink Whether to use NVLink for GPU-to-GPU transfers
+   */
+  void configureStorage(int mainDeviceId, int storageDeviceId, bool useNvlink) {
+    storageConfig.mainDeviceId = mainDeviceId;
+    storageConfig.storageDeviceId = storageDeviceId;
+    storageConfig.useNvlink = useNvlink;
   }
   
   /**
@@ -258,25 +284,42 @@ public:
    *
    * Iterates through all managed memory addresses and offloads them to storage,
    * either host memory or a secondary GPU depending on configuration.
+   * Uses the storage parameters previously set with configureStorage().
    *
-   * @param storageDeviceId Device ID for storage
-   * @param useNvlink Whether to use NVLink
    * @param storageMap Map for tracking device-to-storage relationships
-   * @param mainDeviceId Device ID to return to after offloading
    */
-  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
-                                     std::map<void*, void*>& storageMap) {
+  void moveAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
     // Ensure the storage map starts empty
     storageMap.clear();
     
     // Move each managed memory address to storage
     for (auto ptr : managedMemoryAddresses) {
-      offloadToStorage(ptr, storageDeviceId, useNvlink, storageMap);
+      offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, storageMap);
     }
     
     // Switch back to main GPU
-    checkCudaErrors(cudaSetDevice(mainDeviceId));
+    checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
     checkCudaErrors(cudaDeviceSynchronize());
+  }
+  
+  /**
+   * @brief Moves all managed memory to storage (host or secondary GPU)
+   *
+   * Overloaded version that takes explicit parameters.
+   * The original version remains for backward compatibility.
+   *
+   * @param mainDeviceId Device ID to return to after offloading
+   * @param storageDeviceId Device ID for storage
+   * @param useNvlink Whether to use NVLink
+   * @param storageMap Map for tracking device-to-storage relationships
+   */
+  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
+                                     std::map<void*, void*>& storageMap) {
+    // Configure storage with the provided parameters
+    configureStorage(mainDeviceId, storageDeviceId, useNvlink);
+    
+    // Call the simpler version that uses the configured parameters
+    moveAllManagedMemoryToStorage(storageMap);
   }
   
   /**
