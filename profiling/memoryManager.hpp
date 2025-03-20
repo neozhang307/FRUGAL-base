@@ -53,8 +53,8 @@ private:
   /** @brief Maps original device pointers to their current relocated pointers on device */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
   
-  /** @brief Maps device pointers to host/storage array pointers */
-  inline static std::map<void *, void *> managedDeviceToStorageMap;
+  /** @brief Maps device pointers to host/storage array pointers (internal version of managedDeviceArrayToHostArrayMap) */
+  inline static std::map<void *, void *> managedDeviceArrayToHostArrayMap;
   
   /** @brief Storage configuration parameters */
   struct StorageConfig {
@@ -110,7 +110,7 @@ public:
   const std::set<void*>& getApplicationOutputs() const { return applicationOutputs; }
   const std::map<void*, void*>& getDeviceToStorageMap() const { return deviceToStorageArrayMap; }
   const std::map<void*, void*>& getCurrentAddressMap() const { return managedMemoryAddressToAssignedMap; }
-  const std::map<void*, void*>& getDeviceToStorageMapping() const { return managedDeviceToStorageMap; }
+  const std::map<void*, void*>& getDeviceToHostArrayMap() const { return managedDeviceArrayToHostArrayMap; }
   
   // Editable accessors for methods that need to modify the members
   std::vector<void*>& getEditableManagedAddresses() { return managedMemoryAddresses; }
@@ -120,7 +120,7 @@ public:
   std::set<void*>& getEditableApplicationOutputs() { return applicationOutputs; }
   std::map<void*, void*>& getEditableDeviceToStorageMap() { return deviceToStorageArrayMap; }
   std::map<void*, void*>& getEditableCurrentAddressMap() { return managedMemoryAddressToAssignedMap; }
-  std::map<void*, void*>& getEditableDeviceToStorageMapping() { return managedDeviceToStorageMap; }
+  std::map<void*, void*>& getEditableDeviceToHostArrayMap() { return managedDeviceArrayToHostArrayMap; }
 
   // Get size for a specific managed address
   size_t getSize(void* addr) const {
@@ -231,7 +231,7 @@ public:
                          cudaStream_t stream) {
     for (auto arrayId : arrayIds) {
       void* originalPtr = managedMemoryAddresses[arrayId];
-      void* storagePtr = managedDeviceToStorageMap.at(originalPtr);
+      void* storagePtr = managedDeviceArrayToHostArrayMap.at(originalPtr);
       size_t size = getSize(originalPtr);
       
       // Allocate on device and copy data from storage
@@ -324,15 +324,15 @@ public:
    * Iterates through all managed memory addresses and offloads them to storage,
    * either host memory or a secondary GPU depending on configuration.
    * Uses the storage parameters previously set with configureStorage().
-   * Stores mappings in internal managedDeviceToStorageMap.
+   * Stores mappings in internal managedDeviceArrayToHostArrayMap.
    */
   void moveAllManagedMemoryToStorage() {
     // Ensure the storage map starts empty
-    managedDeviceToStorageMap.clear();
+    managedDeviceArrayToHostArrayMap.clear();
     
     // Move each managed memory address to storage
     for (auto ptr : managedMemoryAddresses) {
-      offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, managedDeviceToStorageMap);
+      offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, managedDeviceArrayToHostArrayMap);
     }
     
     // Switch back to main GPU
@@ -359,7 +359,7 @@ public:
     }
     
     // Also update internal map
-    managedDeviceToStorageMap = storageMap;
+    managedDeviceArrayToHostArrayMap = storageMap;
     
     // Switch back to main GPU
     checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));

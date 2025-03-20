@@ -838,7 +838,6 @@ void tiledCholesky(bool optimize, bool verify) {
 
     // Execute the optimized graph with memory management
     float runningTime;
-    std::map<void *, void *> managedDeviceArrayToHostArrayMap;
     // executeOptimizedGraph(
     //   optimizedGraph,
     //   // Callback for executing specific tasks
@@ -848,18 +847,16 @@ void tiledCholesky(bool optimize, bool verify) {
     //   runningTime,
     //   managedDeviceArrayToHostArrayMap
     // );
+     auto& memManager = MemoryManager::getInstance();
      executeOptimizedGraph(
       optimizedGraph,
-      // Callback for executing specific tasks
+      // Callback for executing specific tasks with proper ExecuteRandomTaskBase signature
       [&](int taskId, cudaStream_t stream) {
-        // Option 1: Use the direct execution method from TiledCholeskyTaskManager
-        tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager ,stream);
-        
-        // Option 2: Use the TaskManager via TiledCholeskyTaskManager
-        // tiledCholeskyTaskManager->executeTaskUsingTaskManager(taskId, stream);
+        // Execute the task directly using TiledCholeskyTaskManager
+        tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager, stream);
       },
       runningTime,
-      managedDeviceArrayToHostArrayMap
+      memManager
     );
 
     checkCudaErrors(cudaDeviceSynchronize());
@@ -883,7 +880,6 @@ void tiledCholesky(bool optimize, bool verify) {
 
       // Execute optimized graph with memory management
       float runningTime;
-      std::map<void *, void *> managedDeviceArrayToHostArrayMap;
       // executeOptimizedGraph(
       //   optimizedGraph,
       //   [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
@@ -892,26 +888,26 @@ void tiledCholesky(bool optimize, bool verify) {
       //   runningTime,
       //   managedDeviceArrayToHostArrayMap
       // );
+      auto& memManager = MemoryManager::getInstance();
       executeOptimizedGraph(
         optimizedGraph,
+        // Callback using ExecuteRandomTaskBase signature
         [&](int taskId, cudaStream_t stream) {
-          // Option 1: Use the direct execution method from TiledCholeskyTaskManager
+          // Execute the task directly using TiledCholeskyTaskManager
           tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager, stream);
-          
-          // Option 2: Use the TaskManager via TiledCholeskyTaskManager
-          // tiledCholeskyTaskManager->executeTaskUsingTaskManager(taskId, stream);
         },
         runningTime,
-        managedDeviceArrayToHostArrayMap
+        memManager
       );
       checkCudaErrors(cudaDeviceSynchronize());
 
       // Reset memory status after optimization run
       // For simplicity, all data copy back to device memory
       std::map<void *, void *> oldManagedDeviceArrayToNewManagedDeviceArrayMap;
+      auto& deviceToHostMap = memManager.getDeviceToHostArrayMap();
       for (int j = 0; j < T * T; j++) {
         auto oldPtr = d_tiles[j];
-        auto newPtr = managedDeviceArrayToHostArrayMap[oldPtr];
+        auto newPtr = deviceToHostMap.at(oldPtr);
         // Copy data back to device memory
         checkCudaErrors(cudaMalloc(&d_tiles[j], tileSize));
         checkCudaErrors(cudaMemcpy(d_tiles[j], newPtr, tileSize, cudaMemcpyDefault));
