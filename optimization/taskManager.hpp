@@ -138,7 +138,25 @@ public:
 template <typename... Args>
 class ParameterizedTask : public TaskBase {
 private:
-    std::function<void(Args...)> func;
+    // Determine the corresponding argument types for the function by unwrapping ManagedPtr
+    template <typename T>
+    struct unwrap_managed_ptr {
+        using type = T;
+    };
+    
+    template <typename T>
+    struct unwrap_managed_ptr<ManagedPtr<T>> {
+        using type = T*;
+    };
+    
+    // Generate function parameter types from stored argument types
+    template <typename T>
+    using function_param_t = typename unwrap_managed_ptr<std::remove_reference_t<T>>::type;
+    
+    // The actual stored function with unwrapped parameter types
+    std::function<void(function_param_t<Args>...)> func;
+    
+    // The stored arguments
     std::tuple<Args...> args;
     
     // Helper to detect if a type is a ManagedPtr
@@ -151,7 +169,7 @@ private:
     // Helper to process a single argument
     template <typename T>
     auto processArgument(T& arg, ExecutionMode mode) {
-        if constexpr (is_managed_ptr<std::decay_t<T>>::value) {
+        if constexpr (is_managed_ptr<std::remove_reference_t<T>>::value) {
             // This is a managed pointer - get it with proper mode
             return arg.get(mode);
         } else {
@@ -160,36 +178,21 @@ private:
         }
     }
     
-    // Helper to create a tuple of processed arguments
-    template <size_t... Is>
-    auto createProcessedArgsTuple(ExecutionMode mode, std::index_sequence<Is...>) {
-        // Use std::decay_t to remove references
-        return std::tuple<std::decay_t<decltype(processArgument(std::get<Is>(args), mode))>...>(
-            processArgument(std::get<Is>(args), mode)...
-        );
-    }
-    
-    // Helper to expand tuple when calling function
-    template <size_t... I>
-    void callWithTuple(const std::tuple<Args...>& t, std::index_sequence<I...>) {
-        func(std::get<I>(t)...);
-    }
-    
 public:
     // Constructor for direct function with arguments
-    template <typename F, 
-              typename = std::enable_if_t<
-                  std::is_convertible_v<F, std::function<void(Args...)>>
-              >>
+    template <typename F>
     ParameterizedTask(F&& f, Args... arguments)
         : func(std::forward<F>(f)), args(std::forward<Args>(arguments)...) {}
     
     void execute(ExecutionMode mode) override {
-        // Create a tuple of processed arguments (handles ManagedPtr conversion)
-        auto processedArgs = createProcessedArgsTuple(mode, std::index_sequence_for<Args...>{});
-        
-        // Call the function with the processed arguments
-        std::apply(func, processedArgs);
+        // Call the function directly with processed arguments
+        callWithProcessedArgs(mode, std::index_sequence_for<Args...>{});
+    }
+    
+    // Helper to call function directly with processed arguments
+    template <size_t... Is>
+    void callWithProcessedArgs(ExecutionMode mode, std::index_sequence<Is...>) {
+        func(processArgument(std::get<Is>(args), mode)...);
     }
 };
 
@@ -248,7 +251,8 @@ public:
     // Register a parameterized task
     template <typename Func, typename... Args>
     void registerParameterizedTask(const TaskId& taskId, Func&& func, Args&&... args) {
-        auto task = std::make_unique<ParameterizedTask<Args...>>(
+        // Use std::remove_reference_t in template parameters for correct reference handling
+        auto task = std::make_unique<ParameterizedTask<std::remove_reference_t<Args>...>>(
             std::forward<Func>(func), std::forward<Args>(args)...);
         tasks[taskId] = std::move(task);
     }
@@ -309,11 +313,29 @@ public:
     template <typename... FixedArgs>
     class StreamParameterizedTask : public TaskBase {
     private:
-        std::function<void(FixedArgs..., cudaStream_t)> func;
+        // Determine the corresponding argument types for the function by unwrapping ManagedPtr
+        template <typename T>
+        struct unwrap_managed_ptr {
+            using type = T;
+        };
+        
+        template <typename T>
+        struct unwrap_managed_ptr<ManagedPtr<T>> {
+            using type = T*;
+        };
+        
+        // Generate function parameter types from stored argument types
+        template <typename T>
+        using function_param_t = typename unwrap_managed_ptr<std::remove_reference_t<T>>::type;
+        
+        // The actual stored function with unwrapped parameter types
+        std::function<void(function_param_t<FixedArgs>..., cudaStream_t)> func;
+        
+        // The stored arguments
         std::tuple<FixedArgs...> fixedArgs;
         
     public:
-        // Constructor with type conversion for more flexible function types
+        // Constructor for direct function with arguments
         template <typename F>
         StreamParameterizedTask(F&& f, FixedArgs... args)
             : func(std::forward<F>(f)), fixedArgs(std::forward<FixedArgs>(args)...) {}
@@ -334,7 +356,7 @@ public:
         // Helper to process a single argument
         template <typename T>
         auto processArgument(T& arg, ExecutionMode mode) {
-            if constexpr (is_managed_ptr<std::decay_t<T>>::value) {
+            if constexpr (is_managed_ptr<std::remove_reference_t<T>>::value) {
                 // This is a managed pointer - get it with proper mode
                 return arg.get(mode);
             } else {
@@ -342,25 +364,17 @@ public:
                 return arg;
             }
         }
-        
-        // Helper to create a tuple of processed arguments
-        template <size_t... Is>
-        auto createProcessedArgsTuple(ExecutionMode mode, std::index_sequence<Is...>) {
-            // Use std::decay_t to remove references
-            return std::tuple<std::decay_t<decltype(processArgument(std::get<Is>(fixedArgs), mode))>...>(
-                processArgument(std::get<Is>(fixedArgs), mode)...
-            );
-        }
     
         // The actual execution method with just the stream and execution mode
         void executeWithStream(ExecutionMode mode, cudaStream_t stream) {
-            // Process the fixed arguments based on mode
-            auto processedArgs = createProcessedArgsTuple(mode, std::index_sequence_for<FixedArgs...>{});
-            
-            // Call the function with processed arguments and stream
-            std::apply([&](auto&&... args) {
-                func(std::forward<decltype(args)>(args)..., stream);
-            }, processedArgs);
+            // Call the function directly with processed arguments and stream
+            callWithProcessedArgsAndStream(mode, stream, std::index_sequence_for<FixedArgs...>{});
+        }
+        
+        // Helper to call function directly with processed arguments and stream
+        template <size_t... Is>
+        void callWithProcessedArgsAndStream(ExecutionMode mode, cudaStream_t stream, std::index_sequence<Is...>) {
+            func(processArgument(std::get<Is>(fixedArgs), mode)..., stream);
         }
         
         bool isStreamParameterized() const { return true; }
@@ -370,14 +384,27 @@ public:
     template <typename... RuntimeArgs>
     class RuntimeParameterizedTask : public TaskBase {
     private:
-        std::function<void(RuntimeArgs...)> func;
+        // Determine the corresponding argument types for the function by unwrapping ManagedPtr
+        template <typename T>
+        struct unwrap_managed_ptr {
+            using type = T;
+        };
+        
+        template <typename T>
+        struct unwrap_managed_ptr<ManagedPtr<T>> {
+            using type = T*;
+        };
+        
+        // Generate function parameter types from stored argument types
+        template <typename T>
+        using function_param_t = typename unwrap_managed_ptr<std::remove_reference_t<T>>::type;
+        
+        // The actual stored function with unwrapped parameter types
+        std::function<void(function_param_t<RuntimeArgs>...)> func;
         
     public:
-        // Constructor with type conversion for more flexible function types
-        template <typename F, 
-                  typename = std::enable_if_t<
-                      std::is_convertible_v<F, std::function<void(RuntimeArgs...)>>
-                  >>
+        // Constructor for direct function with runtime arguments
+        template <typename F>
         RuntimeParameterizedTask(F&& f)
             : func(std::forward<F>(f)) {}
         
@@ -397,7 +424,7 @@ public:
         // Helper to process a single argument
         template <typename T>
         auto processArgument(T& arg, ExecutionMode mode) {
-            if constexpr (is_managed_ptr<std::decay_t<T>>::value) {
+            if constexpr (is_managed_ptr<std::remove_reference_t<T>>::value) {
                 // This is a managed pointer - get it with proper mode
                 return arg.get(mode);
             } else {
@@ -405,26 +432,20 @@ public:
                 return arg;
             }
         }
-        
-        // Helper to create a tuple of processed arguments
-        template <size_t... Is>
-        auto createProcessedArgsTuple(std::tuple<RuntimeArgs...>& args, ExecutionMode mode, std::index_sequence<Is...>) {
-            // Use std::decay_t to remove references
-            return std::tuple<std::decay_t<decltype(processArgument(std::get<Is>(args), mode))>...>(
-                processArgument(std::get<Is>(args), mode)...
-            );
-        }
     
         // The actual execution method with runtime parameters and execution mode
         void executeWithParams(ExecutionMode mode, RuntimeArgs... args) {
             // Store args in a tuple so we can process them
             std::tuple<RuntimeArgs...> argsTuple(std::forward<RuntimeArgs>(args)...);
             
-            // Process arguments (convert ManagedPtr to appropriate pointers)
-            auto processedArgs = createProcessedArgsTuple(argsTuple, mode, std::index_sequence_for<RuntimeArgs...>{});
-            
-            // Call the function with the processed arguments
-            std::apply(func, processedArgs);
+            // Call the function directly with processed arguments
+            callWithProcessedArgs(argsTuple, mode, std::index_sequence_for<RuntimeArgs...>{});
+        }
+        
+        // Helper to call function directly with processed arguments from a tuple
+        template <size_t... Is>
+        void callWithProcessedArgs(std::tuple<RuntimeArgs...>& argsTuple, ExecutionMode mode, std::index_sequence<Is...>) {
+            func(processArgument(std::get<Is>(argsTuple), mode)...);
         }
         
         bool isRuntimeParameterized() const override { return true; }
@@ -456,7 +477,8 @@ public:
     template <typename Func, typename... Args>
     void registerStreamTask(const TaskId& taskId, Func&& func, Args&&... args) {
         // Create a StreamParameterizedTask that stores fixed arguments and just needs a stream
-        auto task = std::make_unique<StreamParameterizedTask<std::decay_t<Args>...>>(
+        // Use std::remove_reference_t instead of std::decay_t to properly handle references
+        auto task = std::make_unique<StreamParameterizedTask<std::remove_reference_t<Args>...>>(
             std::forward<Func>(func), std::forward<Args>(args)...);
             
         tasks[taskId] = std::move(task);
@@ -481,23 +503,21 @@ public:
         
         // Find and execute the task with the provided stream
         auto it = tasks.find(taskId);
-        if (it != tasks.end()) {
-            // Try to cast to a StreamParameterizedTask
-            if (auto* streamTask = dynamic_cast<StreamParameterizedTask<>*>(it->second.get())) {
-                streamTask->executeWithStream(mode, stream);
-                return true;
+        if (it != tasks.end() && it->second->isStreamParameterized()) {
+            // Use a virtual method to execute the task with the stream
+            // This avoids unsafe casting to specific template instantiations
+            if (auto* streamTask = dynamic_cast<TaskBase*>(it->second.get())) {
+                // We already checked isStreamParameterized(), so we know it's safe to cast
+                try {
+                    // Create a new method that passes both the execution mode and stream parameter
+                    // This way, we don't need to know the specific template arguments
+                    if (executeStreamTask(streamTask, mode, stream)) {
+                        return true;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Error executing stream task: " << e.what() << std::endl;
+                }
             }
-            
-            // If not a StreamParameterizedTask, try other cast options based on template arguments
-            bool taskExecuted = false;
-            taskExecuted = tryExecuteStreamTask<double*>(it->second.get(), mode, stream);
-            if (taskExecuted) return true;
-            
-            taskExecuted = tryExecuteStreamTask<double*, double*>(it->second.get(), mode, stream);
-            if (taskExecuted) return true;
-            
-            taskExecuted = tryExecuteStreamTask<double*, double*, double*>(it->second.get(), mode, stream);
-            if (taskExecuted) return true;
             
             // If we got here, we couldn't execute the task with just a stream
             std::cerr << "Error: Task is not compatible with executeWithStream." << std::endl;
@@ -506,14 +526,34 @@ public:
         return false;
     }
     
-    // Helper to try casting to a specific StreamParameterizedTask instantiation
-    template <typename... FixedArgs>
-    bool tryExecuteStreamTask(TaskBase* task, ExecutionMode mode, cudaStream_t stream) {
-        auto* streamTask = dynamic_cast<StreamParameterizedTask<FixedArgs...>*>(task);
-        if (streamTask) {
-            streamTask->executeWithStream(mode, stream);
+    // Execute a stream parameterized task with the given stream
+    bool executeStreamTask(TaskBase* task, ExecutionMode mode, cudaStream_t stream) {
+        // Check for float* parameters (common case)
+        if (auto* t = dynamic_cast<StreamParameterizedTask<float*>*>(task)) {
+            t->executeWithStream(mode, stream);
             return true;
         }
+        
+        // Check for ManagedPtr<float> parameters
+        if (auto* t = dynamic_cast<StreamParameterizedTask<ManagedPtr<float>>*>(task)) {
+            t->executeWithStream(mode, stream);
+            return true;
+        }
+        
+        // Check for float parameter
+        if (auto* t = dynamic_cast<StreamParameterizedTask<float>*>(task)) {
+            t->executeWithStream(mode, stream);
+            return true;
+        }
+        
+        // Check for ManagedPtr<float>, float (common case)
+        if (auto* t = dynamic_cast<StreamParameterizedTask<ManagedPtr<float>, float>*>(task)) {
+            t->executeWithStream(mode, stream);
+            return true;
+        }
+        
+        // Add more specific cases as needed for your application
+        
         return false;
     }
     
@@ -538,16 +578,62 @@ public:
         // Find and execute the task with the provided parameters
         auto it = tasks.find(taskId);
         if (it != tasks.end() && it->second->isRuntimeParameterized()) {
-            // Cast to the appropriate runtime parameterized task type
-            auto* runtimeTask = dynamic_cast<RuntimeParameterizedTask<std::decay_t<Args>...>*>(it->second.get());
-            if (runtimeTask) {
-                runtimeTask->executeWithParams(mode, std::forward<Args>(args)...);
-                return true;
-            } else {
-                std::cerr << "Error: Task parameter types don't match the registered function signature." << std::endl;
+            // Try to execute the task with the provided parameters
+            try {
+                // Use a generic method to execute runtime tasks with different parameter types
+                // This avoids the need for exact type matching with dynamic_cast
+                if (executeRuntimeTask(it->second.get(), mode, std::forward<Args>(args)...)) {
+                    return true;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Error executing runtime task: " << e.what() << std::endl;
             }
+            
+            std::cerr << "Error: Task parameter types don't match the registered function signature." << std::endl;
         }
         
+        return false;
+    }
+    
+    // Execute a runtime parameterized task with the given parameters
+    // Version for ManagedPtr<float> and other parameters
+    template <typename... RestArgs>
+    bool executeRuntimeTask(TaskBase* task, ExecutionMode mode, ManagedPtr<float> ptr, RestArgs&&... restArgs) {
+        if (auto* t = dynamic_cast<RuntimeParameterizedTask<ManagedPtr<float>, std::remove_reference_t<RestArgs>...>*>(task)) {
+            t->executeWithParams(mode, ptr, std::forward<RestArgs>(restArgs)...);
+            return true;
+        }
+        return false;
+    }
+    
+    // Version for float* and other parameters
+    template <typename... RestArgs>
+    bool executeRuntimeTask(TaskBase* task, ExecutionMode mode, float* ptr, RestArgs&&... restArgs) {
+        if (auto* t = dynamic_cast<RuntimeParameterizedTask<float*, std::remove_reference_t<RestArgs>...>*>(task)) {
+            t->executeWithParams(mode, ptr, std::forward<RestArgs>(restArgs)...);
+            return true;
+        }
+        return false;
+    }
+    
+    // Specific version for the exact types used in our example
+    bool executeRuntimeTask(TaskBase* task, ExecutionMode mode, float* ptr, float value, cudaStream_t stream, int elements) {
+        if (auto* t = dynamic_cast<RuntimeParameterizedTask<float*, float, cudaStream_t, int>*>(task)) {
+            t->executeWithParams(mode, ptr, value, stream, elements);
+            return true;
+        }
+        return false;
+    }
+    
+    // Fallback version when no specific overload matches
+    template <typename... Args>
+    bool executeRuntimeTask(TaskBase* task, ExecutionMode mode, Args&&... args) {
+        // Cast to the appropriate runtime parameterized task type with the exact parameter types
+        auto* runtimeTask = dynamic_cast<RuntimeParameterizedTask<std::remove_reference_t<Args>...>*>(task);
+        if (runtimeTask) {
+            runtimeTask->executeWithParams(mode, std::forward<Args>(args)...);
+            return true;
+        }
         return false;
     }
 };

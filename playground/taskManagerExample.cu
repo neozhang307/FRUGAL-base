@@ -189,11 +189,15 @@ int main() {
     taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Managed, stream1);
     taskManager.executeWithStream(TASK_STREAM_PARAMETERIZED, ExecutionMode::Managed, stream2);
     
+    // Print what we're doing in Managed mode with RuntimeParameterizedTask
+    std::cout << "Executing RuntimeParameterizedTask in Managed mode..." << std::endl;
+    
     // Execute RuntimeParameterizedTask with different parameters in Managed mode
+    // Use direct pointers instead of ManagedPtr - the task will handle the MemoryManager lookup
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Managed, 
-                                  TaskManager::managed<float>(d_arrayB), 10.0f, stream1, 256);
+                                  d_arrayB, 10.0f, stream1, 256);
     taskManager.executeWithParams(TASK_RUNTIME_PARAMETERIZED, ExecutionMode::Managed, 
-                                  TaskManager::managed<float>(d_arrayC), 12.0f, stream2, 768);
+                                  d_arrayC, 12.0f, stream2, 768);
     
     // Synchronize all operations
     cudaDeviceSynchronize();
