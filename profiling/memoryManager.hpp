@@ -187,14 +187,9 @@ public:
   void configureStorage(int mainDeviceId, int storageDeviceId, bool useNvlink);
   void cleanStorage();
   
-  // Memory movement operations
-  void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, 
-                             const std::map<void*, void*>& storageMap,
-                             std::map<void*, void*>& currentMap,
-                             cudaMemcpyKind memcpyKind,
-                             cudaStream_t stream);
-  
+
   void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
+  void prefetchAllDataToDevice();
   void prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
   void offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
   
@@ -231,6 +226,7 @@ public:
   // Array ID utility methods
   void* getPointerByArrayId(int arrayId) const;
   size_t getSizeByArrayId(int arrayId) const;
+  std::vector<ArrayId> getArrayIds() const;
 
   // Make these functions friends so they can access private members
   template <typename T>

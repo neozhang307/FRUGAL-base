@@ -41,6 +41,17 @@ size_t MemoryManager::getSizeByArrayId(int arrayId) const {
   return 0;
 }
 
+std::vector<ArrayId> MemoryManager::getArrayIds() const {
+  std::vector<ArrayId> arrayIds;
+  arrayIds.reserve(managedMemoryAddresses.size());
+  
+  for (size_t i = 0; i < managedMemoryAddresses.size(); ++i) {
+    arrayIds.push_back(static_cast<ArrayId>(i));
+  }
+  
+  return arrayIds;
+}
+
 void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
   void* newPtr = nullptr;
   size_t size = getSize(ptr);
@@ -117,34 +128,6 @@ void MemoryManager::clearCurrentMappings() {
   managedMemoryAddressToAssignedMap.clear();
 }
 
-// Memory prefetching methods
-void MemoryManager::prefetchAllDataToDeviceAsync(
-    const std::vector<ArrayId>& arrayIds,
-    const std::map<void*, void*>& storageMap,
-    std::map<void*, void*>& currentMap,
-    cudaMemcpyKind memcpyKind,
-    cudaStream_t stream) {
-  for (auto arrayId : arrayIds) {
-    void* originalPtr = managedMemoryAddresses[arrayId];
-    void* storagePtr = storageMap.at(originalPtr);
-    size_t size = getSize(originalPtr);
-    
-    // Allocate on device and copy data from storage
-    void* devicePtr;
-    checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
-    checkCudaErrors(cudaMemcpyAsync(
-      devicePtr, 
-      storagePtr, 
-      size, 
-      memcpyKind, 
-      stream
-    ));
-    
-    // Update the current mapping
-    currentMap[originalPtr] = devicePtr;
-  }
-}
-
 void MemoryManager::prefetchAllDataToDeviceAsync(
     const std::vector<ArrayId>& arrayIds,
     cudaStream_t stream) {
@@ -164,6 +147,33 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
       stream
     ));
     
+    // Update the current mapping
+    managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+  }
+}
+
+void MemoryManager::prefetchAllDataToDevice() {
+  auto arrayIds=this->getArrayIds();
+  for (auto arrayId : arrayIds) {
+    void* originalPtr = managedMemoryAddresses[arrayId];
+    void* storagePtr = managedDeviceArrayToHostArrayMap.at(originalPtr);
+    size_t size = getSize(originalPtr);
+    
+    // Allocate on device and copy data from storage
+    void* devicePtr;
+    checkCudaErrors(cudaMalloc(&devicePtr, size));
+    checkCudaErrors(cudaMemcpy(
+      devicePtr, 
+      storagePtr, 
+      size, 
+      storageConfig.prefetchMemcpyKind
+    ));
+     // Free temporary storage
+    if (storageConfig.useNvlink) {
+      checkCudaErrors(cudaFree(storagePtr));
+    } else {
+      checkCudaErrors(cudaFreeHost(storagePtr));
+    }
     // Update the current mapping
     managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
   }
