@@ -84,7 +84,9 @@ void Executor::executeOptimizedGraph(
     offloadMemcpyKind = cudaMemcpyDeviceToDevice;
     enablePeerAccessForNvlink(ConfigurationManager::getConfig().execution.mainDeviceId, ConfigurationManager::getConfig().execution.storageDeviceId);
   }
-
+  memManager.configureStorage(ConfigurationManager::getConfig().execution.mainDeviceId,
+                            ConfigurationManager::getConfig().execution.storageDeviceId,
+                            ConfigurationManager::getConfig().execution.useNvlink);
   //----------------------------------------------------------------------
   // STEP 3: Initialize managed data distribution
   //----------------------------------------------------------------------
@@ -112,7 +114,7 @@ void Executor::executeOptimizedGraph(
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   
   // Use MemoryManager's prefetching method with internal storage
-  memManager.prefetchToDevice(
+  memManager.prefetchAllDataToDevice(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
     prefetchMemcpyKind,
     stream
@@ -168,6 +170,7 @@ void Executor::executeOptimizedGraph(
           prefetchMemcpyKind,
           stream
         ));
+       
         memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
       } else {
         // OFFLOAD: Move data from device back to storage and free device memory
@@ -485,29 +488,9 @@ void Executor::executeOptimizedGraphRepeatedly(
       auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
       if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
-        // PREFETCH: Move data from storage to device
-        void *devicePtr;
-        checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
-        checkCudaErrors(cudaMemcpyAsync(
-          devicePtr,
-          memManager.getDeviceToHostArrayMap().at(dataMovementAddress),
-          dataMovementSize,
-          prefetchMemcpyKind,
-          stream
-        ));
-        memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
+        memManager.prefetchToDevice(dataMovement.arrayId,stream);
       } else {
-        // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = memManager.getCurrentAddressMap().at(dataMovementAddress);
-        checkCudaErrors(cudaMemcpyAsync(
-          memManager.getDeviceToHostArrayMap().at(dataMovementAddress),
-          devicePtr,
-          dataMovementSize,
-          offloadMemcpyKind,
-          stream
-        ));
-        checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        memManager.removeCurrentMapping(dataMovementAddress);
+        memManager.offloadFromDevice(dataMovement.arrayId,stream);
       }
       checkCudaErrors(cudaPeekAtLastError());
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
@@ -705,7 +688,7 @@ cudaGraphExec_t Executor::initializeDataDistribution(
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   
   // Prefetch arrays that need to be on device initially
-  memManager.prefetchToDevice(
+  memManager.prefetchAllDataToDevice(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
     prefetchMemcpyKind,
     stream

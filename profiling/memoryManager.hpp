@@ -58,11 +58,18 @@ private:
   
   /** @brief Storage configuration parameters */
   struct StorageConfig {
-    int mainDeviceId;      // Main GPU device ID
-    int storageDeviceId;   // Storage device ID (CPU=-1, other values for secondary GPU)
-    bool useNvlink;        // Whether to use NVLink for GPU-to-GPU transfers
+    int mainDeviceId;                  // Main GPU device ID
+    int storageDeviceId;               // Storage device ID (CPU=-1, other values for secondary GPU)
+    bool useNvlink;                    // Whether to use NVLink for GPU-to-GPU transfers
+    cudaMemcpyKind prefetchMemcpyKind; // Type of memory copy for prefetching operations
+    cudaMemcpyKind offloadMemcpyKind;  // Type of memory copy for offloading operations
     
-    StorageConfig() : mainDeviceId(0), storageDeviceId(-1), useNvlink(false) {}
+    StorageConfig() 
+      : mainDeviceId(0), 
+        storageDeviceId(-1), 
+        useNvlink(false),
+        prefetchMemcpyKind(cudaMemcpyHostToDevice),
+        offloadMemcpyKind(cudaMemcpyDeviceToHost) {}
   };
   inline static StorageConfig storageConfig;
 
@@ -174,7 +181,17 @@ public:
     storageConfig.mainDeviceId = mainDeviceId;
     storageConfig.storageDeviceId = storageDeviceId;
     storageConfig.useNvlink = useNvlink;
+    
+    // Set appropriate memcpy kinds based on the configuration
+    if (useNvlink) {
+      storageConfig.prefetchMemcpyKind = cudaMemcpyDeviceToDevice;
+      storageConfig.offloadMemcpyKind = cudaMemcpyDeviceToDevice;
+    } else {
+      storageConfig.prefetchMemcpyKind = cudaMemcpyHostToDevice;
+      storageConfig.offloadMemcpyKind = cudaMemcpyDeviceToHost;
+    }
   }
+  
   
   /**
    * @brief Prefetches data from storage to device for needed arrays
@@ -190,7 +207,7 @@ public:
    * @param memcpyKind Type of memory copy (host-to-device or device-to-device)
    * @param stream CUDA stream to use for async operations
    */
-  void prefetchToDevice(const std::vector<ArrayId>& arrayIds,
+  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds,
                          const std::map<void*, void*>& storageMap,
                          std::map<void*, void*>& currentMap,
                          cudaMemcpyKind memcpyKind,
@@ -223,10 +240,97 @@ public:
    * for simplicity when using the MemoryManager's built-in storage.
    *
    * @param arrayIds Array IDs to prefetch
+   * @param stream CUDA stream to use for async operations
+   */
+  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds,
+                         cudaStream_t stream) {
+    for (auto arrayId : arrayIds) {
+      void* originalPtr = managedMemoryAddresses[arrayId];
+      void* storagePtr = managedDeviceArrayToHostArrayMap.at(originalPtr);
+      size_t size = getSize(originalPtr);
+      
+      // Allocate on device and copy data from storage
+      void* devicePtr;
+      checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
+      checkCudaErrors(cudaMemcpyAsync(
+        devicePtr, 
+        storagePtr, 
+        size, 
+        storageConfig.prefetchMemcpyKind, 
+        stream
+      ));
+      
+      // Update the current mapping
+      managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    }
+  }
+  
+  /**
+   * @brief Prefetches data from storage to device for needed arrays using internal maps
+   *
+   * This overload uses the internal managedDeviceToStorageMap and managedMemoryAddressToAssignedMap
+   * for simplicity when using the MemoryManager's built-in storage.
+   *
+   * @param arrayIds Array IDs to prefetch
+   * @param stream CUDA stream to use for async operations
+   */
+  void prefetchToDevice(const ArrayId arrayId,
+                         cudaStream_t stream) {
+    {
+      void *devicePtr;
+      auto dataMovementSize = this->getSizeByArrayId(arrayId);
+      auto dataMovementAddress = this->getPointerByArrayId(arrayId);
+
+      checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
+      checkCudaErrors(cudaMemcpyAsync(
+        devicePtr,
+        this->getDeviceToHostArrayMap().at(dataMovementAddress),
+        dataMovementSize,
+        storageConfig.prefetchMemcpyKind,
+        stream
+      ));
+      this->updateCurrentMapping(dataMovementAddress, devicePtr);
+    }
+  }
+  
+/**
+   * @brief Offload data from storage to device for needed arrays using internal maps
+   *
+   * This overload uses the internal managedDeviceToStorageMap and managedMemoryAddressToAssignedMap
+   * for simplicity when using the MemoryManager's built-in storage.
+   *
+   * @param arrayIds Array IDs to prefetch
+   * @param stream CUDA stream to use for async operations
+   */
+  void offloadFromDevice(const ArrayId arrayId,
+                         cudaStream_t stream) {
+    {
+      auto dataMovementSize = this->getSizeByArrayId(arrayId);
+      auto dataMovementAddress = this->getPointerByArrayId(arrayId);
+      void *devicePtr = this->getCurrentAddressMap().at(dataMovementAddress);
+
+      checkCudaErrors(cudaMemcpyAsync(
+        this->getDeviceToHostArrayMap().at(dataMovementAddress),
+        devicePtr,
+        dataMovementSize,
+        storageConfig.offloadMemcpyKind,
+        stream
+      ));
+      checkCudaErrors(cudaFreeAsync(devicePtr, stream));
+      this->removeCurrentMapping(dataMovementAddress);
+    }
+  }
+  /**
+   * @brief Prefetches data from storage to device for needed arrays using internal maps
+   *
+   * This overload uses the internal managedDeviceToStorageMap and managedMemoryAddressToAssignedMap
+   * for simplicity when using the MemoryManager's built-in storage.
+   *
+   * @param arrayIds Array IDs to prefetch
    * @param memcpyKind Type of memory copy (host-to-device or device-to-device)
    * @param stream CUDA stream to use for async operations
    */
-  void prefetchToDevice(const std::vector<ArrayId>& arrayIds,
+  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds,
                          cudaMemcpyKind memcpyKind,
                          cudaStream_t stream) {
     for (auto arrayId : arrayIds) {
@@ -411,6 +515,31 @@ public:
    * @param originalPtr Original device pointer
    * @param storageMap Map of storage locations
    * @param currentMap Map of current device locations
+   * @param stream CUDA stream for async operations
+   */
+  void offloadDataAsync(void* originalPtr, std::map<void*, void*>& storageMap, 
+                       std::map<void*, void*>& currentMap,
+                       cudaStream_t stream) {
+    void* devicePtr = currentMap[originalPtr];
+    void* storagePtr = storageMap[originalPtr];
+    size_t size = getSize(originalPtr);
+    
+    // Copy data from device to storage and free device memory
+    checkCudaErrors(cudaMemcpyAsync(storagePtr, devicePtr, size, storageConfig.offloadMemcpyKind, stream));
+    checkCudaErrors(cudaFreeAsync(devicePtr, stream));
+    
+    // Remove from current map
+    currentMap.erase(originalPtr);
+  }
+  
+  /**
+   * @brief Offloads data from device to storage asynchronously
+   *
+   * Similar to offloadToStorage but runs asynchronously on a stream
+   *
+   * @param originalPtr Original device pointer
+   * @param storageMap Map of storage locations
+   * @param currentMap Map of current device locations
    * @param offloadMemcpyKind Type of memory copy for offloading
    * @param stream CUDA stream for async operations
    */
@@ -428,38 +557,7 @@ public:
     // Remove from current map
     currentMap.erase(originalPtr);
   }
-  
-  /**
-   * @brief Prefetches data for specific array IDs
-   *
-   * This method initializes device memory for a set of arrays by:
-   * 1. Looking up array addresses by ID
-   * 2. Allocating device memory of the appropriate size
-   * 3. Copying data from storage to device 
-   * 4. Updating the address mapping
-   *
-   * @param arrayIds Array IDs to initialize
-   * @param storageMap Map of storage locations
-   * @param memcpyKind Type of memory copy for prefetching
-   * @param stream CUDA stream for async operations
-   */
-  void prefetchArraysByIds(const std::vector<int>& arrayIds,
-                         std::map<void*, void*>& storageMap,
-                         cudaMemcpyKind memcpyKind,
-                         cudaStream_t stream) {
-    for (auto arrayId : arrayIds) {
-      auto ptr = managedMemoryAddresses[arrayId];
-      auto size = managedMemoryAddressToSizeMap[ptr];
-      auto newPtr = storageMap[ptr];
-      
-      // Allocate on device and copy data from storage
-      void *devicePtr;
-      checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
-      checkCudaErrors(cudaMemcpyAsync(devicePtr, newPtr, size, memcpyKind, stream));
-      managedMemoryAddressToAssignedMap[ptr] = devicePtr;  // Update the address mapping
-    }
-  }
-  
+
   /**
    * @brief Gets the pointer to managed memory for a specific array ID
    *
