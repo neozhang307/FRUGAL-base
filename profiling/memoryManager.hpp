@@ -192,7 +192,12 @@ public:
     }
   }
   
-  
+  void cleanStorage()
+  {
+    if (storageConfig.useNvlink) {
+      disablePeerAccessForNvlink(storageConfig.mainDeviceId, storageConfig.storageDeviceId);
+    }
+  }
   /**
    * @brief Prefetches data from storage to device for needed arrays
    *
@@ -468,6 +473,20 @@ public:
     // Switch back to main GPU
     checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
     checkCudaErrors(cudaDeviceSynchronize());
+  }
+
+  void moveRemainedManagedMemoryToStorage() {
+    // Ensure the storage map starts empty
+    auto currentAddressMap = this->getEditableCurrentAddressMap();
+    for (auto &[oldAddr, newAddr] : currentAddressMap) {
+      checkCudaErrors(cudaMemcpy(
+        this->getDeviceToHostArrayMap().at(oldAddr),
+        newAddr,
+        this->getSize(oldAddr),
+        storageConfig.offloadMemcpyKind
+      ));
+      checkCudaErrors(cudaFree(newAddr));
+    }
   }
   
   /**

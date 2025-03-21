@@ -71,19 +71,9 @@ void Executor::executeOptimizedGraph(
   // STEP 2: Configure the device and memory settings
   //----------------------------------------------------------------------
   
-  // Set up device configuration for data movement
+  // // Set up device configuration for data movement
   int mainDeviceId = ConfigurationManager::getConfig().execution.mainDeviceId;
-  int storageDeviceId = cudaCpuDeviceId;  // Default: use host memory as storage
-  cudaMemcpyKind prefetchMemcpyKind = cudaMemcpyHostToDevice;
-  cudaMemcpyKind offloadMemcpyKind = cudaMemcpyDeviceToHost;
 
-  // If NVLink is available, use a second GPU as storage instead of host memory
-  if (ConfigurationManager::getConfig().execution.useNvlink) {
-    storageDeviceId = ConfigurationManager::getConfig().execution.storageDeviceId;
-    prefetchMemcpyKind = cudaMemcpyDeviceToDevice;
-    offloadMemcpyKind = cudaMemcpyDeviceToDevice;
-    enablePeerAccessForNvlink(ConfigurationManager::getConfig().execution.mainDeviceId, ConfigurationManager::getConfig().execution.storageDeviceId);
-  }
   memManager.configureStorage(ConfigurationManager::getConfig().execution.mainDeviceId,
                             ConfigurationManager::getConfig().execution.storageDeviceId,
                             ConfigurationManager::getConfig().execution.useNvlink);
@@ -93,9 +83,6 @@ void Executor::executeOptimizedGraph(
   
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
 
-  // Configure MemoryManager storage parameters
-  memManager.configureStorage(mainDeviceId, storageDeviceId, ConfigurationManager::getConfig().execution.useNvlink);
-  
   // Move all managed data to storage (host or secondary GPU) using internal storage
   memManager.moveAllManagedMemoryToStorage();
   
@@ -116,7 +103,6 @@ void Executor::executeOptimizedGraph(
   // Use MemoryManager's prefetching method with internal storage
   memManager.prefetchAllDataToDevice(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
-    prefetchMemcpyKind,
     stream
   );
   
@@ -160,30 +146,9 @@ void Executor::executeOptimizedGraph(
       auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
       if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
-        // PREFETCH: Move data from storage to device
-        void *devicePtr;
-        checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
-        checkCudaErrors(cudaMemcpyAsync(
-          devicePtr,
-          memManager.getDeviceToHostArrayMap().at(dataMovementAddress),
-          dataMovementSize,
-          prefetchMemcpyKind,
-          stream
-        ));
-       
-        memManager.updateCurrentMapping(dataMovementAddress, devicePtr);
+        memManager.prefetchToDevice(dataMovement.arrayId,stream);
       } else {
-        // OFFLOAD: Move data from device back to storage and free device memory
-        void *devicePtr = memManager.getCurrentAddressMap().at(dataMovementAddress);
-        checkCudaErrors(cudaMemcpyAsync(
-          memManager.getDeviceToHostArrayMap().at(dataMovementAddress),
-          devicePtr,
-          dataMovementSize,
-          offloadMemcpyKind,
-          stream
-        ));
-        checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-        memManager.removeCurrentMapping(dataMovementAddress);
+        memManager.offloadFromDevice(dataMovement.arrayId,stream);
       }
       
       checkCudaErrors(cudaPeekAtLastError());
@@ -284,18 +249,8 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Clean up");
   
   // Copy any remaining device data back to storage
-  auto &currentAddressMap = memManager.getEditableCurrentAddressMap();
-  for (auto &[oldAddr, newAddr] : currentAddressMap) {
-    checkCudaErrors(cudaMemcpy(
-      memManager.getDeviceToHostArrayMap().at(oldAddr),
-      newAddr,
-      memManager.getSize(oldAddr),
-      offloadMemcpyKind
-    ));
-    checkCudaErrors(cudaFree(newAddr));
-  }
-  checkCudaErrors(cudaDeviceSynchronize());
 
+  memManager.moveRemainedManagedMemoryToStorage();
   // Clean up CUDA resources
   checkCudaErrors(cudaGraphExecDestroy(graphExecForInitialDataDistribution));
   checkCudaErrors(cudaGraphExecDestroy(graphExec));
@@ -304,10 +259,10 @@ void Executor::executeOptimizedGraph(
   checkCudaErrors(cudaStreamDestroy(stream));
 
   // Disable peer access if using NVLink
-  if (ConfigurationManager::getConfig().execution.useNvlink) {
-    disablePeerAccessForNvlink(mainDeviceId, storageDeviceId);
-  }
-
+  // if (ConfigurationManager::getConfig().execution.useNvlink) {
+  //   disablePeerAccessForNvlink(mainDeviceId, storageDeviceId);
+  // }
+  memManager.cleanStorage();
   // Store the execution time
   runningTime = cudaEventClock.getTimeInSeconds();
 }
