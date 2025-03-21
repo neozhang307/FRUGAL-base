@@ -17,6 +17,7 @@ target_link_libraries(
   peakMemoryUsageProfiler
   utilities
   memred
+  memoryManager
   CUDA::cuda_driver
 )
 

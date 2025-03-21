@@ -8,6 +8,7 @@ target_link_libraries(
   annotation
   optimization
   peakMemoryUsageProfiler
+  memoryManager
 )
 target_include_directories(
   memopt
