@@ -43,7 +43,83 @@ typedef std::function<void(int taskId, cudaStream_t stream)> ExecuteRandomTaskBa
 typedef std::function<bool()> ShouldContinue;
 
 // Forward declaration
-class OptimizedCudaGraphCreator;
+/**
+ * @brief Helper class for constructing optimized CUDA graphs
+ * 
+ * OptimizedCudaGraphCreator handles the incremental construction of CUDA graphs
+ * by providing methods to:
+ * - Start/end stream capture operations with specific dependencies
+ * - Track new nodes added during capture
+ * - Find leaf nodes (nodes with no outgoing edges) after capture operations
+ * - Add empty nodes for dependency management
+ * 
+ * This class is essential for building the modified execution graph with
+ * memory optimization operations inserted between computation tasks.
+ */
+class OptimizedCudaGraphCreator {
+ public:
+  /**
+   * @brief Constructor that sets up the graph builder
+   * 
+   * @param stream CUDA stream used for capturing operations
+   * @param graph CUDA graph where operations will be recorded
+   */
+  OptimizedCudaGraphCreator(cudaStream_t stream, cudaGraph_t graph) : stream(stream), graph(graph) {}
+
+  /**
+   * @brief Starts capturing CUDA operations to the graph
+   * 
+   * Begins recording operations executed on the stream into the graph.
+   * The captured operations will depend on the specified nodes.
+   * 
+   * @param dependencies List of nodes that must execute before the captured operations
+   */
+  void beginCaptureOperation(const std::vector<cudaGraphNode_t> &dependencies);
+
+  /**
+   * @brief Ends the capture operation and returns new leaf nodes
+   * 
+   * Stops recording operations to the graph and identifies the new
+   * leaf nodes that were added during this capture operation.
+   * 
+   * @return Vector of new leaf nodes added during the capture
+   */
+  std::vector<cudaGraphNode_t> endCaptureOperation();
+
+  /**
+   * @brief Adds an empty node to the graph
+   * 
+   * Empty nodes are used for dependency management without
+   * performing any actual computation.
+   * 
+   * @param dependencies List of nodes that the new empty node will depend on
+   * @return The newly created empty node
+   */
+  cudaGraphNode_t addEmptyNode(const std::vector<cudaGraphNode_t> &dependencies);
+
+ private:
+  cudaStream_t stream;                      ///< CUDA stream for capturing operations
+  cudaGraph_t graph;                        ///< CUDA graph being constructed
+  std::vector<cudaGraphNode_t> lastDependencies; ///< Previous dependencies used for tracking
+  std::map<cudaGraphNode_t, bool> visited;  ///< Tracks which nodes have been processed
+
+  /**
+   * @brief Identifies leaf nodes added in the most recent capture
+   * 
+   * After a capture operation, this method:
+   * 1. Gets all nodes and edges in the graph
+   * 2. Identifies which nodes have outgoing edges
+   * 3. Finds newly added nodes (not previously visited)
+   * 4. Returns those that are leaf nodes (no outgoing edges)
+   * 
+   * These leaf nodes represent the completion points of the
+   * operations added in the last capture, and are used as
+   * dependencies for subsequent operations.
+   * 
+   * @return Vector of new leaf nodes from the last capture
+   */
+  std::vector<cudaGraphNode_t> getNewLeafNodesAddedByLastCapture();
+};
 
 /**
  * @brief Executes optimized CUDA graphs with memory management

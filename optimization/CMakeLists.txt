@@ -4,6 +4,7 @@ add_library(
   optimization.cu
   optimizer.cu
   executor.cu
+  executor_v2.cu
 )
 target_link_libraries(
   optimization
