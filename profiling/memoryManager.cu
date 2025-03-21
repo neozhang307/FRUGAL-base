@@ -74,26 +74,7 @@ std::map<void*, void*>& MemoryManager::getEditableDeviceToHostArrayMap() {
   return managedDeviceArrayToHostArrayMap; 
 }
 
-// Memory information
-size_t MemoryManager::getSize(void* addr) const {
-  auto it = managedMemoryAddressToSizeMap.find(addr);
-  if (it != managedMemoryAddressToSizeMap.end()) {
-    return it->second;
-  }
-  return 0; // Return 0 for unmanaged memory
-}
-
-ArrayId MemoryManager::getArrayId(void* addr) const {
-  auto it = managedMemoryAddressToIndexMap.find(addr);
-  if (it != managedMemoryAddressToIndexMap.end()) {
-    return it->second;
-  }
-  return -1; // Invalid ID for unmanaged memory
-}
-
-bool MemoryManager::isManaged(void* addr) const {
-  return managedMemoryAddressToIndexMap.count(addr) > 0;
-}
+// Memory information methods are now in memoryManager_v2.cu
 
 void MemoryManager::prefetchAllDataToDevice(
     const std::vector<ArrayId>& arrayIds,
@@ -120,46 +101,7 @@ void MemoryManager::prefetchAllDataToDevice(
   }
 }
 
-void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
-  void* newPtr = nullptr;
-  size_t size = getSize(ptr);
-  
-  if (useNvlink) {
-    // Allocate on secondary GPU
-    checkCudaErrors(cudaSetDevice(storageDeviceId));
-    checkCudaErrors(cudaMalloc(&newPtr, size));
-  } else {
-    // Allocate on host memory
-    checkCudaErrors(cudaMallocHost(&newPtr, size));
-  }
-  
-  return newPtr;
-}
-
-void MemoryManager::transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memcpyKind) {
-  size_t size = getSize(srcPtr);
-  checkCudaErrors(cudaMemcpy(dstPtr, srcPtr, size, memcpyKind));
-}
-
-void* MemoryManager::offloadToStorage(
-    void* ptr, 
-    int storageDeviceId, 
-    bool useNvlink, 
-    std::map<void*, void*>& storageMap) {
-  // Allocate in storage
-  void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
-  
-  // Copy data from device to storage
-  transferData(ptr, storagePtr, cudaMemcpyDefault);
-  
-  // Update mapping
-  storageMap[ptr] = storagePtr;
-  
-  // Free original device memory
-  checkCudaErrors(cudaFree(ptr));
-  
-  return storagePtr;
-}
+// Memory allocation and data transfer methods moved to memoryManager_v2.cu
 
 void MemoryManager::moveAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
   // Ensure the storage map starts empty
@@ -237,21 +179,7 @@ void MemoryManager::offloadDataAsync(
   currentMap.erase(originalPtr);
 }
 
-// Array ID utility methods
-void* MemoryManager::getPointerByArrayId(int arrayId) const {
-  if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
-    return managedMemoryAddresses[arrayId];
-  }
-  return nullptr;
-}
-
-size_t MemoryManager::getSizeByArrayId(int arrayId) const {
-  if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
-    void* ptr = managedMemoryAddresses[arrayId];
-    return getSize(ptr);
-  }
-  return 0;
-}
+// Array ID utility methods moved to memoryManager_v2.cu
 
 // Implementation of standalone function
 void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAddressMap) {
