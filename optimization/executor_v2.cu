@@ -89,9 +89,9 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   
   // Perform the appropriate data movement operation
   if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
-    memManager.prefetchToDevice(dataMovement.arrayId, stream);
+    memManager.prefetchToDeviceAsync(dataMovement.arrayId, stream);
   } else {
-    memManager.offloadFromDevice(dataMovement.arrayId, stream);
+    memManager.offloadFromDeviceAsync(dataMovement.arrayId, stream);
   }
   
   // Check for errors and end capture
@@ -246,7 +246,6 @@ cudaGraphExec_t Executor::initializeMemory(
   cudaStream_t stream
 ) {
   // Configure device and memory settings
-  int mainDeviceId = ConfigurationManager::getConfig().execution.mainDeviceId;
   
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
   
@@ -258,11 +257,8 @@ cudaGraphExec_t Executor::initializeMemory(
   );
   
   // Move all managed data to storage (host or secondary GPU)
+  // The control would automatically go back to the main device. 
   memManager.moveAllManagedMemoryToStorage();
-  
-  // Switch back to main GPU
-  checkCudaErrors(cudaSetDevice(mainDeviceId));
-  checkCudaErrors(cudaDeviceSynchronize());
   
   // Clear current memory mappings
   memManager.clearCurrentMappings();
@@ -271,7 +267,7 @@ cudaGraphExec_t Executor::initializeMemory(
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   
   // Prefetch arrays needed at the start
-  memManager.prefetchAllDataToDevice(
+  memManager.prefetchAllDataToDeviceAsync(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
     stream
   );
@@ -463,7 +459,7 @@ cudaGraph_t Executor::buildRepeatedExecutionGraph(
   // Prefetch arrays needed at the start as part of the main graph
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
     creator->beginCaptureOperation(newLeafNodes);
-    memManager.prefetchToDevice(arrayId, stream);
+    memManager.prefetchToDeviceAsync(arrayId, stream);
     newLeafNodes = creator->endCaptureOperation();
   }
   
@@ -528,7 +524,7 @@ cudaGraph_t Executor::buildRepeatedExecutionGraph(
   // Add cleanup operations for any remaining device memory
   newLeafNodes = getNodesWithZeroOutDegree(graph);
   creator->beginCaptureOperation(newLeafNodes);
-  memManager.moveRemainedManagedMemoryToStorage(stream);
+  memManager.moveRemainedManagedMemoryToStorageAsync(stream);
   newLeafNodes = creator->endCaptureOperation();
   checkCudaErrors(cudaDeviceSynchronize());
   

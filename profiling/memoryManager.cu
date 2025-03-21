@@ -76,7 +76,7 @@ std::map<void*, void*>& MemoryManager::getEditableDeviceToHostArrayMap() {
 
 // Memory information methods are now in memoryManager_v2.cu
 
-void MemoryManager::prefetchAllDataToDevice(
+void MemoryManager::prefetchAllDataToDeviceAsync(
     const std::vector<ArrayId>& arrayIds,
     cudaMemcpyKind memcpyKind,
     cudaStream_t stream) {

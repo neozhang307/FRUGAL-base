@@ -1052,7 +1052,7 @@ cudaGraphExec_t Executor::initializeDataDistribution(
   
   // Prefetch arrays that need to be on device initially
   auto& currentMap = memManager.getEditableCurrentAddressMap();
-  memManager.prefetchAllDataToDevice(
+  memManager.prefetchAllDataToDeviceAsync(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
     managedDeviceArrayToHostArrayMap,
     currentMap,

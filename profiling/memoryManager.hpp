@@ -188,17 +188,17 @@ public:
   void cleanStorage();
   
   // Memory movement operations
-  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds, 
+  void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, 
                              const std::map<void*, void*>& storageMap,
                              std::map<void*, void*>& currentMap,
                              cudaMemcpyKind memcpyKind,
                              cudaStream_t stream);
   
-  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
-  void prefetchToDevice(const ArrayId arrayId, cudaStream_t stream);
-  void offloadFromDevice(const ArrayId arrayId, cudaStream_t stream);
+  void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
+  void prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
+  void offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
   
-  void prefetchAllDataToDevice(const std::vector<ArrayId>& arrayIds,
+  void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds,
                              cudaMemcpyKind memcpyKind,
                              cudaStream_t stream);
   
@@ -212,7 +212,7 @@ public:
   void moveAllManagedMemoryToStorage();
   void moveAllManagedMemoryToStorage(std::map<void*, void*>& storageMap);
   void moveRemainedManagedMemoryToStorage();
-  void moveRemainedManagedMemoryToStorage(cudaStream_t stream);
+  void moveRemainedManagedMemoryToStorageAsync(cudaStream_t stream);
   
   void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
                                    std::map<void*, void*>& storageMap);

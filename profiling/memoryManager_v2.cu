@@ -118,7 +118,7 @@ void MemoryManager::clearCurrentMappings() {
 }
 
 // Memory prefetching methods
-void MemoryManager::prefetchAllDataToDevice(
+void MemoryManager::prefetchAllDataToDeviceAsync(
     const std::vector<ArrayId>& arrayIds,
     const std::map<void*, void*>& storageMap,
     std::map<void*, void*>& currentMap,
@@ -145,7 +145,7 @@ void MemoryManager::prefetchAllDataToDevice(
   }
 }
 
-void MemoryManager::prefetchAllDataToDevice(
+void MemoryManager::prefetchAllDataToDeviceAsync(
     const std::vector<ArrayId>& arrayIds,
     cudaStream_t stream) {
   for (auto arrayId : arrayIds) {
@@ -169,7 +169,7 @@ void MemoryManager::prefetchAllDataToDevice(
   }
 }
 
-void MemoryManager::prefetchToDevice(const ArrayId arrayId, cudaStream_t stream) {
+void MemoryManager::prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t stream) {
   void *devicePtr;
   auto dataMovementSize = this->getSizeByArrayId(arrayId);
   auto dataMovementAddress = this->getPointerByArrayId(arrayId);
@@ -185,7 +185,7 @@ void MemoryManager::prefetchToDevice(const ArrayId arrayId, cudaStream_t stream)
   this->updateCurrentMapping(dataMovementAddress, devicePtr);
 }
 
-void MemoryManager::offloadFromDevice(const ArrayId arrayId, cudaStream_t stream) {
+void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t stream) {
   auto dataMovementSize = this->getSizeByArrayId(arrayId);
   auto dataMovementAddress = this->getPointerByArrayId(arrayId);
   void *devicePtr = this->getCurrentAddressMap().at(dataMovementAddress);
@@ -229,7 +229,7 @@ void MemoryManager::moveRemainedManagedMemoryToStorage() {
   }
 }
 
-void MemoryManager::moveRemainedManagedMemoryToStorage(cudaStream_t stream) {
+void MemoryManager::moveRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
   auto currentAddressMap = this->getEditableCurrentAddressMap();
   for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpyAsync(
