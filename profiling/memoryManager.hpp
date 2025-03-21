@@ -209,14 +209,14 @@ public:
                        std::map<void*, void*>& storageMap);
   
   // Memory storage operations
-  void moveAllManagedMemoryToStorage();
-  void moveAllManagedMemoryToStorage(std::map<void*, void*>& storageMap);
-  void moveRemainedManagedMemoryToStorage();
-  void moveRemainedManagedMemoryToStorageAsync(cudaStream_t stream);
+  void offloadAllManagedMemoryToStorage();
+  void offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap);
+  void offloadRemainedManagedMemoryToStorage();
+  void offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream);
   
-  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
+  void offloadAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
                                    std::map<void*, void*>& storageMap);
-  void moveAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink);
+  void offloadAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink);
   
   // Asynchronous operations
   void offloadDataAsync(void* originalPtr, std::map<void*, void*>& storageMap, 

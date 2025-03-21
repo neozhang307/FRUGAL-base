@@ -202,7 +202,7 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
 }
 
 // Memory storage operations
-void MemoryManager::moveAllManagedMemoryToStorage() {
+void MemoryManager::offloadAllManagedMemoryToStorage() {
   // Ensure the storage map starts empty
   managedDeviceArrayToHostArrayMap.clear();
   
@@ -216,7 +216,7 @@ void MemoryManager::moveAllManagedMemoryToStorage() {
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
-void MemoryManager::moveRemainedManagedMemoryToStorage() {
+void MemoryManager::offloadRemainedManagedMemoryToStorage() {
   auto currentAddressMap = this->getEditableCurrentAddressMap();
   for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpy(
@@ -229,7 +229,7 @@ void MemoryManager::moveRemainedManagedMemoryToStorage() {
   }
 }
 
-void MemoryManager::moveRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
+void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
   auto currentAddressMap = this->getEditableCurrentAddressMap();
   for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpyAsync(

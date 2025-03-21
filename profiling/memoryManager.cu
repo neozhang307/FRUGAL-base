@@ -103,7 +103,7 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
 
 // Memory allocation and data transfer methods moved to memoryManager_v2.cu
 
-void MemoryManager::moveAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
+void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
   // Ensure the storage map starts empty
   storageMap.clear();
   
@@ -120,7 +120,7 @@ void MemoryManager::moveAllManagedMemoryToStorage(std::map<void*, void*>& storag
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
-void MemoryManager::moveAllManagedMemoryToStorage(
+void MemoryManager::offloadAllManagedMemoryToStorage(
     int mainDeviceId, 
     int storageDeviceId, 
     bool useNvlink,
@@ -129,10 +129,10 @@ void MemoryManager::moveAllManagedMemoryToStorage(
   configureStorage(mainDeviceId, storageDeviceId, useNvlink);
   
   // Call the simpler version that uses the configured parameters and external map
-  moveAllManagedMemoryToStorage(storageMap);
+  offloadAllManagedMemoryToStorage(storageMap);
 }
 
-void MemoryManager::moveAllManagedMemoryToStorage(
+void MemoryManager::offloadAllManagedMemoryToStorage(
     int mainDeviceId, 
     int storageDeviceId, 
     bool useNvlink) {
@@ -140,7 +140,7 @@ void MemoryManager::moveAllManagedMemoryToStorage(
   configureStorage(mainDeviceId, storageDeviceId, useNvlink);
   
   // Call the simpler version that uses the configured parameters and internal map
-  moveAllManagedMemoryToStorage();
+  offloadAllManagedMemoryToStorage();
 }
 
 // Asynchronous operations

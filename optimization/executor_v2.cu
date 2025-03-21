@@ -258,7 +258,7 @@ cudaGraphExec_t Executor::initializeMemory(
   
   // Move all managed data to storage (host or secondary GPU)
   // The control would automatically go back to the main device. 
-  memManager.moveAllManagedMemoryToStorage();
+  memManager.offloadAllManagedMemoryToStorage();
   
   // Clear current memory mappings
   memManager.clearCurrentMappings();
@@ -381,7 +381,7 @@ void Executor::executeOptimizedGraph(
   LOG_TRACE_WITH_INFO("Clean up");
   
   // Copy remaining data back to storage
-  memManager.moveRemainedManagedMemoryToStorage();
+  memManager.offloadRemainedManagedMemoryToStorage();
   
   // Clean up CUDA resources
   checkCudaErrors(cudaGraphExecDestroy(initialDataGraphExec));
@@ -524,7 +524,7 @@ cudaGraph_t Executor::buildRepeatedExecutionGraph(
   // Add cleanup operations for any remaining device memory
   newLeafNodes = getNodesWithZeroOutDegree(graph);
   creator->beginCaptureOperation(newLeafNodes);
-  memManager.moveRemainedManagedMemoryToStorageAsync(stream);
+  memManager.offloadRemainedManagedMemoryToStorageAsync(stream);
   newLeafNodes = creator->endCaptureOperation();
   checkCudaErrors(cudaDeviceSynchronize());
   
@@ -650,7 +650,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   );
   
   // Move all managed data to storage
-  memManager.moveAllManagedMemoryToStorage();
+  memManager.offloadAllManagedMemoryToStorage();
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(mainDeviceId));

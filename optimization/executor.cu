@@ -470,7 +470,7 @@ void Executor::executeOptimizedGraphRepeatedly(
     storageDeviceId, 
     ConfigurationManager::getConfig().execution.useNvlink
   );
-  MemoryManager::getInstance().moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
+  MemoryManager::getInstance().offloadAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   
   // Store in internal storage map for future use
   MemoryManager::getInstance().getEditableDeviceToHostArrayMap() = managedDeviceArrayToHostArrayMap;
@@ -776,7 +776,7 @@ void Executor::executeOptimizedGraph(
     storageDeviceId, 
     ConfigurationManager::getConfig().execution.useNvlink
   );
-  MemoryManager::getInstance().moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
+  MemoryManager::getInstance().offloadAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   // Old implementation has been replaced with the MemoryManager API call above
   
   // Switch back to main GPU
@@ -1041,7 +1041,7 @@ cudaGraphExec_t Executor::initializeDataDistribution(
   // Configure storage parameters
   memManager.configureStorage(mainDeviceId, storageDeviceId, useNvlink);
   // Use the simplified API that uses the configured parameters
-  memManager.moveAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
+  memManager.offloadAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   
   // Reset the current assignment map
   memManager.clearCurrentMappings();
