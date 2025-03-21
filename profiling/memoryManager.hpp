@@ -489,6 +489,22 @@ public:
     }
   }
   
+  void moveRemainedManagedMemoryToStorage(cudaStream_t stream) {
+    // Ensure the storage map starts empty
+    auto currentAddressMap = this->getEditableCurrentAddressMap();
+    for (auto &[oldAddr, newAddr] : currentAddressMap) {
+      checkCudaErrors(cudaMemcpyAsync(
+        this->getDeviceToHostArrayMap().at(oldAddr),
+        newAddr,
+        this->getSize(oldAddr),
+        storageConfig.offloadMemcpyKind,
+        stream
+      ));
+      checkCudaErrors(cudaFreeAsync(newAddr, stream));
+      this->removeCurrentMapping(oldAddr);
+    }
+  }
+  
   /**
    * @brief Moves all managed memory to storage (host or secondary GPU)
    *

@@ -348,18 +348,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   
   // Set up device configuration for data movement
   int mainDeviceId = ConfigurationManager::getConfig().execution.mainDeviceId;
-  int storageDeviceId = cudaCpuDeviceId;  // Default: use host memory as storage
-  cudaMemcpyKind prefetchMemcpyKind = cudaMemcpyHostToDevice;
-  cudaMemcpyKind offloadMemcpyKind = cudaMemcpyDeviceToHost;
-
-  // If NVLink is available, use a second GPU as storage instead of host memory
-  if (ConfigurationManager::getConfig().execution.useNvlink) {
-    storageDeviceId = ConfigurationManager::getConfig().execution.storageDeviceId;
-    prefetchMemcpyKind = cudaMemcpyDeviceToDevice;
-    offloadMemcpyKind = cudaMemcpyDeviceToDevice;
-    enablePeerAccessForNvlink(ConfigurationManager::getConfig().execution.mainDeviceId, ConfigurationManager::getConfig().execution.storageDeviceId);
-  }
-
+  
   //----------------------------------------------------------------------
   // STEP 3: Initialize managed data distribution
   //----------------------------------------------------------------------
@@ -368,8 +357,8 @@ void Executor::executeOptimizedGraphRepeatedly(
 
   // Configure MemoryManager storage parameters
   memManager.configureStorage(
-    mainDeviceId, 
-    storageDeviceId, 
+    ConfigurationManager::getConfig().execution.mainDeviceId,
+    ConfigurationManager::getConfig().execution.storageDeviceId,
     ConfigurationManager::getConfig().execution.useNvlink
   );
   
@@ -399,22 +388,9 @@ void Executor::executeOptimizedGraphRepeatedly(
   
   // Use MemoryManager's prefetching method with internal storage
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
-    auto ptr = memManager.getPointerByArrayId(arrayId);
-    auto size = memManager.getSizeByArrayId(arrayId);
-
-    // Allocate on device and copy data from storage
-    void *devicePtr;
     optimizedCudaGraphCreator->beginCaptureOperation(newLeafNodes);
-    checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
-    checkCudaErrors(cudaMemcpyAsync(
-      devicePtr, 
-      memManager.getDeviceToHostArrayMap().at(ptr),
-      size, 
-      prefetchMemcpyKind, 
-      stream
-    ));
+    memManager.prefetchToDevice(arrayId, stream);
     newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-    memManager.updateCurrentMapping(ptr, devicePtr);
   }
 
   // Maps nodes to their dependencies in the CUDA graph
@@ -490,20 +466,9 @@ void Executor::executeOptimizedGraphRepeatedly(
 
   // Add cleanup operations for any remaining device memory
   newLeafNodes = getNodesWithZeroOutDegree(graph);
-  auto &currentAddressMap = memManager.getEditableCurrentAddressMap(); 
-  for (auto &[oldAddr, newAddr] : currentAddressMap) {
-    // Copy any remaining device data back to storage and free device memory
-    optimizedCudaGraphCreator->beginCaptureOperation(newLeafNodes);
-    checkCudaErrors(cudaMemcpyAsync(
-      memManager.getDeviceToHostArrayMap().at(oldAddr),
-      newAddr,
-      memManager.getSize(oldAddr),
-      offloadMemcpyKind,
-      stream
-    ));
-    checkCudaErrors(cudaFreeAsync(newAddr, stream));
-    newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-  }
+  optimizedCudaGraphCreator->beginCaptureOperation(newLeafNodes);
+  memManager.moveRemainedManagedMemoryToStorage(stream);
+  newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
   checkCudaErrors(cudaDeviceSynchronize());
 
   // Report time taken to build the graph
@@ -571,10 +536,8 @@ void Executor::executeOptimizedGraphRepeatedly(
   checkCudaErrors(cudaGraphDestroy(graph));
   checkCudaErrors(cudaStreamDestroy(stream));
 
-  // Disable peer access if using NVLink
-  if (ConfigurationManager::getConfig().execution.useNvlink) {
-    disablePeerAccessForNvlink(mainDeviceId, storageDeviceId);
-  }
+  // Clean up storage configuration
+  memManager.cleanStorage();
 
   // Store the execution time
   runningTime = cudaEventClock.getTimeInSeconds();
@@ -645,7 +608,6 @@ cudaGraphExec_t Executor::initializeDataDistribution(
   // Prefetch arrays that need to be on device initially
   memManager.prefetchAllDataToDevice(
     optimizedGraph.arraysInitiallyAllocatedOnDevice,
-    prefetchMemcpyKind,
     stream
   );
   
