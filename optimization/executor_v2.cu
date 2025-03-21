@@ -28,29 +28,23 @@ namespace memopt {
  * - runningTime: Output parameter to store the execution time
  * - memManager: Reference to the MemoryManager instance to use
  */
-void Executor::executeOptimizedGraph(
-  OptimizationOutput &optimizedGraph,
-  ExecuteRandomTask executeRandomTask,
-  float &runningTime,
-  MemoryManager &memManager
+/**
+ * @brief Prepares the topological sort structures for graph traversal
+ * 
+ * Sets up the in-degree map and identifies root nodes for Kahn's algorithm
+ *
+ * @param optimizedGraph The optimization plan
+ * @param inDegrees Output parameter for node in-degrees
+ * @param nodesToExecute Output queue of nodes ready to execute
+ * @param rootNodes Output vector of root nodes
+ */
+void Executor::prepareTopologicalSort(
+  const OptimizationOutput &optimizedGraph,
+  std::map<int, int> &inDegrees,
+  std::queue<int> &nodesToExecute,
+  std::vector<int> &rootNodes
 ) {
-  LOG_TRACE_WITH_INFO("Initialize");
-
-  // Create CUDA resources 
-  cudaGraph_t graph;
-  checkCudaErrors(cudaGraphCreate(&graph, 0));
-
-  cudaStream_t stream;
-  checkCudaErrors(cudaStreamCreate(&stream));
-
-  auto optimizedCudaGraphCreator = std::make_unique<OptimizedCudaGraphCreator>(stream, graph);
-
-  //----------------------------------------------------------------------
-  // STEP 1: Prepare the graph for topological traversal using Kahn's algorithm
-  //----------------------------------------------------------------------
-  
   // Calculate in-degrees for each node in the optimized graph
-  std::map<int, int> inDegrees;
   for (auto &[u, outEdges] : optimizedGraph.edges) {
     for (auto &v : outEdges) {
       inDegrees[v] += 1;
@@ -58,156 +52,261 @@ void Executor::executeOptimizedGraph(
   }
 
   // Find root nodes (nodes with no dependencies)
-  std::queue<int> nodesToExecute;
-  std::vector<int> rootNodes;
   for (auto &u : optimizedGraph.nodes) {
     if (inDegrees[u] == 0) {
       nodesToExecute.push(u);
       rootNodes.push_back(u);
     }
   }
+}
 
-  //----------------------------------------------------------------------
-  // STEP 2: Configure the device and memory settings
-  //----------------------------------------------------------------------
+/**
+ * @brief Handles a data movement node in the graph construction
+ * 
+ * Processes prefetch or offload operations as part of graph construction
+ *
+ * @param creator The graph creator object
+ * @param optimizedGraph The optimization plan
+ * @param nodeId The node ID to process
+ * @param dependencies Dependencies for this node
+ * @param memManager Reference to memory manager
+ * @param stream CUDA stream to use
+ * @return Vector of new leaf nodes after this operation
+ */
+std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
+  OptimizedCudaGraphCreator *creator,
+  const OptimizationOutput &optimizedGraph,
+  int nodeId,
+  const std::vector<cudaGraphNode_t> &dependencies,
+  MemoryManager &memManager,
+  cudaStream_t stream
+) {
+  // Begin capturing operations with dependencies
+  creator->beginCaptureOperation(dependencies);
   
-  // // Set up device configuration for data movement
-  int mainDeviceId = ConfigurationManager::getConfig().execution.mainDeviceId;
+  // Get data movement details
+  auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap.at(nodeId);
+  
+  // Perform the appropriate data movement operation
+  if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+    memManager.prefetchToDevice(dataMovement.arrayId, stream);
+  } else {
+    memManager.offloadFromDevice(dataMovement.arrayId, stream);
+  }
+  
+  // Check for errors and end capture
+  checkCudaErrors(cudaPeekAtLastError());
+  auto newLeafNodes = creator->endCaptureOperation();
+  checkCudaErrors(cudaPeekAtLastError());
+  
+  return newLeafNodes;
+}
 
-  memManager.configureStorage(ConfigurationManager::getConfig().execution.mainDeviceId,
-                            ConfigurationManager::getConfig().execution.storageDeviceId,
-                            ConfigurationManager::getConfig().execution.useNvlink);
-  //----------------------------------------------------------------------
-  // STEP 3: Initialize managed data distribution
-  //----------------------------------------------------------------------
+/**
+ * @brief Handles a computation task node in the graph construction
+ * 
+ * Executes the specified task as part of graph construction
+ *
+ * @param creator The graph creator object
+ * @param optimizedGraph The optimization plan
+ * @param nodeId The node ID to process
+ * @param dependencies Dependencies for this node
+ * @param executeRandomTask Callback to execute the task
+ * @param memManager Reference to memory manager
+ * @param stream CUDA stream to use
+ * @return Vector of new leaf nodes after this operation
+ */
+std::vector<cudaGraphNode_t> Executor::handleTaskNode(
+  OptimizedCudaGraphCreator *creator,
+  const OptimizationOutput &optimizedGraph,
+  int nodeId,
+  const std::vector<cudaGraphNode_t> &dependencies,
+  ExecuteRandomTask executeRandomTask,
+  MemoryManager &memManager,
+  cudaStream_t stream
+) {
+  // Begin capturing operations with dependencies
+  creator->beginCaptureOperation(dependencies);
   
-  LOG_TRACE_WITH_INFO("Initialize managed data distribution");
-
-  // Move all managed data to storage (host or secondary GPU) using internal storage
-  memManager.moveAllManagedMemoryToStorage();
-  
-  // Switch back to main GPU
-  checkCudaErrors(cudaSetDevice(mainDeviceId));
-  checkCudaErrors(cudaDeviceSynchronize());
-
-  //----------------------------------------------------------------------
-  // STEP 4: Initialize data that needs to be on the device at the start
-  //----------------------------------------------------------------------
-  
-  // Track memory addresses that have been updated (device copies)
-  memManager.clearCurrentMappings();
-  
-  // Create a subgraph for initial data prefetching
-  checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-  
-  // Use MemoryManager's prefetching method with internal storage
-  memManager.prefetchAllDataToDevice(
-    optimizedGraph.arraysInitiallyAllocatedOnDevice,
+  // Execute the task with current memory address mapping
+  executeRandomTask(
+    optimizedGraph.nodeIdToTaskIdMap.at(nodeId),
+    memManager.getEditableCurrentAddressMap(),
     stream
   );
   
-  // End capture and instantiate the initial data distribution graph
-  cudaGraph_t graphForInitialDataDistribution;
-  checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
+  return creator->endCaptureOperation();
+}
 
-  // Execute the initial data distribution
-  cudaGraphExec_t graphExecForInitialDataDistribution;
-  checkCudaErrors(cudaGraphInstantiate(&graphExecForInitialDataDistribution, graphForInitialDataDistribution, nullptr, nullptr, 0));
-  checkCudaErrors(cudaGraphLaunch(graphExecForInitialDataDistribution, stream));
-  checkCudaErrors(cudaDeviceSynchronize());
-
-  //----------------------------------------------------------------------
-  // STEP 5: Build the optimized execution graph by processing nodes in topological order
-  //----------------------------------------------------------------------
-  
+/**
+ * @brief Builds the optimized execution graph from the optimization plan
+ * 
+ * Constructs a CUDA graph by traversing the optimization plan in topological order
+ *
+ * @param optimizedGraph The optimization plan
+ * @param executeRandomTask Callback to execute tasks
+ * @param memManager Reference to memory manager
+ * @param stream CUDA stream to use
+ * @return The created CUDA graph
+ */
+cudaGraph_t Executor::buildOptimizedGraph(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  MemoryManager &memManager,
+  cudaStream_t stream
+) {
   LOG_TRACE_WITH_INFO("Record nodes to a new CUDA Graph");
-
+  
+  // Create a new CUDA graph
+  cudaGraph_t graph;
+  checkCudaErrors(cudaGraphCreate(&graph, 0));
+  
+  // Initialize graph creator
+  auto creator = std::make_unique<OptimizedCudaGraphCreator>(stream, graph);
+  
+  // Prepare for topological traversal
+  std::map<int, int> inDegrees;
+  std::queue<int> nodesToExecute;
+  std::vector<int> rootNodes;
+  prepareTopologicalSort(optimizedGraph, inDegrees, nodesToExecute, rootNodes);
+  
   // Maps nodes to their dependencies in the CUDA graph
-  std::map<int, std::vector<cudaGraphNode_t>> nodeToDependentNodesMap;
-
-  // Kahn's Algorithm for topological sort and graph construction
+  std::map<int, std::vector<cudaGraphNode_t>> nodeDependencies;
+  
+  // Process nodes in topological order (Kahn's Algorithm)
   while (!nodesToExecute.empty()) {
     // Get the next node to process
-    auto u = nodesToExecute.front();
+    auto nodeId = nodesToExecute.front();
     nodesToExecute.pop();
-
+    
     std::vector<cudaGraphNode_t> newLeafNodes;
-    auto nodeType = optimizedGraph.nodeIdToNodeTypeMap[u];
+    auto nodeType = optimizedGraph.nodeIdToNodeTypeMap[nodeId];
     
     // Process different node types
-    if (nodeType == OptimizationOutput::NodeType::dataMovement) {
-      //----------------------------------------------------------------------
-      // STEP 5a: Handle data movement nodes (prefetch or offload)
-      //----------------------------------------------------------------------
-      
-      optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
-      auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
-      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
-      
-      if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
-        memManager.prefetchToDevice(dataMovement.arrayId,stream);
-      } else {
-        memManager.offloadFromDevice(dataMovement.arrayId,stream);
-      }
-      
-      checkCudaErrors(cudaPeekAtLastError());
-      newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-      checkCudaErrors(cudaPeekAtLastError());
-      
-    } else if (nodeType == OptimizationOutput::NodeType::task) {
-      //----------------------------------------------------------------------
-      // STEP 5b: Handle computation task nodes
-      //----------------------------------------------------------------------
-      
-      optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
-      // Execute the task with current memory address mapping
-      executeRandomTask(
-        optimizedGraph.nodeIdToTaskIdMap[u],
-        memManager.getEditableCurrentAddressMap(),
-        stream
-      );
-      newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
-      
-    } else if (nodeType == OptimizationOutput::NodeType::empty) {
-      //----------------------------------------------------------------------
-      // STEP 5c: Handle empty nodes (for dependencies)
-      //----------------------------------------------------------------------
-      
-      newLeafNodes.push_back(
-        optimizedCudaGraphCreator->addEmptyNode(nodeToDependentNodesMap[u])
-      );
-    } else {
-      LOG_TRACE_WITH_INFO("Unsupported node type: %d", nodeType);
-      exit(-1);
+    switch (nodeType) {
+      case OptimizationOutput::NodeType::dataMovement:
+        newLeafNodes = handleDataMovementNode(
+          creator.get(), optimizedGraph, nodeId, nodeDependencies[nodeId], memManager, stream);
+        break;
+        
+      case OptimizationOutput::NodeType::task:
+        newLeafNodes = handleTaskNode(
+          creator.get(), optimizedGraph, nodeId, nodeDependencies[nodeId], 
+          executeRandomTask, memManager, stream);
+        break;
+        
+      case OptimizationOutput::NodeType::empty:
+        newLeafNodes.push_back(
+          creator->addEmptyNode(nodeDependencies[nodeId]));
+        break;
+        
+      default:
+        LOG_TRACE_WITH_INFO("Unsupported node type: %d", nodeType);
+        exit(-1);
     }
-
+    
     // Update dependencies and process nodes that have all dependencies satisfied
-    for (auto &v : optimizedGraph.edges[u]) {
+    for (auto &v : optimizedGraph.edges[nodeId]) {
       inDegrees[v]--;
-
+      
       // Add dependencies for the next nodes
-      nodeToDependentNodesMap[v].insert(
-        nodeToDependentNodesMap[v].end(),
+      nodeDependencies[v].insert(
+        nodeDependencies[v].end(),
         newLeafNodes.begin(),
         newLeafNodes.end()
       );
-
+      
       // If all dependencies are satisfied, add to the queue
       if (inDegrees[v] == 0) {
         nodesToExecute.push(v);
       }
     }
   }
-
+  
   // Export graph for debugging/visualization
   LOG_TRACE_WITH_INFO("Printing the new CUDA Graph to newGraph.dot");
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "newGraph.dot", 0));
-
-  //----------------------------------------------------------------------
-  // STEP 6: Execute the optimized graph
-  //----------------------------------------------------------------------
   
+  return graph;
+}
+
+/**
+ * @brief Initializes memory setup before graph execution
+ * 
+ * Configures memory manager, moves data to storage, and prefetches initial data
+ *
+ * @param optimizedGraph The optimization plan
+ * @param memManager Reference to memory manager
+ * @param stream CUDA stream to use
+ * @return Executable graph for initial data distribution
+ */
+cudaGraphExec_t Executor::initializeMemory(
+  OptimizationOutput &optimizedGraph,
+  MemoryManager &memManager,
+  cudaStream_t stream
+) {
+  // Configure device and memory settings
+  int mainDeviceId = ConfigurationManager::getConfig().execution.mainDeviceId;
+  
+  LOG_TRACE_WITH_INFO("Initialize managed data distribution");
+  
+  // Configure memory manager storage
+  memManager.configureStorage(
+    ConfigurationManager::getConfig().execution.mainDeviceId,
+    ConfigurationManager::getConfig().execution.storageDeviceId,
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  
+  // Move all managed data to storage (host or secondary GPU)
+  memManager.moveAllManagedMemoryToStorage();
+  
+  // Switch back to main GPU
+  checkCudaErrors(cudaSetDevice(mainDeviceId));
+  checkCudaErrors(cudaDeviceSynchronize());
+  
+  // Clear current memory mappings
+  memManager.clearCurrentMappings();
+  
+  // Create a subgraph for initial data prefetching
+  checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+  
+  // Prefetch arrays needed at the start
+  memManager.prefetchAllDataToDevice(
+    optimizedGraph.arraysInitiallyAllocatedOnDevice,
+    stream
+  );
+  
+  // End capture and create graph
+  cudaGraph_t graphForInitialDataDistribution;
+  checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
+  
+  // Instantiate and execute the initial data distribution graph
+  cudaGraphExec_t graphExec;
+  checkCudaErrors(cudaGraphInstantiate(
+    &graphExec, graphForInitialDataDistribution, nullptr, nullptr, 0));
+  checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+  checkCudaErrors(cudaDeviceSynchronize());
+  
+  // Cleanup the capture graph but keep the executable
+  checkCudaErrors(cudaGraphDestroy(graphForInitialDataDistribution));
+  
+  return graphExec;
+}
+
+/**
+ * @brief Executes the optimized graph and measures performance
+ * 
+ * Runs the graph with performance measurement and memory usage profiling
+ *
+ * @param graph The optimized CUDA graph to execute
+ * @param stream CUDA stream to use
+ * @param runningTime Output parameter for execution time
+ */
+void Executor::executeGraph(
+  cudaGraph_t graph,
+  cudaStream_t stream,
+  float &runningTime
+) {
   LOG_TRACE_WITH_INFO("Execute the new CUDA Graph");
   
   // Set up profiling if requested
@@ -217,22 +316,22 @@ void Executor::executeOptimizedGraph(
   // Instantiate the graph for execution
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
-
+  
   // Upload the graph to the device for faster execution
   checkCudaErrors(cudaGraphUpload(graphExec, stream));
   checkCudaErrors(cudaStreamSynchronize(stream));
-
+  
   // Start memory usage profiling if requested
   if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
     peakMemoryUsageProfiler.start();
   }
-
+  
   // Execute and time the graph
   cudaEventClock.start();
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
   cudaEventClock.end();
   checkCudaErrors(cudaDeviceSynchronize());
-
+  
   // Report peak memory usage if requested
   if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
     const auto peakMemoryUsage = peakMemoryUsageProfiler.end();
@@ -241,30 +340,60 @@ void Executor::executeOptimizedGraph(
       static_cast<float>(peakMemoryUsage) / 1024.0 / 1024.0
     );
   }
-
-  //----------------------------------------------------------------------
-  // STEP 7: Clean up resources and copy any remaining data back to storage
-  //----------------------------------------------------------------------
   
-  LOG_TRACE_WITH_INFO("Clean up");
-  
-  // Copy any remaining device data back to storage
-
-  memManager.moveRemainedManagedMemoryToStorage();
-  // Clean up CUDA resources
-  checkCudaErrors(cudaGraphExecDestroy(graphExecForInitialDataDistribution));
-  checkCudaErrors(cudaGraphExecDestroy(graphExec));
-  checkCudaErrors(cudaGraphDestroy(graphForInitialDataDistribution));
-  checkCudaErrors(cudaGraphDestroy(graph));
-  checkCudaErrors(cudaStreamDestroy(stream));
-
-  // Disable peer access if using NVLink
-  // if (ConfigurationManager::getConfig().execution.useNvlink) {
-  //   disablePeerAccessForNvlink(mainDeviceId, storageDeviceId);
-  // }
-  memManager.cleanStorage();
   // Store the execution time
   runningTime = cudaEventClock.getTimeInSeconds();
+  
+  // Cleanup graph execution resources
+  checkCudaErrors(cudaGraphExecDestroy(graphExec));
+}
+
+/**
+ * @brief Main implementation of executeOptimizedGraph
+ * 
+ * Executes a computation graph optimized for memory usage
+ *
+ * @param optimizedGraph The optimization plan
+ * @param executeRandomTask Callback to execute tasks
+ * @param runningTime Output parameter for execution time
+ * @param memManager Reference to memory manager
+ */
+void Executor::executeOptimizedGraph(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  LOG_TRACE_WITH_INFO("Initialize");
+  
+  // Create CUDA stream
+  cudaStream_t stream;
+  checkCudaErrors(cudaStreamCreate(&stream));
+  
+  // Initialize memory setup and get initial data graph
+  cudaGraphExec_t initialDataGraphExec = initializeMemory(
+    optimizedGraph, memManager, stream);
+  
+  // Build the optimized execution graph
+  cudaGraph_t graph = buildOptimizedGraph(
+    optimizedGraph, executeRandomTask, memManager, stream);
+  
+  // Execute the optimized graph
+  executeGraph(graph, stream, runningTime);
+  
+  // Clean up resources
+  LOG_TRACE_WITH_INFO("Clean up");
+  
+  // Copy remaining data back to storage
+  memManager.moveRemainedManagedMemoryToStorage();
+  
+  // Clean up CUDA resources
+  checkCudaErrors(cudaGraphExecDestroy(initialDataGraphExec));
+  checkCudaErrors(cudaGraphDestroy(graph));
+  checkCudaErrors(cudaStreamDestroy(stream));
+  
+  // Clean up memory manager storage
+  memManager.cleanStorage();
 }
 
 /*
@@ -566,72 +695,6 @@ void Executor::executeOptimizedGraphRepeatedly(
   );
 }
 
-/**
- * @brief Helper method for initializing data distribution using internal storage
- * 
- * Moves all managed memory to storage and initializes needed data on device.
- * Uses MemoryManager's internal storage map.
- * 
- * @param optimizedGraph The optimization plan to execute
- * @param mainDeviceId ID of the main computation device
- * @param storageDeviceId ID of the storage device
- * @param useNvlink Whether to use NVLink for data transfers
- * @param stream CUDA stream to use for operations
- * @return cudaGraphExec_t Executable graph for initial data setup
- */
-cudaGraphExec_t Executor::initializeDataDistribution(
-  OptimizationOutput &optimizedGraph,
-  int mainDeviceId, 
-  int storageDeviceId,
-  bool useNvlink,
-  cudaStream_t stream,
-  cudaMemcpyKind prefetchMemcpyKind
-) {
-  LOG_TRACE_WITH_INFO("Initialize data distribution with internal storage");
-  
-  // Move all managed data to storage (host or secondary GPU) using MemoryManager
-  auto& memManager = MemoryManager::getInstance();
-  
-  // Configure storage parameters
-  memManager.configureStorage(mainDeviceId, storageDeviceId, useNvlink);
-  
-  // Use the simplified API that uses internal storage
-  memManager.moveAllManagedMemoryToStorage();
-  
-  // Reset the current assignment map
-  memManager.clearCurrentMappings();
-  
-  // Create a subgraph for initial data prefetching
-  cudaGraph_t graphForInitialDataDistribution;
-  checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-  
-  // Prefetch arrays that need to be on device initially
-  memManager.prefetchAllDataToDevice(
-    optimizedGraph.arraysInitiallyAllocatedOnDevice,
-    stream
-  );
-  
-  // End capture and instantiate graph
-  checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
-  
-  // Create executable graph
-  cudaGraphExec_t graphExecForInitialDataDistribution;
-  checkCudaErrors(cudaGraphInstantiate(
-    &graphExecForInitialDataDistribution, 
-    graphForInitialDataDistribution, 
-    nullptr, 
-    nullptr, 
-    0
-  ));
-  
-  // Execute the initial data distribution
-  checkCudaErrors(cudaGraphLaunch(graphExecForInitialDataDistribution, stream));
-  checkCudaErrors(cudaDeviceSynchronize());
-  
-  // We'll clean up the graph itself, but return the executable for the caller to clean up
-  checkCudaErrors(cudaGraphDestroy(graphForInitialDataDistribution));
-  
-  return graphExecForInitialDataDistribution;
-}
+
 
 }  // namespace memopt

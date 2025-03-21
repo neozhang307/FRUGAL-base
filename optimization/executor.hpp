@@ -3,6 +3,8 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <queue>
+#include <vector>
 
 #include "../profiling/memoryManager.hpp"
 #include "optimizationOutput.hpp"
@@ -171,6 +173,52 @@ class Executor {
     ExecuteRandomTask executeRandomTask,
     float &runningTime,
     MemoryManager &memManager
+  );
+  
+  // Helper methods for executeOptimizedGraph
+  void prepareTopologicalSort(
+    const OptimizationOutput &optimizedGraph,
+    std::map<int, int> &inDegrees,
+    std::queue<int> &nodesToExecute,
+    std::vector<int> &rootNodes
+  );
+  
+  std::vector<cudaGraphNode_t> handleDataMovementNode(
+    OptimizedCudaGraphCreator *creator,
+    const OptimizationOutput &optimizedGraph,
+    int nodeId,
+    const std::vector<cudaGraphNode_t> &dependencies,
+    MemoryManager &memManager,
+    cudaStream_t stream
+  );
+  
+  std::vector<cudaGraphNode_t> handleTaskNode(
+    OptimizedCudaGraphCreator *creator,
+    const OptimizationOutput &optimizedGraph,
+    int nodeId,
+    const std::vector<cudaGraphNode_t> &dependencies,
+    ExecuteRandomTask executeRandomTask,
+    MemoryManager &memManager,
+    cudaStream_t stream
+  );
+  
+  cudaGraph_t buildOptimizedGraph(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    MemoryManager &memManager,
+    cudaStream_t stream
+  );
+  
+  cudaGraphExec_t initializeMemory(
+    OptimizationOutput &optimizedGraph,
+    MemoryManager &memManager,
+    cudaStream_t stream
+  );
+  
+  void executeGraph(
+    cudaGraph_t graph,
+    cudaStream_t stream,
+    float &runningTime
   );
   
   /**
