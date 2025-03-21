@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../profiling/memoryManager.hpp"
+#include "../utilities/utilities.hpp"
 #include "optimizationOutput.hpp"
 
 namespace memopt {
@@ -218,6 +219,22 @@ class Executor {
   void executeGraph(
     cudaGraph_t graph,
     cudaStream_t stream,
+    float &runningTime
+  );
+  
+  cudaGraph_t buildRepeatedExecutionGraph(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    MemoryManager &memManager,
+    cudaStream_t stream,
+    SystemWallClock &clock
+  );
+  
+  void executeGraphRepeatedly(
+    cudaGraph_t graph,
+    cudaStream_t stream,
+    ShouldContinue shouldContinue,
+    int &numIterations,
     float &runningTime
   );
   
