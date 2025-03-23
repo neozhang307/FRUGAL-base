@@ -8,9 +8,9 @@
   "generic": {
     "availableMemoryForUMInMiB": 51131,
     "optimize": true,
-    "repeat": 1,
+    "repeat": 2,
     "useUM": false,
-    "verify": false
+    "verify": true
   },
   "lulesh": {
     "constrainIterationCount": true,
