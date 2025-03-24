@@ -106,23 +106,42 @@ void* MemoryManager::offloadToStorage(
     int storageDeviceId, 
     bool useNvlink, 
     std::map<void*, void*>& storageMap) {
+  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", ptr);
+  
   // Allocate in storage
   void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
   
   // Copy data from device to storage
   transferData(ptr, storagePtr, cudaMemcpyDefault);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
   
   // Update mapping
   storageMap[ptr] = storagePtr;
+  fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", ptr, storagePtr);
   
   // Update MemoryArrayInfo structure
   ArrayId arrayId = getArrayId(ptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, ptr);
+  
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
+    fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
+            arrayId, storagePtr);
+  } else {
+    fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
+            ptr, arrayId);
+  }
+  
+  // Verify storageAddress was set
+  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
+            arrayId, memoryArrayInfos[arrayId].storageAddress);
   }
   
   // Free original device memory
   checkCudaErrors(cudaFree(ptr));
+  fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p\n", ptr);
   
   return storagePtr;
 }
@@ -149,9 +168,15 @@ void MemoryManager::cleanStorage() {
   }
   
   // Clear storage addresses in MemoryArrayInfo
-  for (auto& info : memoryArrayInfos) {
-    info.storageAddress = nullptr;
-  }
+  // for (auto& info : memoryArrayInfos) {
+  //   info.storageAddress = nullptr;
+  // }
+  
+  // Also clear the legacy mapping to maintain consistency
+  // This is crucial when running multiple iterations to prevent stale mappings
+  // managedDeviceArrayToHostArrayMap.clear();
+  
+  // fprintf(stderr, "[DEBUG-CLEAN] cleanStorage cleared both memoryArrayInfos.storageAddress and managedDeviceArrayToHostArrayMap\n");
 }
 
 void MemoryManager::clearStorage() {
@@ -159,6 +184,12 @@ void MemoryManager::clearStorage() {
   for (auto& info : memoryArrayInfos) {
     info.storageAddress = nullptr;
   }
+  
+  // Also clear the legacy mapping to maintain consistency
+  // This ensures both data structures stay in sync
+  // managedDeviceArrayToHostArrayMap.clear();
+  
+  fprintf(stderr, "[DEBUG-CLEAR] clearStorage cleared both memoryArrayInfos.storageAddress and managedDeviceArrayToHostArrayMap\n");
 }
 
 // Mapping management
@@ -275,22 +306,58 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
   ));
   checkCudaErrors(cudaFreeAsync(devicePtr, stream));
   this->removeCurrentMapping(dataMovementAddress);
+  // this->memoryArrayInfos[arrayId].storageAddress=nullptr;
 }
 
 // Memory storage operations
 void MemoryManager::offloadAllManagedMemoryToStorage() {
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Starting offloadAllManagedMemoryToStorage, address count: %zu\n", 
+          managedMemoryAddresses.size());
+  
   // Ensure the storage map starts empty
   managedDeviceArrayToHostArrayMap.clear();
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Cleared managedDeviceArrayToHostArrayMap\n");
+  
   clearStorage();
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Called clearStorage() to reset memoryArrayInfos\n");
+  
   // Move each managed memory address to storage
-  for (auto ptr : managedMemoryAddresses) {
-    // would automatically update MemoryArrayInfo
-    offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, managedDeviceArrayToHostArrayMap);
+  for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
+    void* ptr = managedMemoryAddresses[i];
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
+            i+1, managedMemoryAddresses.size(), ptr);
+    
+    // Would automatically update MemoryArrayInfo
+    void* storagePtr = offloadToStorage(ptr, storageConfig.storageDeviceId, 
+                                       storageConfig.useNvlink, managedDeviceArrayToHostArrayMap);
+                                       
+    // Verify both data structures have the same storage pointer
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] After offload: managedDeviceArrayToHostArrayMap[%p] = %p\n", 
+            ptr, managedDeviceArrayToHostArrayMap[ptr]);
+            
+    if (i < memoryArrayInfos.size()) {
+      fprintf(stderr, "[DEBUG-OFFLOAD-ALL] After offload: memoryArrayInfos[%zu].storageAddress = %p\n", 
+              i, memoryArrayInfos[i].storageAddress);
+              
+      if (memoryArrayInfos[i].storageAddress != managedDeviceArrayToHostArrayMap[ptr]) {
+        fprintf(stderr, "[DEBUG-OFFLOAD-ALL] ERROR: Storage pointers don't match for address %p! (%p vs %p)\n", 
+                ptr, memoryArrayInfos[i].storageAddress, managedDeviceArrayToHostArrayMap[ptr]);
+      }
+    } else {
+      fprintf(stderr, "[DEBUG-OFFLOAD-ALL] ERROR: No memoryArrayInfos entry for index %zu\n", i);
+    }
   }
   
+  // Print a summary of both data structures
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
+          managedDeviceArrayToHostArrayMap.size());
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
+          memoryArrayInfos.size());
+          
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
   checkCudaErrors(cudaDeviceSynchronize());
+  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Completed offloadAllManagedMemoryToStorage\n");
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorage() {
@@ -356,33 +423,72 @@ ArrayId MemoryManager::findArrayIdByAddress(void* addr) const {
 void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
   // Handle nullptr case
   if (managedMemAddress == nullptr) {
+    fprintf(stderr, "[DEBUG] getStoragePtr: nullptr input\n");
     return nullptr;
   }
+
   
-  // First try to find the array ID using the new method
+  // Then try to find the array ID using the new method
   ArrayId arrayId = findArrayIdByAddress(managedMemAddress);
   
   // If found in memoryArrayInfos, return its storage address
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-    return memoryArrayInfos[arrayId].storageAddress;
+    void* storageAddr = memoryArrayInfos[arrayId].storageAddress;
+    if (storageAddr == nullptr) {
+      fprintf(stderr, "[DEBUG] getStoragePtr: Found arrayId %d for address %p but storageAddress is nullptr\n", 
+              arrayId, managedMemAddress);
+      
+      // Special case - legacy map is empty but we found the array ID
+      // Check if applicationInputs has this address, which would indicate it's a valid array
+      // This helps recover after cleanStorage() clears the addresses
+      if (managedDeviceArrayToHostArrayMap.empty() && 
+          (applicationInputs.count(managedMemAddress) > 0 || applicationOutputs.count(managedMemAddress) > 0)) {
+        fprintf(stderr, "[DEBUG] getStoragePtr: Address %p is a known application input/output but storage was cleared (cleanStorage ran)\n", 
+                managedMemAddress);
+      }
+    } else {
+      // Success case
+      fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p for managed address %p using arrayId %d\n", 
+              storageAddr, managedMemAddress, arrayId);
+    }
+    return storageAddr;
+  } else {
+    fprintf(stderr, "[DEBUG] getStoragePtr: findArrayIdByAddress failed with arrayId %d for address %p\n", 
+            arrayId, managedMemAddress);
   }
   
-  // Fall back to the old method if not found in memoryArrayInfos
+  // Fall back to the old index map method
   auto it = managedMemoryAddressToIndexMap.find(managedMemAddress);
   if (it != managedMemoryAddressToIndexMap.end()) {
     arrayId = it->second;
     if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-      return memoryArrayInfos[arrayId].storageAddress;
+      void* storageAddr = memoryArrayInfos[arrayId].storageAddress;
+      if (storageAddr == nullptr) {
+        fprintf(stderr, "[DEBUG] getStoragePtr: Found address in indexMap with arrayId %d but storageAddress is nullptr\n", 
+                arrayId);
+      } else {
+        fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p using indexMap with arrayId %d\n", 
+                storageAddr, arrayId);
+      }
+      return storageAddr;
+    } else {
+      fprintf(stderr, "[DEBUG] getStoragePtr: Found in indexMap but arrayId %d is invalid\n", arrayId);
     }
+  } else {
+    fprintf(stderr, "[DEBUG] getStoragePtr: Address %p not found in managedMemoryAddressToIndexMap\n", managedMemAddress);
   }
+
   
-  // If we have the legacy host array mapping, try that
+  // Legacy map lookup first (fastest direct lookup)
+  // This ensures backward compatibility and protects against array index changes
   auto hostIt = managedDeviceArrayToHostArrayMap.find(managedMemAddress);
   if (hostIt != managedDeviceArrayToHostArrayMap.end()) {
+    fprintf(stderr, "[DEBUG] getStoragePtr: Found in legacy hostArrayMap: %p -> %p\n", 
+            managedMemAddress, hostIt->second);
     return hostIt->second;
-  }
-  
+  }  
   // Not found in any map
+  fprintf(stderr, "[DEBUG] getStoragePtr: CRITICAL! Address %p not found in any map!\n", managedMemAddress);
   return nullptr;
 }
 

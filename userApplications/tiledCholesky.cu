@@ -907,7 +907,8 @@ void tiledCholesky(bool optimize, bool verify) {
       auto& deviceToHostMap = memManager.getDeviceToHostArrayMap();
       for (int j = 0; j < T * T; j++) {
         auto oldPtr = d_tiles[j];
-        auto newPtr = deviceToHostMap.at(oldPtr);
+        // auto newPtr = deviceToHostMap.at(oldPtr);
+        auto newPtr = memManager.getStoragePtr(oldPtr);
         // Copy data back to device memory
         checkCudaErrors(cudaMalloc(&d_tiles[j], tileSize));
         checkCudaErrors(cudaMemcpy(d_tiles[j], newPtr, tileSize, cudaMemcpyDefault));
