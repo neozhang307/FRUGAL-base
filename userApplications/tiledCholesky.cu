@@ -990,10 +990,10 @@ void tiledCholesky(bool optimize, bool verify) {
   checkCudaErrors(cudaFreeHost(h_workspace));
   checkCudaErrors(cudaFree(d_workspace));
   
-  // Use freeManagedMemorys to free both device and storage memory for each tile
+  // Use freeManagedMemory to free both device and storage memory for each tile
   auto& memManager = MemoryManager::getInstance();
   for (auto d_tile : d_tiles) {
-    memManager.freeManagedMemorys(d_tile);
+    memManager.freeManagedMemory(d_tile);
   }
 }
 

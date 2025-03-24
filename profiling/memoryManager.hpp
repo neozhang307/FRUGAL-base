@@ -264,12 +264,13 @@ public:
   void ResetStorageConfig();
   
   /**
-   * @brief Clears all storage addresses in memoryArrayInfos
+   * @brief Releases all storage pointers, freeing memory and setting addresses to nullptr
    * 
-   * Sets the storageAddress field of all MemoryArrayInfo structs to nullptr.
-   * This is useful when you want to reset storage status without deallocating memory.
+   * This function iterates through all MemoryArrayInfo entries, frees the
+   * memory at storageAddress if not nullptr, and then sets it to nullptr.
+   * Use this to clean up all storage memory at once.
    */
-  void clearStorage();
+  void releaseStoragePointers();
   
   /**
    * @brief Frees both device and storage memory for a given managed memory address
@@ -280,10 +281,10 @@ public:
    * 3. Free the storage memory if storageAddress is not nullptr
    * 4. Set both addresses to nullptr in the MemoryArrayInfo structure
    * 
-   * @param ptr The original managed memory address to free resources for
+   * @param managedMemoryAddress The original managed memory address to free resources for
    * @return True if the address was found and memory was freed, false otherwise
    */
-  bool freeManagedMemorys(void* ptr);
+  bool freeManagedMemory(void* managedMemoryAddress);
 
   void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
   void prefetchAllDataToDevice();
@@ -295,22 +296,54 @@ public:
                              cudaStream_t stream);
   
   void* allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink);
-  void transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memcpyKind);
+  /**
+   * @brief Copies memory from device to storage
+   * 
+   * This function is specifically designed to copy data from a device address to a storage address
+   * (either host memory or secondary GPU memory). It retrieves the size from the memory manager
+   * and handles proper address resolution.
+   * 
+   * @param managedMemoryAddress Managed memory address associated with the data
+   * @param storageAddress Storage memory address to copy to
+   * @param memcpyKind Type of memory copy (typically cudaMemcpyDefault or cudaMemcpyDeviceToHost)
+   */
+  void copyMemoryDeviceToStorage(void* managedMemoryAddress, void* storageAddress, cudaMemcpyKind memcpyKind);
   
   /**
-   * @brief Frees memory based on the storage configuration
+   * @brief Frees memory in storage (host or secondary GPU)
    * 
    * This function determines whether to use cudaFree or cudaFreeHost based on 
    * the storage configuration's useNvlink setting.
    * 
-   * @param ptr The pointer to free
+   * @param storageAddress The storage pointer to free
    */
-  void freeStorage(void* ptr);
+  void freeStorage(void* storageAddress);
   
-  void* offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink, 
+  /**
+   * @brief Offloads memory from device to storage and tracks it in a map
+   * 
+   * This function allocates storage memory, copies data from device to storage,
+   * and updates the storage map to track the relationship between addresses.
+   * 
+   * @param managedMemoryAddress The managed memory address to offload to storage
+   * @param storageDeviceId The device ID for storage (-1 for host)
+   * @param useNvlink Whether to use NVLink for GPU-to-GPU transfers
+   * @param storageMap Map to update with managed-to-storage address mappings
+   * @return Pointer to the allocated storage memory
+   */
+  void* offloadToStorage(void* managedMemoryAddress, int storageDeviceId, bool useNvlink, 
                        std::map<void*, void*>& storageMap);
 
-  void offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink);
+  /**
+   * @brief Offloads memory from device to storage
+   * 
+   * This overload doesn't require a storage map and updates memoryArrayInfos directly.
+   * 
+   * @param managedMemoryAddress The managed memory address to offload to storage
+   * @param storageDeviceId The device ID for storage (-1 for host)
+   * @param useNvlink Whether to use NVLink for GPU-to-GPU transfers
+   */
+  void offloadToStorage(void* managedMemoryAddress, int storageDeviceId, bool useNvlink);
 
   // Memory storage operations
   void offloadAllManagedMemoryToStorage();
