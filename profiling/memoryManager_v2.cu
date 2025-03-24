@@ -87,6 +87,12 @@ void* MemoryManager::offloadToStorage(
   // Update mapping
   storageMap[ptr] = storagePtr;
   
+  // Update MemoryArrayInfo structure
+  ArrayId arrayId = getArrayId(ptr);
+  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    memoryArrayInfos[arrayId].storageAddress = storagePtr;
+  }
+  
   // Free original device memory
   checkCudaErrors(cudaFree(ptr));
   
@@ -113,19 +119,42 @@ void MemoryManager::cleanStorage() {
   if (storageConfig.useNvlink) {
     disablePeerAccessForNvlink(storageConfig.mainDeviceId, storageConfig.storageDeviceId);
   }
+  
+  // Clear storage addresses in MemoryArrayInfo
+  for (auto& info : memoryArrayInfos) {
+    info.storageAddress = nullptr;
+  }
 }
 
 // Mapping management
 void MemoryManager::updateCurrentMapping(void* originalAddr, void* currentAddr) {
   managedMemoryAddressToAssignedMap[originalAddr] = currentAddr;
+  
+  // Also update the MemoryArrayInfo structure
+  ArrayId arrayId = getArrayId(originalAddr);
+  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    memoryArrayInfos[arrayId].deviceAddress = currentAddr;
+  }
 }
 
 void MemoryManager::removeCurrentMapping(void* originalAddr) {
   managedMemoryAddressToAssignedMap.erase(originalAddr);
+  
+  // Also update the MemoryArrayInfo structure
+  ArrayId arrayId = getArrayId(originalAddr);
+  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    // When removing device mapping, set deviceAddress to nullptr
+    memoryArrayInfos[arrayId].deviceAddress = nullptr;
+  }
 }
 
 void MemoryManager::clearCurrentMappings() {
   managedMemoryAddressToAssignedMap.clear();
+  
+  // Clear device pointers in all MemoryArrayInfo entries
+  for (auto& info : memoryArrayInfos) {
+    info.deviceAddress = nullptr;
+  }
 }
 
 void MemoryManager::prefetchAllDataToDeviceAsync(
@@ -252,6 +281,16 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
     checkCudaErrors(cudaFreeAsync(newAddr, stream));
     this->removeCurrentMapping(oldAddr);
   }
+}
+
+// MemoryArrayInfo methods
+const MemoryManager::MemoryArrayInfo& MemoryManager::getMemoryArrayInfo(ArrayId arrayId) const {
+  assert(arrayId >= 0 && arrayId < memoryArrayInfos.size());
+  return memoryArrayInfos[arrayId];
+}
+
+const std::vector<MemoryManager::MemoryArrayInfo>& MemoryManager::getMemoryArrayInfos() const {
+  return memoryArrayInfos;
 }
 
 } // namespace memopt

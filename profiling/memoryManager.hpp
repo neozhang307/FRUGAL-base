@@ -86,6 +86,17 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
  */
 class MemoryManager {
 private:
+  /** @brief Memory array information structure */
+  struct MemoryArrayInfo {
+    void* managedMemoryAddress;  // Original memory address
+    void* deviceAddress;         // Current device address (could be same as original)
+    void* storageAddress;        // Address in storage (host or secondary GPU)
+    size_t size;                 // Size of allocation in bytes
+  };
+
+  /** @brief Stores complete memory array information */
+  inline static std::vector<MemoryArrayInfo> memoryArrayInfos;
+  
   /** @brief Ordered list of all managed memory addresses */
   inline static std::vector<void *> managedMemoryAddresses; // Original Memory
   
@@ -227,6 +238,10 @@ public:
   void* getPointerByArrayId(int arrayId) const;
   size_t getSizeByArrayId(int arrayId) const;
   std::vector<ArrayId> getArrayIds() const;
+  
+  // MemoryArrayInfo methods
+  const MemoryArrayInfo& getMemoryArrayInfo(ArrayId arrayId) const;
+  const std::vector<MemoryArrayInfo>& getMemoryArrayInfos() const;
 
   // Make these functions friends so they can access private members
   template <typename T>
@@ -254,12 +269,27 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
   
   // Only register if not already tracked
   if (memManager.getAddressToIndexMap().count(ptr) == 0) {
+    // Update existing data structures
     memManager.getEditableManagedAddresses().push_back(ptr);
-    memManager.getEditableAddressToIndexMap()[ptr] = memManager.getManagedAddresses().size() - 1;
+    ArrayId arrayId = memManager.getManagedAddresses().size() - 1;
+    memManager.getEditableAddressToIndexMap()[ptr] = arrayId;
     memManager.getEditableAddressToSizeMap()[ptr] = size;
     
     // Initialize the mapping to point to itself (no relocation yet)
     memManager.getEditableDeviceToStorageMap()[ptr] = ptr;
+    
+    // Create and populate new MemoryArrayInfo structure
+    MemoryManager::MemoryArrayInfo info;
+    info.managedMemoryAddress = ptr;
+    info.deviceAddress = ptr;         // Initially, the device address is the same as the original
+    info.storageAddress = ptr;        // Initially, no storage allocated
+    info.size = size;
+    
+    // Expand the vector if needed
+    if (memManager.memoryArrayInfos.size() <= arrayId) {
+      memManager.memoryArrayInfos.resize(arrayId + 1);
+    }
+    memManager.memoryArrayInfos[arrayId] = info;
   }
 }
 
