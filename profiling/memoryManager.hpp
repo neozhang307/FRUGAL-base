@@ -270,6 +270,20 @@ public:
    * This is useful when you want to reset storage status without deallocating memory.
    */
   void clearStorage();
+  
+  /**
+   * @brief Frees both device and storage memory for a given managed memory address
+   * 
+   * This function will:
+   * 1. Find the array ID associated with the given pointer
+   * 2. Free the device memory if deviceAddress is not nullptr
+   * 3. Free the storage memory if storageAddress is not nullptr
+   * 4. Set both addresses to nullptr in the MemoryArrayInfo structure
+   * 
+   * @param ptr The original managed memory address to free resources for
+   * @return True if the address was found and memory was freed, false otherwise
+   */
+  bool freeManagedMemorys(void* ptr);
 
   void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
   void prefetchAllDataToDevice();

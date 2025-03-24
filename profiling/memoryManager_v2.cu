@@ -112,41 +112,74 @@ void MemoryManager::transferData(void* ptr, void* dstPtr, cudaMemcpyKind memcpyK
   checkCudaErrors(cudaMemcpy(dstPtr, getAddress(ptr), size, memcpyKind));
 }
 
-void MemoryManager::freeStorage(void* ptr) {
-  if (ptr == nullptr) {
+void MemoryManager::freeStorage(void* strptr) {
+  if (strptr == nullptr) {
     return;
   }
   
   if (storageConfig.useNvlink) {
-    checkCudaErrors(cudaFree(ptr));
+    checkCudaErrors(cudaFree(strptr));
   } else {
-    checkCudaErrors(cudaFreeHost(ptr));
+    checkCudaErrors(cudaFreeHost(strptr));
   }
 }
 
+bool MemoryManager::freeManagedMemorys(void* ptr) {
+  if (ptr == nullptr) {
+    fprintf(stderr, "[DEBUG-FREE] Cannot free nullptr\n");
+    return false;
+  }
+  
+  // Find the array ID for this pointer
+  ArrayId arrayId = findArrayIdByAddress(ptr);
+  if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+    fprintf(stderr, "[DEBUG-FREE] Address %p not found in memoryArrayInfos (arrayId = %d)\n", ptr, arrayId);
+    return false;
+  }
+  
+  // Free device memory if it exists
+  if (memoryArrayInfos[arrayId].deviceAddress != nullptr) {
+    fprintf(stderr, "[DEBUG-FREE] Freeing device memory %p for address %p\n", 
+            memoryArrayInfos[arrayId].deviceAddress, ptr);
+    checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
+    memoryArrayInfos[arrayId].deviceAddress = nullptr;
+  }
+  
+  // Free storage memory if it exists
+  if (memoryArrayInfos[arrayId].storageAddress != nullptr) {
+    fprintf(stderr, "[DEBUG-FREE] Freeing storage memory %p for address %p\n", 
+            memoryArrayInfos[arrayId].storageAddress, ptr);
+    freeStorage(memoryArrayInfos[arrayId].storageAddress);
+    memoryArrayInfos[arrayId].storageAddress = nullptr;
+  }
+  
+  fprintf(stderr, "[DEBUG-FREE] Successfully freed all memory for address %p (arrayId = %d)\n", ptr, arrayId);
+  return true;
+}
+
 void* MemoryManager::offloadToStorage(
-    void* ptr, 
+    void* keyptr, 
     int storageDeviceId, 
     bool useNvlink, 
     std::map<void*, void*>& storageMap) 
 {
-  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", ptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", keyptr);
   
   // Allocate in storage
-  void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
+  void* storagePtr = allocateInStorage(keyptr, storageDeviceId, useNvlink);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, keyptr);
   
   // Copy data from device to storage
-  transferData(ptr, storagePtr, cudaMemcpyDefault);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
+  transferData(keyptr, storagePtr, cudaMemcpyDefault);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", keyptr, storagePtr);
   
   // Update mapping
-  storageMap[ptr] = storagePtr;
-  fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", ptr, storagePtr);
+  storageMap[keyptr] = storagePtr;
+  fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", keyptr, storagePtr);
   
   // Update MemoryArrayInfo structure
-  ArrayId arrayId = getArrayId(ptr);
-  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, ptr);
+  ArrayId arrayId = getArrayId(keyptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, keyptr);
   
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
@@ -154,7 +187,7 @@ void* MemoryManager::offloadToStorage(
             arrayId, storagePtr);
   } else {
     fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
-            ptr, arrayId);
+            keyptr, arrayId);
   }
   
   // Verify storageAddress was set
@@ -164,30 +197,30 @@ void* MemoryManager::offloadToStorage(
   }
   
   // Free original device memory
-  checkCudaErrors(cudaFree(ptr));
-  fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p\n", ptr);
+  checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
+  fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p\n", keyptr);
   
   return storagePtr;
 }
 
 void MemoryManager::offloadToStorage(
-    void* ptr, 
+    void* keyptr, 
     int storageDeviceId, 
     bool useNvlink) 
 {
-  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", ptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", keyptr);
 
-  ArrayId arrayId = getArrayId(ptr);
-  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, ptr);
+  ArrayId arrayId = getArrayId(keyptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, keyptr);
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     // Allocate in storage
-    void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
-    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
+    void* storagePtr = allocateInStorage(keyptr, storageDeviceId, useNvlink);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, keyptr);
     
     // Copy data from device to storage
-    transferData(ptr, storagePtr, cudaMemcpyDefault);
+    transferData(keyptr, storagePtr, cudaMemcpyDefault);
     
-    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", keyptr, storagePtr);
     
     // Update MemoryArrayInfo structure
 
@@ -199,10 +232,10 @@ void MemoryManager::offloadToStorage(
     
     checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
     memoryArrayInfos[arrayId].deviceAddress=nullptr;
-    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",memoryArrayInfos[arrayId].deviceAddress, ptr);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",memoryArrayInfos[arrayId].deviceAddress, keyptr);
   } else {
     fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
-            ptr, arrayId);
+            keyptr, arrayId);
   }
   
   // Verify storageAddress was set

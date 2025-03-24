@@ -880,14 +880,7 @@ void tiledCholesky(bool optimize, bool verify) {
 
       // Execute optimized graph with memory management
       float runningTime;
-      // executeOptimizedGraph(
-      //   optimizedGraph,
-      //   [&](int taskId, std::map<void *, void *> addressUpdate, cudaStream_t stream) {
-      //     tiledCholeskyTaskManager->executeRandomTask(getMatrixBlock, taskId, addressUpdate, stream);
-      //   },
-      //   runningTime,
-      //   managedDeviceArrayToHostArrayMap
-      // );
+
       auto& memManager = MemoryManager::getInstance();
       executeOptimizedGraph(
         optimizedGraph,
@@ -903,25 +896,6 @@ void tiledCholesky(bool optimize, bool verify) {
       fmt::print("Total time used (s): {}\n", runningTime);
       memManager.prefetchAllDataToDevice();
       checkCudaErrors(cudaDeviceSynchronize());
-      // // Reset memory status after optimization run
-      // // For simplicity, all data copy back to device memory
-      // std::map<void *, void *> oldManagedDeviceArrayToNewManagedDeviceArrayMap;
-      // // auto& deviceToHostMap = memManager.getDeviceToHostArrayMap();
-      // for (int j = 0; j < T * T; j++) {
-      //   auto oldPtr = d_tiles[j];
-      //   // auto newPtr = deviceToHostMap.at(oldPtr);
-      //   auto newPtr = memManager.getStoragePtr(oldPtr);
-      //   // Copy data back to device memory
-      //   double * new_dptr;
-      //   checkCudaErrors(cudaMalloc(&new_dptr, tileSize));
-      //   checkCudaErrors(cudaMemcpy(new_dptr, newPtr, tileSize, cudaMemcpyDefault));
-
-      //   oldManagedDeviceArrayToNewManagedDeviceArrayMap[oldPtr] = new_dptr;
-      // }
-
-      // checkCudaErrors(cudaDeviceSynchronize());
-      // // Update memory manager with new addresses
-      // updateManagedMemoryAddress(oldManagedDeviceArrayToNewManagedDeviceArrayMap);
       fmt::print("Finalized iteration\n");
       
     }
@@ -1015,9 +989,11 @@ void tiledCholesky(bool optimize, bool verify) {
   // Free all allocated resources
   checkCudaErrors(cudaFreeHost(h_workspace));
   checkCudaErrors(cudaFree(d_workspace));
-  //tempative disable
+  
+  // Use freeManagedMemorys to free both device and storage memory for each tile
+  auto& memManager = MemoryManager::getInstance();
   for (auto d_tile : d_tiles) {
-    // checkCudaErrors(cudaFree(d_tile));
+    memManager.freeManagedMemorys(d_tile);
   }
 }
 
