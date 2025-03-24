@@ -100,7 +100,10 @@ private:
   /** @brief Ordered list of all managed memory addresses */
   inline static std::vector<void *> managedMemoryAddresses; // Original Memory
   
-  /** @brief Maps memory addresses to their array IDs (index in managedMemoryAddresses) */
+  /** @brief Maps memory addresses to their array IDs (index in managedMemoryAddresses)
+   * @deprecated This map is being phased out in favor of memoryArrayInfos.
+   * All new code should access address-to-ID mapping by searching in memoryArrayInfos.
+   */
   inline static std::map<void *, ArrayId> managedMemoryAddressToIndexMap;
   
   /** @brief Maps memory addresses to their allocation sizes in bytes
@@ -168,6 +171,11 @@ public:
 
   // Accessor methods for the private members
   const std::vector<void*>& getManagedAddresses() const;
+  
+  /**
+   * @deprecated This method is being phased out. Find address in memoryArrayInfos instead.
+   * @return Reference to the map of memory addresses to array IDs
+   */
   const std::map<void*, ArrayId>& getAddressToIndexMap() const;
   
   /**
@@ -182,6 +190,11 @@ public:
   
   // Editable accessors for methods that need to modify the members
   std::vector<void*>& getEditableManagedAddresses();
+  
+  /**
+   * @deprecated This method is being phased out. Manipulate memoryArrayInfos directly instead.
+   * @return Reference to the map of memory addresses to array IDs for modification
+   */
   std::map<void*, ArrayId>& getEditableAddressToIndexMap();
   
   /**
@@ -253,6 +266,17 @@ public:
   const MemoryArrayInfo& getMemoryArrayInfo(ArrayId arrayId) const;
   const std::vector<MemoryArrayInfo>& getMemoryArrayInfos() const;
   size_t getMemoryArrayInfosSize() const;
+  
+  /**
+   * @brief Find array ID for a given memory address using the memoryArrayInfos structure
+   * 
+   * This method replaces the lookup in managedMemoryAddressToIndexMap with a search
+   * in the memoryArrayInfos vector.
+   * 
+   * @param addr Memory address to find
+   * @return Array ID if found, -1 if not found, -2 if addr is nullptr
+   */
+  ArrayId findArrayIdByAddress(void* addr) const;
 
   // Make these functions friends so they can access private members
   template <typename T>
@@ -279,15 +303,14 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
   auto& memManager = MemoryManager::getInstance();
   
   // Only register if not already tracked
-  if (memManager.getAddressToIndexMap().count(ptr) == 0) {
+  if (memManager.findArrayIdByAddress(ptr) < 0 && memManager.getAddressToIndexMap().count(ptr) == 0) {
     // Update existing data structures
     memManager.getEditableManagedAddresses().push_back(ptr);
     ArrayId arrayId = memManager.getManagedAddresses().size() - 1;
-    memManager.getEditableAddressToIndexMap()[ptr] = arrayId;
     
-    // Also update legacy size map for backward compatibility
+    // Maintain old index map for backward compatibility
     // Will be removed in the future once transition to memoryArrayInfos is complete
-    // memManager.getEditableAddressToSizeMap()[ptr] = size;
+    memManager.getEditableAddressToIndexMap()[ptr] = arrayId;
     
     // Create and populate new MemoryArrayInfo structure
     MemoryManager::MemoryArrayInfo info;

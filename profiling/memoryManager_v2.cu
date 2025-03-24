@@ -26,16 +26,28 @@ size_t MemoryManager::getSize(void* addr) const {
 }
 
 ArrayId MemoryManager::getArrayId(void* addr) const {
+  // First try to find the array ID using the new method
+  ArrayId arrayId = findArrayIdByAddress(addr);
+  if (arrayId >= 0) {
+    return arrayId;
+  }
+  
+  // Fall back to the old method if not found in memoryArrayInfos
   auto it = managedMemoryAddressToIndexMap.find(addr);
   if (it != managedMemoryAddressToIndexMap.end()) {
     return it->second;
   }
+  
   return -1; // Invalid ID for unmanaged memory
 }
 
 bool MemoryManager::isManaged(void* addr) const {
-  // Just use the mapping to check if the address is managed
-  // This doesn't need to change, as we're still maintaining the index map
+  // First try the new method
+  if (findArrayIdByAddress(addr) >= 0) {
+    return true;
+  }
+  
+  // Fall back to old method
   return managedMemoryAddressToIndexMap.count(addr) > 0;
 }
 
@@ -311,6 +323,21 @@ const std::vector<MemoryManager::MemoryArrayInfo>& MemoryManager::getMemoryArray
 
 size_t MemoryManager::getMemoryArrayInfosSize() const {
   return memoryArrayInfos.size();
+}
+
+ArrayId MemoryManager::findArrayIdByAddress(void* addr) const {
+  // Handle nullptr case
+  if (addr == nullptr) {
+    return -2;
+  }
+  
+  // Search through memoryArrayInfos to find the matching address
+  for (size_t i = 0; i < memoryArrayInfos.size(); ++i) {
+    if (memoryArrayInfos[i].managedMemoryAddress == addr) {
+      return static_cast<ArrayId>(i);
+    }
+  }
+  return -1; // Not found
 }
 
 } // namespace memopt
