@@ -900,11 +900,11 @@ void tiledCholesky(bool optimize, bool verify) {
         memManager
       );
       checkCudaErrors(cudaDeviceSynchronize());
-
+      fmt::print("Total time used (s): {}\n", runningTime);
       // Reset memory status after optimization run
       // For simplicity, all data copy back to device memory
       std::map<void *, void *> oldManagedDeviceArrayToNewManagedDeviceArrayMap;
-      auto& deviceToHostMap = memManager.getDeviceToHostArrayMap();
+      // auto& deviceToHostMap = memManager.getDeviceToHostArrayMap();
       for (int j = 0; j < T * T; j++) {
         auto oldPtr = d_tiles[j];
         // auto newPtr = deviceToHostMap.at(oldPtr);
@@ -912,12 +912,7 @@ void tiledCholesky(bool optimize, bool verify) {
         // Copy data back to device memory
         checkCudaErrors(cudaMalloc(&d_tiles[j], tileSize));
         checkCudaErrors(cudaMemcpy(d_tiles[j], newPtr, tileSize, cudaMemcpyDefault));
-        // Free temporary memory
-        if (ConfigurationManager::getConfig().execution.useNvlink) {
-          checkCudaErrors(cudaFree(newPtr));
-        } else {
-          checkCudaErrors(cudaFreeHost(newPtr));
-        }
+
         oldManagedDeviceArrayToNewManagedDeviceArrayMap[oldPtr] = d_tiles[j];
       }
 
@@ -926,7 +921,7 @@ void tiledCholesky(bool optimize, bool verify) {
       // Update memory manager with new addresses
       updateManagedMemoryAddress(oldManagedDeviceArrayToNewManagedDeviceArrayMap);
 
-      fmt::print("Total time used (s): {}\n", runningTime);
+      
     }
   } 
   // =====================================================================

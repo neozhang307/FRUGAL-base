@@ -236,12 +236,16 @@ void MemoryManager::clearStorage() {
   for (auto& info : memoryArrayInfos) {
     if(info.storageAddress!=nullptr)
     {
-      // freeStorage(info.storageAddress);
-      fprintf(stderr, "[DEBUG-CLEAR] clearStorage cleared memoryArrayInfos.storageAddress for %p at %p \n",info.managedMemoryAddress,info.storageAddress);
+      // Store the address before setting to nullptr so we can print it
+      void* addr = info.storageAddress;
+      // Set to nullptr first, then call freeStorage to avoid double-free issues
+      info.storageAddress = nullptr;
+      fprintf(stderr, "[DEBUG-CLEAR] clearStorage cleared memoryArrayInfos.storageAddress for %p at %p \n",info.managedMemoryAddress, addr);
+      freeStorage(addr);
     }
-    info.storageAddress = nullptr;
+    
   }
-  
+  checkCudaErrors(cudaDeviceSynchronize());
   // Also clear the legacy mapping to maintain consistency
   // This ensures both data structures stay in sync
   // managedDeviceArrayToHostArrayMap.clear();
