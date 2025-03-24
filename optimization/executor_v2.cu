@@ -653,7 +653,6 @@ void Executor::executeOptimizedGraphRepeatedly(
   memManager.offloadAllManagedMemoryToStorage();
   
   // Switch back to main GPU
-  checkCudaErrors(cudaSetDevice(mainDeviceId));
   checkCudaErrors(cudaDeviceSynchronize());
   
   // Timer for graph creation

@@ -381,8 +381,7 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
     stream
   ));
   checkCudaErrors(cudaFreeAsync(devicePtr, stream));
-  this->removeCurrentMapping(dataMovementAddress);
-  // this->memoryArrayInfos[arrayId].storageAddress=nullptr;
+  this->memoryArrayInfos[arrayId].deviceAddress=nullptr;
 }
 
 // Memory storage operations
@@ -399,12 +398,12 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
   
   // Move each managed memory address to storage
   for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
-    void* ptr = managedMemoryAddresses[i];
+    void* dptr = memoryArrayInfos[i].deviceAddress;//managedMemoryAddresses[i];
     fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
-            i+1, managedMemoryAddresses.size(), ptr);
+            i+1, managedMemoryAddresses.size(), dptr);
     
     // device -> storage 
-    offloadToStorage(ptr, storageConfig.storageDeviceId, 
+    offloadToStorage(dptr, storageConfig.storageDeviceId, 
                                        storageConfig.useNvlink);                                   
   }
   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
