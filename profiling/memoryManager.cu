@@ -34,9 +34,9 @@ const std::map<void*, void*>& MemoryManager::getCurrentAddressMap() const {
   return managedMemoryAddressToAssignedMap; 
 }
 
-const std::map<void*, void*>& MemoryManager::getDeviceToHostArrayMap() const { 
-  return managedDeviceArrayToHostArrayMap; 
-}
+// const std::map<void*, void*>& MemoryManager::getDeviceToHostArrayMap() const { 
+//   return managedDeviceArrayToHostArrayMap; 
+// }
 
 // Editable accessor methods
 std::vector<void*>& MemoryManager::getEditableManagedAddresses() { 
@@ -64,9 +64,9 @@ std::map<void*, void*>& MemoryManager::getEditableCurrentAddressMap() {
   return managedMemoryAddressToAssignedMap; 
 }
 
-std::map<void*, void*>& MemoryManager::getEditableDeviceToHostArrayMap() { 
-  return managedDeviceArrayToHostArrayMap; 
-}
+// std::map<void*, void*>& MemoryManager::getEditableDeviceToHostArrayMap() { 
+//   return managedDeviceArrayToHostArrayMap; 
+// }
 
 // Memory information methods are now in memoryManager_v2.cu
 
@@ -136,13 +136,13 @@ void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& sto
   }
   
   // Also update internal map
-  managedDeviceArrayToHostArrayMap = storageMap;
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Updated internal managedDeviceArrayToHostArrayMap from external map\n");
+  // managedDeviceArrayToHostArrayMap = storageMap;
+  // fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Updated internal managedDeviceArrayToHostArrayMap from external map\n");
   
   // Print a summary of both data structures
   fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - storageMap entries: %zu\n", storageMap.size());
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
-          managedDeviceArrayToHostArrayMap.size());
+  // fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
+          // managedDeviceArrayToHostArrayMap.size());
   fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - memoryArrayInfos entries: %zu\n", memoryArrayInfos.size());
   
   // Switch back to main GPU

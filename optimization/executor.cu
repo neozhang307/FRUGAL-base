@@ -473,7 +473,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   MemoryManager::getInstance().offloadAllManagedMemoryToStorage(managedDeviceArrayToHostArrayMap);
   
   // Store in internal storage map for future use
-  MemoryManager::getInstance().getEditableDeviceToHostArrayMap() = managedDeviceArrayToHostArrayMap;
+  // MemoryManager::getInstance().getEditableDeviceToHostArrayMap() = managedDeviceArrayToHostArrayMap;
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(mainDeviceId));

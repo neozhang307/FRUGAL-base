@@ -121,7 +121,7 @@ private:
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
   
   /** @brief Maps device pointers to host/storage array pointers (internal version of managedDeviceArrayToHostArrayMap) */
-  inline static std::map<void *, void *> managedDeviceArrayToHostArrayMap;
+  // inline static std::map<void *, void *> managedDeviceArrayToHostArrayMap;
   
   /** @brief Storage configuration parameters */
   struct StorageConfig {
@@ -186,7 +186,7 @@ public:
   const std::set<void*>& getApplicationInputs() const;
   const std::set<void*>& getApplicationOutputs() const;
   const std::map<void*, void*>& getCurrentAddressMap() const;
-  const std::map<void*, void*>& getDeviceToHostArrayMap() const;
+  // const std::map<void*, void*>& getDeviceToHostArrayMap() const;
   
   // Editable accessors for methods that need to modify the members
   std::vector<void*>& getEditableManagedAddresses();
@@ -205,7 +205,7 @@ public:
   std::set<void*>& getEditableApplicationInputs();
   std::set<void*>& getEditableApplicationOutputs();
   std::map<void*, void*>& getEditableCurrentAddressMap();
-  std::map<void*, void*>& getEditableDeviceToHostArrayMap();
+  // std::map<void*, void*>& getEditableDeviceToHostArrayMap();
 
   // Memory management methods
   size_t getSize(void* addr) const;
@@ -253,7 +253,9 @@ public:
   
   void* offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink, 
                        std::map<void*, void*>& storageMap);
-  
+
+  void offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink);
+
   // Memory storage operations
   void offloadAllManagedMemoryToStorage();
   void offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap);
