@@ -107,7 +107,7 @@ private:
    * @deprecated This map is being phased out in favor of memoryArrayInfos.
    * All new code should access size information through memoryArrayInfos via the array ID.
    */
-  inline static std::map<void *, size_t> managedMemoryAddressToSizeMap;
+  // inline static std::map<void *, size_t> managedMemoryAddressToSizeMap;
   
   /** @brief Tracks which arrays are application inputs/outputs (for data dependency analysis) */
   inline static std::set<void *> applicationInputs, applicationOutputs;
@@ -174,7 +174,7 @@ public:
    * @deprecated This method is being phased out. Use getMemoryArrayInfo(arrayId).size instead.
    * @return Reference to the map of memory addresses to sizes
    */
-  const std::map<void*, size_t>& getAddressToSizeMap() const;
+  // const std::map<void*, size_t>& getAddressToSizeMap() const;
   const std::set<void*>& getApplicationInputs() const;
   const std::set<void*>& getApplicationOutputs() const;
   const std::map<void*, void*>& getCurrentAddressMap() const;
@@ -188,7 +188,7 @@ public:
    * @deprecated This method is being phased out. Use memoryArrayInfos vector directly instead.
    * @return Reference to the map of memory addresses to sizes for modification
    */
-  std::map<void*, size_t>& getEditableAddressToSizeMap();
+  // std::map<void*, size_t>& getEditableAddressToSizeMap();
   std::set<void*>& getEditableApplicationInputs();
   std::set<void*>& getEditableApplicationOutputs();
   std::map<void*, void*>& getEditableCurrentAddressMap();
@@ -287,7 +287,7 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
     
     // Also update legacy size map for backward compatibility
     // Will be removed in the future once transition to memoryArrayInfos is complete
-    memManager.getEditableAddressToSizeMap()[ptr] = size;
+    // memManager.getEditableAddressToSizeMap()[ptr] = size;
     
     // Create and populate new MemoryArrayInfo structure
     MemoryManager::MemoryArrayInfo info;

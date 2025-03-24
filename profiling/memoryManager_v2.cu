@@ -16,11 +16,11 @@ size_t MemoryManager::getSize(void* addr) const {
     }
   }
   
-  // Fall back to the old method if not found in memoryArrayInfos
-  auto sizeIt = managedMemoryAddressToSizeMap.find(addr);
-  if (sizeIt != managedMemoryAddressToSizeMap.end()) {
-    return sizeIt->second;
-  }
+  // // Fall back to the old method if not found in memoryArrayInfos
+  // auto sizeIt = managedMemoryAddressToSizeMap.find(addr);
+  // if (sizeIt != managedMemoryAddressToSizeMap.end()) {
+  //   return sizeIt->second;
+  // }
   
   return 0; // Return 0 for unmanaged memory
 }

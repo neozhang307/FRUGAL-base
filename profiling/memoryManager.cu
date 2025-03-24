@@ -17,9 +17,9 @@ const std::map<void*, ArrayId>& MemoryManager::getAddressToIndexMap() const {
   return managedMemoryAddressToIndexMap; 
 }
 
-const std::map<void*, size_t>& MemoryManager::getAddressToSizeMap() const { 
-  return managedMemoryAddressToSizeMap; 
-}
+// const std::map<void*, size_t>& MemoryManager::getAddressToSizeMap() const { 
+//   return managedMemoryAddressToSizeMap; 
+// }
 
 const std::set<void*>& MemoryManager::getApplicationInputs() const { 
   return applicationInputs; 
@@ -47,9 +47,9 @@ std::map<void*, ArrayId>& MemoryManager::getEditableAddressToIndexMap() {
   return managedMemoryAddressToIndexMap; 
 }
 
-std::map<void*, size_t>& MemoryManager::getEditableAddressToSizeMap() { 
-  return managedMemoryAddressToSizeMap; 
-}
+// std::map<void*, size_t>& MemoryManager::getEditableAddressToSizeMap() { 
+//   return managedMemoryAddressToSizeMap; 
+// }
 
 std::set<void*>& MemoryManager::getEditableApplicationInputs() { 
   return applicationInputs; 
@@ -180,10 +180,10 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
   auto& memManager = MemoryManager::getInstance();
   
   // Save the old size mapping for reference
-  auto oldManagedMemoryAddressToSizeMap = memManager.getAddressToSizeMap();
+  // auto oldManagedMemoryAddressToSizeMap = memManager.getAddressToSizeMap();
 
   // Clear existing mappings to rebuild them
-  memManager.getEditableAddressToSizeMap().clear();
+  // memManager.getEditableAddressToSizeMap().clear();
   memManager.getEditableAddressToIndexMap().clear();
 
   // Update all addresses and rebuild mappings
@@ -198,7 +198,7 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
     memManager.getEditableManagedAddresses()[i] = newAddr;
     
     // Transfer the size information to the new address (legacy map for backward compatibility)
-    memManager.getEditableAddressToSizeMap()[newAddr] = oldManagedMemoryAddressToSizeMap.at(oldAddr);
+    // memManager.getEditableAddressToSizeMap()[newAddr] = oldManagedMemoryAddressToSizeMap.at(oldAddr);
     
     // Maintain the same array ID
     memManager.getEditableAddressToIndexMap()[newAddr] = i;
