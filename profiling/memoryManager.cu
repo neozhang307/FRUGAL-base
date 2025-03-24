@@ -76,7 +76,7 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
     cudaStream_t stream) {
   for (auto arrayId : arrayIds) {
     void* originalPtr = managedMemoryAddresses[arrayId];
-    void* storagePtr = managedDeviceArrayToHostArrayMap.at(originalPtr);
+    void* storagePtr = memoryArrayInfos[arrayId].storageAddress;// managedDeviceArrayToHostArrayMap.at(originalPtr);
     size_t size = getSize(originalPtr);
     
     // Allocate on device and copy data from storage
@@ -100,9 +100,10 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
 void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
   // Ensure the storage map starts empty
   storageMap.clear();
-  
+  clearStorage();
   // Move each managed memory address to storage
   for (auto ptr : managedMemoryAddresses) {
+     // would automatically update MemoryArrayInfo
     offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, storageMap);
   }
   

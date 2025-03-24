@@ -154,6 +154,13 @@ void MemoryManager::cleanStorage() {
   }
 }
 
+void MemoryManager::clearStorage() {
+  // Iterate through all memory array infos and set storageAddress to nullptr
+  for (auto& info : memoryArrayInfos) {
+    info.storageAddress = nullptr;
+  }
+}
+
 // Mapping management
 void MemoryManager::updateCurrentMapping(void* originalAddr, void* currentAddr) {
   managedMemoryAddressToAssignedMap[originalAddr] = currentAddr;
@@ -240,11 +247,12 @@ void MemoryManager::prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t st
   void *devicePtr;
   auto dataMovementSize = this->getSizeByArrayId(arrayId);
   auto dataMovementAddress = this->getPointerByArrayId(arrayId);
+  auto storageAddress = this->memoryArrayInfos[arrayId].storageAddress;
 
   checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
   checkCudaErrors(cudaMemcpyAsync(
     devicePtr,
-    this->getDeviceToHostArrayMap().at(dataMovementAddress),
+    storageAddress,//this->getDeviceToHostArrayMap().at(dataMovementAddress),
     dataMovementSize,
     storageConfig.prefetchMemcpyKind,
     stream
@@ -256,9 +264,10 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
   auto dataMovementSize = this->getSizeByArrayId(arrayId);
   auto dataMovementAddress = this->getPointerByArrayId(arrayId);
   void *devicePtr = this->getCurrentAddressMap().at(dataMovementAddress);
+  auto storageAddress = this->memoryArrayInfos[arrayId].storageAddress;
 
   checkCudaErrors(cudaMemcpyAsync(
-    this->getDeviceToHostArrayMap().at(dataMovementAddress),
+    storageAddress,//this->getDeviceToHostArrayMap().at(dataMovementAddress),
     devicePtr,
     dataMovementSize,
     storageConfig.offloadMemcpyKind,
@@ -272,9 +281,10 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
 void MemoryManager::offloadAllManagedMemoryToStorage() {
   // Ensure the storage map starts empty
   managedDeviceArrayToHostArrayMap.clear();
-  
+  clearStorage();
   // Move each managed memory address to storage
   for (auto ptr : managedMemoryAddresses) {
+    // would automatically update MemoryArrayInfo
     offloadToStorage(ptr, storageConfig.storageDeviceId, storageConfig.useNvlink, managedDeviceArrayToHostArrayMap);
   }
   
@@ -285,9 +295,11 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
 
 void MemoryManager::offloadRemainedManagedMemoryToStorage() {
   auto currentAddressMap = this->getEditableCurrentAddressMap();
+
   for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpy(
-      this->getDeviceToHostArrayMap().at(oldAddr),
+      // this->getDeviceToHostArrayMap().at(oldAddr),
+      this->getStoragePtr(oldAddr),
       newAddr,
       this->getSize(oldAddr),
       storageConfig.offloadMemcpyKind
@@ -300,7 +312,8 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
   auto currentAddressMap = this->getEditableCurrentAddressMap();
   for (auto &[oldAddr, newAddr] : currentAddressMap) {
     checkCudaErrors(cudaMemcpyAsync(
-      this->getDeviceToHostArrayMap().at(oldAddr),
+      // this->getDeviceToHostArrayMap().at(oldAddr),
+      this->getStoragePtr(oldAddr),
       newAddr,
       this->getSize(oldAddr),
       storageConfig.offloadMemcpyKind,
@@ -338,6 +351,39 @@ ArrayId MemoryManager::findArrayIdByAddress(void* addr) const {
     }
   }
   return -1; // Not found
+}
+
+void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
+  // Handle nullptr case
+  if (managedMemAddress == nullptr) {
+    return nullptr;
+  }
+  
+  // First try to find the array ID using the new method
+  ArrayId arrayId = findArrayIdByAddress(managedMemAddress);
+  
+  // If found in memoryArrayInfos, return its storage address
+  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    return memoryArrayInfos[arrayId].storageAddress;
+  }
+  
+  // Fall back to the old method if not found in memoryArrayInfos
+  auto it = managedMemoryAddressToIndexMap.find(managedMemAddress);
+  if (it != managedMemoryAddressToIndexMap.end()) {
+    arrayId = it->second;
+    if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+      return memoryArrayInfos[arrayId].storageAddress;
+    }
+  }
+  
+  // If we have the legacy host array mapping, try that
+  auto hostIt = managedDeviceArrayToHostArrayMap.find(managedMemAddress);
+  if (hostIt != managedDeviceArrayToHostArrayMap.end()) {
+    return hostIt->second;
+  }
+  
+  // Not found in any map
+  return nullptr;
 }
 
 } // namespace memopt

@@ -221,6 +221,13 @@ public:
   void configureStorage(int mainDeviceId, int storageDeviceId, bool useNvlink);
   void cleanStorage();
   
+  /**
+   * @brief Clears all storage addresses in memoryArrayInfos
+   * 
+   * Sets the storageAddress field of all MemoryArrayInfo structs to nullptr.
+   * This is useful when you want to reset storage status without deallocating memory.
+   */
+  void clearStorage();
 
   void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
   void prefetchAllDataToDevice();
@@ -261,6 +268,17 @@ public:
   void* getPointerByArrayId(int arrayId) const;
   size_t getSizeByArrayId(int arrayId) const;
   std::vector<ArrayId> getArrayIds() const;
+  
+  /**
+   * @brief Get the storage pointer for a given managed memory address
+   * 
+   * This function retrieves the storage address associated with a managed memory address
+   * by looking up its array ID and then accessing the corresponding entry in memoryArrayInfos.
+   * 
+   * @param managedMemAddress The managed memory address to look up
+   * @return The storage pointer if found, nullptr otherwise
+   */
+  void* getStoragePtr(void* managedMemAddress) const;
   
   // MemoryArrayInfo methods
   const MemoryArrayInfo& getMemoryArrayInfo(ArrayId arrayId) const;
