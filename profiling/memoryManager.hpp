@@ -117,7 +117,10 @@ private:
   
   // Removed deviceToStorageArrayMap as it's redundant with managedDeviceArrayToHostArrayMap
 
-  /** @brief Maps original device pointers to their current relocated pointers on device */
+  /** @brief Maps original device pointers to their current relocated pointers on device 
+   * @deprecated This map is being phased out in favor of memoryArrayInfos.deviceAddress.
+   * All new code should access device address mappings through memoryArrayInfos instead.
+   */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
   
   /** @brief Maps device pointers to host/storage array pointers (internal version of managedDeviceArrayToHostArrayMap) */
@@ -154,11 +157,24 @@ public:
   template <typename T>
   static T* getAddress(T *oldAddress) {
     auto& instance = getInstance();
+    void* addr = static_cast<void *>(oldAddress);
+    
+    // First try to find the address in memoryArrayInfos (preferred method)
+    ArrayId arrayId = instance.findArrayIdByAddress(addr);
+    if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+      void* deviceAddr = memoryArrayInfos[arrayId].deviceAddress;
+      if (deviceAddr != nullptr) {
+        return static_cast<T *>(deviceAddr);
+      }
+    }
+    
+    // Fall back to the legacy map if not found in memoryArrayInfos
     auto& mapping = instance.getCurrentAddressMap();
-    auto it = mapping.find(static_cast<void *>(oldAddress));
+    auto it = mapping.find(addr);
     if (it != mapping.end()) {
       return static_cast<T *>(it->second);
     }
+    
     return oldAddress;
   }
 
@@ -185,6 +201,11 @@ public:
   // const std::map<void*, size_t>& getAddressToSizeMap() const;
   const std::set<void*>& getApplicationInputs() const;
   const std::set<void*>& getApplicationOutputs() const;
+  
+  /**
+   * @deprecated This method is being phased out. Use memoryArrayInfos[arrayId].deviceAddress instead.
+   * @return Reference to the map of original addresses to current device addresses
+   */
   const std::map<void*, void*>& getCurrentAddressMap() const;
   // const std::map<void*, void*>& getDeviceToHostArrayMap() const;
   
@@ -204,6 +225,11 @@ public:
   // std::map<void*, size_t>& getEditableAddressToSizeMap();
   std::set<void*>& getEditableApplicationInputs();
   std::set<void*>& getEditableApplicationOutputs();
+  
+  /**
+   * @deprecated This method is being phased out. Manipulate memoryArrayInfos[arrayId].deviceAddress directly instead.
+   * @return Reference to the map of original addresses to current device addresses for modification
+   */
   std::map<void*, void*>& getEditableCurrentAddressMap();
   // std::map<void*, void*>& getEditableDeviceToHostArrayMap();
 
