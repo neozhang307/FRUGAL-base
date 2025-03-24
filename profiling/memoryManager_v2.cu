@@ -165,23 +165,32 @@ void MemoryManager::offloadToStorage(
     bool useNvlink) 
 {
   fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", ptr);
-  
-  // Allocate in storage
-  void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
-  
-  // Copy data from device to storage
-  transferData(ptr, storagePtr, cudaMemcpyDefault);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
-  
-  // Update MemoryArrayInfo structure
+
   ArrayId arrayId = getArrayId(ptr);
   fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, ptr);
-  
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+    // Allocate in storage
+    void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
+    
+    // Get device ptr 
+    void* devicePtr =memoryArrayInfos[arrayId].deviceAddress;// allocateInStorage(ptr, storageDeviceId, useNvlink);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Get device %p for address %p\n", devicePtr, ptr);
+    
+    // Copy data from device to storage
+    transferData(devicePtr, storagePtr, cudaMemcpyDefault);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
+    
+    // Update MemoryArrayInfo structure
+
+  
+ 
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
     fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
             arrayId, storagePtr);
+    
+    checkCudaErrors(cudaFree(devicePtr));
+    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",devicePtr, ptr);
   } else {
     fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
             ptr, arrayId);
@@ -194,8 +203,7 @@ void MemoryManager::offloadToStorage(
   }
   
   // Free original device memory
-  checkCudaErrors(cudaFree(ptr));
-  fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p\n", ptr);
+  
 }
 
 // Configuration
@@ -395,31 +403,10 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
     fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
             i+1, managedMemoryAddresses.size(), ptr);
     
-    // Would automatically update MemoryArrayInfo
-    // void* storagePtr = offloadToStorage(ptr, storageConfig.storageDeviceId, 
-    //                                    storageConfig.useNvlink, managedDeviceArrayToHostArrayMap);
+    // device -> storage 
     offloadToStorage(ptr, storageConfig.storageDeviceId, 
                                        storageConfig.useNvlink);                                   
-    // Verify both data structures have the same storage pointer
-    // fprintf(stderr, "[DEBUG-OFFLOAD-ALL] After offload: managedDeviceArrayToHostArrayMap[%p] = %p\n", 
-    //         ptr, managedDeviceArrayToHostArrayMap[ptr]);
-            
-    // if (i < memoryArrayInfos.size()) {
-    //   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] After offload: memoryArrayInfos[%zu].storageAddress = %p\n", 
-    //           i, memoryArrayInfos[i].storageAddress);
-              
-    //   if (memoryArrayInfos[i].storageAddress != managedDeviceArrayToHostArrayMap[ptr]) {
-    //     fprintf(stderr, "[DEBUG-OFFLOAD-ALL] ERROR: Storage pointers don't match for address %p! (%p vs %p)\n", 
-    //             ptr, memoryArrayInfos[i].storageAddress, managedDeviceArrayToHostArrayMap[ptr]);
-    //   }
-    // } else {
-    //   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] ERROR: No memoryArrayInfos entry for index %zu\n", i);
-    // }
   }
-  
-  // Print a summary of both data structures
-  // fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
-          // managedDeviceArrayToHostArrayMap.size());
   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
           memoryArrayInfos.size());
           

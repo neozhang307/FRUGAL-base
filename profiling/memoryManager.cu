@@ -274,6 +274,7 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
     // Update the MemoryArrayInfo structure
     if (i < memManager.memoryArrayInfos.size()) {
       memManager.memoryArrayInfos[i].managedMemoryAddress = newAddr;
+      memManager.memoryArrayInfos[i].deviceAddress = newAddr;
     }
 
     // Update application input registry if this was an input

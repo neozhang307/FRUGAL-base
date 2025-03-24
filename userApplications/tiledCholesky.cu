@@ -87,7 +87,7 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
   std::vector<std::unique_ptr<double[]>> h_tiles;
   for (int i = 0; i < t * t; i++) {
     h_tiles.push_back(std::move(std::make_unique<double[]>(b * b)));
-    checkCudaErrors(cudaMemcpy(h_tiles[i].get(), d_tiles[i], B * B * sizeof(double), cudaMemcpyDefault));
+    checkCudaErrors(cudaMemcpy(h_tiles[i].get(), MemoryManager::getInstance().getAddress(d_tiles[i]), B * B * sizeof(double), cudaMemcpyDefault));
     checkCudaErrors(cudaDeviceSynchronize());
   }
 
@@ -414,7 +414,7 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
     for (int j = 0; j < T; j++) {
       for (int k = 0; k < B; k++) {
         checkCudaErrors(cudaMemcpy(
-          d_tiles[i + j * T] + B * k,
+          MemoryManager::getAddress(d_tiles[i + j * T]) + B * k,
           h_originalMatrix + N * (j * B + k) + B * i,
           B * sizeof(double),
           cudaMemcpyDefault
@@ -901,6 +901,8 @@ void tiledCholesky(bool optimize, bool verify) {
       );
       checkCudaErrors(cudaDeviceSynchronize());
       fmt::print("Total time used (s): {}\n", runningTime);
+      // memManager.prefetchAllDataToDevice();
+
       // Reset memory status after optimization run
       // For simplicity, all data copy back to device memory
       std::map<void *, void *> oldManagedDeviceArrayToNewManagedDeviceArrayMap;
@@ -920,7 +922,7 @@ void tiledCholesky(bool optimize, bool verify) {
 
       // Update memory manager with new addresses
       updateManagedMemoryAddress(oldManagedDeviceArrayToNewManagedDeviceArrayMap);
-
+       fmt::print("Finalized iteration\n");
       
     }
   } 
@@ -1013,8 +1015,9 @@ void tiledCholesky(bool optimize, bool verify) {
   // Free all allocated resources
   checkCudaErrors(cudaFreeHost(h_workspace));
   checkCudaErrors(cudaFree(d_workspace));
+  //tempative disable
   for (auto d_tile : d_tiles) {
-    checkCudaErrors(cudaFree(d_tile));
+    // checkCudaErrors(cudaFree(d_tile));
   }
 }
 
