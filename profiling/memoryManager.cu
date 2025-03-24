@@ -277,19 +277,19 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
       memManager.memoryArrayInfos[i].deviceAddress = newAddr;
     }
 
-    // Update application input registry if this was an input
-    auto& appInputs = memManager.getEditableApplicationInputs();
-    if (memManager.getApplicationInputs().count(oldAddr) > 0) {
-      appInputs.erase(oldAddr);
-      appInputs.insert(newAddr);
-    }
+    // // Update application input registry if this was an input
+    // auto& appInputs = memManager.getEditableApplicationInputs();
+    // if (memManager.getApplicationInputs().count(oldAddr) > 0) {
+    //   appInputs.erase(oldAddr);
+    //   appInputs.insert(newAddr);
+    // }
     
-    // Update application output registry if this was an output
-    auto& appOutputs = memManager.getEditableApplicationOutputs();
-    if (memManager.getApplicationOutputs().count(oldAddr) > 0) {
-      appOutputs.erase(oldAddr);
-      appOutputs.insert(newAddr);
-    }
+    // // Update application output registry if this was an output
+    // auto& appOutputs = memManager.getEditableApplicationOutputs();
+    // if (memManager.getApplicationOutputs().count(oldAddr) > 0) {
+    //   appOutputs.erase(oldAddr);
+    //   appOutputs.insert(newAddr);
+    // }
   }
 }
 

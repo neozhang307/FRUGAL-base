@@ -179,6 +179,7 @@ void MemoryManager::offloadToStorage(
     
     // Copy data from device to storage
     transferData(devicePtr, storagePtr, cudaMemcpyDefault);
+    
     fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
     
     // Update MemoryArrayInfo structure
@@ -190,6 +191,7 @@ void MemoryManager::offloadToStorage(
             arrayId, storagePtr);
     
     checkCudaErrors(cudaFree(devicePtr));
+    memoryArrayInfos[arrayId].deviceAddress=nullptr;
     fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",devicePtr, ptr);
   } else {
     fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
@@ -333,18 +335,7 @@ void MemoryManager::prefetchAllDataToDevice() {
       size, 
       storageConfig.prefetchMemcpyKind
     ));
-     // Free temporary storage
-    freeStorage(storagePtr);
     
-    // Set storage pointer to nullptr after freeing
-    // Also update the memory array info to reflect this change
-    ArrayId arrayId2 = getArrayId(originalPtr);
-    if (arrayId2 >= 0 && arrayId2 < memoryArrayInfos.size()) {
-      memoryArrayInfos[arrayId2].storageAddress = nullptr;
-    }
-    
-    // Update the current mapping
-    // managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
     memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
@@ -398,12 +389,12 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
   
   // Move each managed memory address to storage
   for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
-    void* dptr = memoryArrayInfos[i].deviceAddress;//managedMemoryAddresses[i];
+    void* ptr = memoryArrayInfos[i].managedMemoryAddress;//managedMemoryAddresses[i];
     fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
-            i+1, managedMemoryAddresses.size(), dptr);
+            i+1, managedMemoryAddresses.size(), ptr);
     
     // device -> storage 
-    offloadToStorage(dptr, storageConfig.storageDeviceId, 
+    offloadToStorage(ptr, storageConfig.storageDeviceId, 
                                        storageConfig.useNvlink);                                   
   }
   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
