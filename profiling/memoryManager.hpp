@@ -271,16 +271,16 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
     memManager.getEditableManagedAddresses().push_back(ptr);
     ArrayId arrayId = memManager.getManagedAddresses().size() - 1;
     memManager.getEditableAddressToIndexMap()[ptr] = arrayId;
-    memManager.getEditableAddressToSizeMap()[ptr] = size;
     
-    // Initialize the mapping to point to itself (no relocation yet)
-    // memManager.getEditableDeviceToStorageMap()[ptr] = ptr;
+    // Also update legacy size map for backward compatibility
+    // Will be removed in the future once transition to memoryArrayInfos is complete
+    memManager.getEditableAddressToSizeMap()[ptr] = size;
     
     // Create and populate new MemoryArrayInfo structure
     MemoryManager::MemoryArrayInfo info;
     info.managedMemoryAddress = ptr;
     info.deviceAddress = ptr;         // Initially, the device address is the same as the original
-    info.storageAddress = ptr;        // Initially, no storage allocated
+    info.storageAddress = nullptr;        // Initially, no storage allocated
     info.size = size;
     
     // Expand the vector if needed
