@@ -6,16 +6,23 @@ namespace memopt {
 
 // Memory information methods used by executor_v2
 size_t MemoryManager::getSize(void* addr) const {
+
   // First try to find the array ID using the mapping
   auto it = managedMemoryAddressToIndexMap.find(addr);
+
   if (it != managedMemoryAddressToIndexMap.end()) {
     ArrayId arrayId = it->second;
+    
+
     // Use the MemoryArrayInfo if available
     if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
       return memoryArrayInfos[arrayId].size;
     }
   }
-  
+  for(auto it:managedMemoryAddressToIndexMap)
+  {
+    fprintf(stderr, "[GET-SIZE-ERR]  %p at %d\n", it.first,it.second);
+  }
   // // Fall back to the old method if not found in memoryArrayInfos
   // auto sizeIt = managedMemoryAddressToSizeMap.find(addr);
   // if (sizeIt != managedMemoryAddressToSizeMap.end()) {
@@ -83,6 +90,9 @@ std::vector<ArrayId> MemoryManager::getArrayIds() const {
 void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
   void* newPtr = nullptr;
   size_t size = getSize(ptr);
+  fprintf(stderr, "[DEBUG-OFFLOAD] location 0 address %p device %p for storage %p with size %ld\n", 
+                      memoryArrayInfos[0].managedMemoryAddress,memoryArrayInfos[0].deviceAddress,
+                     memoryArrayInfos[0].storageAddress,memoryArrayInfos[0].size);
   
   if (useNvlink) {
     // Allocate on secondary GPU
@@ -92,13 +102,14 @@ void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useN
     // Allocate on host memory
     checkCudaErrors(cudaMallocHost(&newPtr, size));
   }
-  
+  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p with size %ld\n", newPtr, ptr,size);
+
   return newPtr;
 }
 
-void MemoryManager::transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memcpyKind) {
-  size_t size = getSize(srcPtr);
-  checkCudaErrors(cudaMemcpy(dstPtr, srcPtr, size, memcpyKind));
+void MemoryManager::transferData(void* ptr, void* dstPtr, cudaMemcpyKind memcpyKind) {
+  size_t size = getSize(ptr);
+  checkCudaErrors(cudaMemcpy(dstPtr, getAddress(ptr), size, memcpyKind));
 }
 
 void MemoryManager::freeStorage(void* ptr) {
@@ -173,12 +184,8 @@ void MemoryManager::offloadToStorage(
     void* storagePtr = allocateInStorage(ptr, storageDeviceId, useNvlink);
     fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, ptr);
     
-    // Get device ptr 
-    void* devicePtr =memoryArrayInfos[arrayId].deviceAddress;// allocateInStorage(ptr, storageDeviceId, useNvlink);
-    fprintf(stderr, "[DEBUG-OFFLOAD] Get device %p for address %p\n", devicePtr, ptr);
-    
     // Copy data from device to storage
-    transferData(devicePtr, storagePtr, cudaMemcpyDefault);
+    transferData(ptr, storagePtr, cudaMemcpyDefault);
     
     fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", ptr, storagePtr);
     
@@ -190,9 +197,9 @@ void MemoryManager::offloadToStorage(
     fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
             arrayId, storagePtr);
     
-    checkCudaErrors(cudaFree(devicePtr));
+    checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
     memoryArrayInfos[arrayId].deviceAddress=nullptr;
-    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",devicePtr, ptr);
+    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",memoryArrayInfos[arrayId].deviceAddress, ptr);
   } else {
     fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
             ptr, arrayId);

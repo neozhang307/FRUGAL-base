@@ -261,7 +261,7 @@ cudaGraphExec_t Executor::initializeMemory(
   memManager.offloadAllManagedMemoryToStorage();
   
   // Clear current memory mappings
-  memManager.clearCurrentMappings();
+  // memManager.clearCurrentMappings();
   
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
