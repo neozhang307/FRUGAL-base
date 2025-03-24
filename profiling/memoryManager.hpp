@@ -261,7 +261,7 @@ public:
   
   // Storage configuration and management
   void configureStorage(int mainDeviceId, int storageDeviceId, bool useNvlink);
-  void cleanStorage();
+  void ResetStorageConfig();
   
   /**
    * @brief Clears all storage addresses in memoryArrayInfos

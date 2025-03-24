@@ -388,8 +388,8 @@ void Executor::executeOptimizedGraph(
   checkCudaErrors(cudaGraphDestroy(graph));
   checkCudaErrors(cudaStreamDestroy(stream));
   
-  // Clean up memory manager storage
-  memManager.cleanStorage();
+  // Reset Storage Config
+  memManager.ResetStorageConfig();
 }
 
 /*
@@ -673,7 +673,7 @@ void Executor::executeOptimizedGraphRepeatedly(
   checkCudaErrors(cudaStreamDestroy(stream));
   
   // Clean up memory manager storage
-  memManager.cleanStorage();
+  memManager.ResetStorageConfig();
 }
 
 /*

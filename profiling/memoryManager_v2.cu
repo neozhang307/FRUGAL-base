@@ -231,7 +231,7 @@ void MemoryManager::configureStorage(int mainDeviceId, int storageDeviceId, bool
   }
 }
 
-void MemoryManager::cleanStorage() {
+void MemoryManager::ResetStorageConfig() {
   if (storageConfig.useNvlink) {
     disablePeerAccessForNvlink(storageConfig.mainDeviceId, storageConfig.storageDeviceId);
   }
