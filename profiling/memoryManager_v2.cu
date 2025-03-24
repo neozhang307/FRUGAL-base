@@ -32,11 +32,11 @@ ArrayId MemoryManager::getArrayId(void* addr) const {
     return arrayId;
   }
   
-  // Fall back to the old method if not found in memoryArrayInfos
-  auto it = managedMemoryAddressToIndexMap.find(addr);
-  if (it != managedMemoryAddressToIndexMap.end()) {
-    return it->second;
-  }
+  // // Fall back to the old method if not found in memoryArrayInfos
+  // auto it = managedMemoryAddressToIndexMap.find(addr);
+  // if (it != managedMemoryAddressToIndexMap.end()) {
+  //   return it->second;
+  // }
   
   return -1; // Invalid ID for unmanaged memory
 }
@@ -46,9 +46,9 @@ bool MemoryManager::isManaged(void* addr) const {
   if (findArrayIdByAddress(addr) >= 0) {
     return true;
   }
-  
+  return false;
   // Fall back to old method
-  return managedMemoryAddressToIndexMap.count(addr) > 0;
+  // return managedMemoryAddressToIndexMap.count(addr) > 0;
 }
 
 // Array ID utility methods
@@ -255,7 +255,7 @@ void MemoryManager::clearStorage() {
 
 // Mapping management
 void MemoryManager::updateCurrentMapping(void* originalAddr, void* currentAddr) {
-  managedMemoryAddressToAssignedMap[originalAddr] = currentAddr;
+  // managedMemoryAddressToAssignedMap[originalAddr] = currentAddr;
   
   // Also update the MemoryArrayInfo structure
   ArrayId arrayId = getArrayId(originalAddr);
@@ -263,9 +263,9 @@ void MemoryManager::updateCurrentMapping(void* originalAddr, void* currentAddr) 
     memoryArrayInfos[arrayId].deviceAddress = currentAddr;
   }
 }
-
+//note that before this step the pointer would have already been freed
 void MemoryManager::removeCurrentMapping(void* originalAddr) {
-  managedMemoryAddressToAssignedMap.erase(originalAddr);
+  // managedMemoryAddressToAssignedMap.erase(originalAddr);
   
   // Also update the MemoryArrayInfo structure
   ArrayId arrayId = getArrayId(originalAddr);
@@ -276,7 +276,7 @@ void MemoryManager::removeCurrentMapping(void* originalAddr) {
 }
 
 void MemoryManager::clearCurrentMappings() {
-  managedMemoryAddressToAssignedMap.clear();
+  // managedMemoryAddressToAssignedMap.clear();
   
   // Clear device pointers in all MemoryArrayInfo entries
   for (auto& info : memoryArrayInfos) {
@@ -304,7 +304,8 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
     ));
     
     // Update the current mapping
-    managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    // managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
 
@@ -335,7 +336,8 @@ void MemoryManager::prefetchAllDataToDevice() {
     }
     
     // Update the current mapping
-    managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    // managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
 
@@ -359,7 +361,8 @@ void MemoryManager::prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t st
 void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t stream) {
   auto dataMovementSize = this->getSizeByArrayId(arrayId);
   auto dataMovementAddress = this->getPointerByArrayId(arrayId);
-  void *devicePtr = this->getCurrentAddressMap().at(dataMovementAddress);
+  // void *devicePtr = this->getCurrentAddressMap().at(dataMovementAddress);
+  auto devicePtr = this->memoryArrayInfos[arrayId].deviceAddress;
   auto storageAddress = this->memoryArrayInfos[arrayId].storageAddress;
 
   checkCudaErrors(cudaMemcpyAsync(
@@ -427,33 +430,62 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorage() {
-  auto currentAddressMap = this->getEditableCurrentAddressMap();
+  // auto currentAddressMap = this->getEditableCurrentAddressMap();
 
-  for (auto &[oldAddr, newAddr] : currentAddressMap) {
+  // for (auto &[oldAddr, newAddr] : currentAddressMap) {
+  //   checkCudaErrors(cudaMemcpy(
+  //     // this->getDeviceToHostArrayMap().at(oldAddr),
+  //     this->getStoragePtr(oldAddr),
+  //     newAddr,
+  //     this->getSize(oldAddr),
+  //     storageConfig.offloadMemcpyKind
+  //   ));
+  //   checkCudaErrors(cudaFree(newAddr));
+  // }
+
+  for (auto info : memoryArrayInfos) {
+    if(info.deviceAddress==nullptr)continue;
+
     checkCudaErrors(cudaMemcpy(
       // this->getDeviceToHostArrayMap().at(oldAddr),
-      this->getStoragePtr(oldAddr),
-      newAddr,
-      this->getSize(oldAddr),
+      info.storageAddress,
+      info.deviceAddress,
+      info.size,
       storageConfig.offloadMemcpyKind
     ));
-    checkCudaErrors(cudaFree(newAddr));
+    checkCudaErrors(cudaFree(info.deviceAddress));
+    info.deviceAddress=nullptr;
   }
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
-  auto currentAddressMap = this->getEditableCurrentAddressMap();
-  for (auto &[oldAddr, newAddr] : currentAddressMap) {
+  // auto currentAddressMap = this->getEditableCurrentAddressMap();
+  // for (auto &[oldAddr, newAddr] : currentAddressMap) {
+  //   checkCudaErrors(cudaMemcpyAsync(
+  //     // this->getDeviceToHostArrayMap().at(oldAddr),
+  //     this->getStoragePtr(oldAddr),
+  //     newAddr,
+  //     this->getSize(oldAddr),
+  //     storageConfig.offloadMemcpyKind,
+  //     stream
+  //   ));
+  //   checkCudaErrors(cudaFreeAsync(newAddr, stream));
+  //   this->removeCurrentMapping(oldAddr);
+  // }
+
+  for (auto info : memoryArrayInfos) {
+    if(info.deviceAddress==nullptr)continue;
+
     checkCudaErrors(cudaMemcpyAsync(
       // this->getDeviceToHostArrayMap().at(oldAddr),
-      this->getStoragePtr(oldAddr),
-      newAddr,
-      this->getSize(oldAddr),
+      info.storageAddress,
+      info.deviceAddress,
+      info.size,
       storageConfig.offloadMemcpyKind,
       stream
     ));
-    checkCudaErrors(cudaFreeAsync(newAddr, stream));
-    this->removeCurrentMapping(oldAddr);
+    checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
+    info.deviceAddress=nullptr;
   }
 }
 
@@ -524,25 +556,25 @@ void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
   }
   
   // Fall back to the old index map method
-  auto it = managedMemoryAddressToIndexMap.find(managedMemAddress);
-  if (it != managedMemoryAddressToIndexMap.end()) {
-    arrayId = it->second;
-    if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-      void* storageAddr = memoryArrayInfos[arrayId].storageAddress;
-      if (storageAddr == nullptr) {
-        fprintf(stderr, "[DEBUG] getStoragePtr: Found address in indexMap with arrayId %d but storageAddress is nullptr\n", 
-                arrayId);
-      } else {
-        fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p using indexMap with arrayId %d\n", 
-                storageAddr, arrayId);
-      }
-      return storageAddr;
-    } else {
-      fprintf(stderr, "[DEBUG] getStoragePtr: Found in indexMap but arrayId %d is invalid\n", arrayId);
-    }
-  } else {
-    fprintf(stderr, "[DEBUG] getStoragePtr: Address %p not found in managedMemoryAddressToIndexMap\n", managedMemAddress);
-  }
+  // auto it = managedMemoryAddressToIndexMap.find(managedMemAddress);
+  // if (it != managedMemoryAddressToIndexMap.end()) {
+  //   arrayId = it->second;
+  //   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+  //     void* storageAddr = memoryArrayInfos[arrayId].storageAddress;
+  //     if (storageAddr == nullptr) {
+  //       fprintf(stderr, "[DEBUG] getStoragePtr: Found address in indexMap with arrayId %d but storageAddress is nullptr\n", 
+  //               arrayId);
+  //     } else {
+  //       fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p using indexMap with arrayId %d\n", 
+  //               storageAddr, arrayId);
+  //     }
+  //     return storageAddr;
+  //   } else {
+  //     fprintf(stderr, "[DEBUG] getStoragePtr: Found in indexMap but arrayId %d is invalid\n", arrayId);
+  //   }
+  // } else {
+  //   fprintf(stderr, "[DEBUG] getStoragePtr: Address %p not found in managedMemoryAddressToIndexMap\n", managedMemAddress);
+  // }
 
   
   // Legacy map lookup first (fastest direct lookup)

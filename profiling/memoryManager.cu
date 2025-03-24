@@ -31,7 +31,20 @@ const std::set<void*>& MemoryManager::getApplicationOutputs() const {
 
 
 const std::map<void*, void*>& MemoryManager::getCurrentAddressMap() const { 
-  return managedMemoryAddressToAssignedMap; 
+  // Use a static thread-local map to avoid modifying the shared map
+  static thread_local std::map<void*, void*> localMap;
+  localMap.clear();
+  
+  // Populate with active mappings from memoryArrayInfos
+  for (size_t i = 0; i < memoryArrayInfos.size(); ++i) {
+    const auto& info = memoryArrayInfos[i];
+    // Only include entries that have a valid deviceAddress
+    if (info.managedMemoryAddress != nullptr && info.deviceAddress != nullptr) {
+      localMap[info.managedMemoryAddress] = info.deviceAddress;
+    }
+  }
+  
+  return localMap; 
 }
 
 // const std::map<void*, void*>& MemoryManager::getDeviceToHostArrayMap() const { 
@@ -61,7 +74,24 @@ std::set<void*>& MemoryManager::getEditableApplicationOutputs() {
 
 
 std::map<void*, void*>& MemoryManager::getEditableCurrentAddressMap() { 
-  return managedMemoryAddressToAssignedMap; 
+  // Use a static thread-local map to avoid modifying the shared map directly
+  static thread_local std::map<void*, void*> localMap;
+  localMap.clear();
+  
+  // Populate with active mappings from memoryArrayInfos
+  for (size_t i = 0; i < memoryArrayInfos.size(); ++i) {
+    const auto& info = memoryArrayInfos[i];
+    // Only include entries that have a valid deviceAddress
+    if (info.managedMemoryAddress != nullptr && info.deviceAddress != nullptr) {
+      localMap[info.managedMemoryAddress] = info.deviceAddress;
+    }
+  }
+  
+  // Return a reference to the map for modifications
+  // Note: The callers will typically use this map to make changes, but those changes
+  // won't be synchronized back to memoryArrayInfos until updateCurrentMapping or
+  // removeCurrentMapping methods are called. This is consistent with existing behavior.
+  return localMap; 
 }
 
 // std::map<void*, void*>& MemoryManager::getEditableDeviceToHostArrayMap() { 
@@ -91,7 +121,8 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
     ));
     
     // Update the current mapping
-    managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    // managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
+    memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
 

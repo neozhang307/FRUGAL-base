@@ -121,7 +121,7 @@ private:
    * @deprecated This map is being phased out in favor of memoryArrayInfos.deviceAddress.
    * All new code should access device address mappings through memoryArrayInfos instead.
    */
-  inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
+  // inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
   
   /** @brief Maps device pointers to host/storage array pointers (internal version of managedDeviceArrayToHostArrayMap) */
   // inline static std::map<void *, void *> managedDeviceArrayToHostArrayMap;
@@ -164,16 +164,28 @@ public:
     if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
       void* deviceAddr = memoryArrayInfos[arrayId].deviceAddress;
       if (deviceAddr != nullptr) {
+        fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d].deviceAddress = %p\n", 
+                addr, arrayId, deviceAddr);
         return static_cast<T *>(deviceAddr);
+      } else {
+        fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d] but deviceAddress is nullptr\n", 
+                addr, arrayId);
       }
+    } else {
+      fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in memoryArrayInfos (arrayId = %d)\n", 
+              addr, arrayId);
     }
     
-    // Fall back to the legacy map if not found in memoryArrayInfos
-    auto& mapping = instance.getCurrentAddressMap();
-    auto it = mapping.find(addr);
-    if (it != mapping.end()) {
-      return static_cast<T *>(it->second);
-    }
+    // // Fall back to the legacy map if not found in memoryArrayInfos
+    // auto& mapping = instance.getCurrentAddressMap();
+    // auto it = mapping.find(addr);
+    // if (it != mapping.end()) {
+    //   fprintf(stderr, "[DEBUG-GETADDR] Found address %p in legacy map => %p\n", 
+    //           addr, it->second);
+    //   return static_cast<T *>(it->second);
+    // } else {
+    //   fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in legacy map, returning original\n", addr);
+    // }
     
     return oldAddress;
   }
@@ -205,6 +217,8 @@ public:
   /**
    * @deprecated This method is being phased out. Use memoryArrayInfos[arrayId].deviceAddress instead.
    * @return Reference to the map of original addresses to current device addresses
+   * 
+   * Note: This method now dynamically builds the map from memoryArrayInfos for compatibility
    */
   const std::map<void*, void*>& getCurrentAddressMap() const;
   // const std::map<void*, void*>& getDeviceToHostArrayMap() const;
@@ -229,6 +243,8 @@ public:
   /**
    * @deprecated This method is being phased out. Manipulate memoryArrayInfos[arrayId].deviceAddress directly instead.
    * @return Reference to the map of original addresses to current device addresses for modification
+   * 
+   * Note: This method now dynamically builds the map from memoryArrayInfos for compatibility
    */
   std::map<void*, void*>& getEditableCurrentAddressMap();
   // std::map<void*, void*>& getEditableDeviceToHostArrayMap();
@@ -240,7 +256,7 @@ public:
   
   // Mapping management
   void updateCurrentMapping(void* originalAddr, void* currentAddr);
-  void removeCurrentMapping(void* originalAddr);
+  void removeCurrentMapping(void* originalAddr);//note that before this step the pointer would have already been freed
   void clearCurrentMappings();
   
   // Storage configuration and management
