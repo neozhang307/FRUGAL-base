@@ -109,8 +109,7 @@ private:
   /** @brief Tracks which arrays are application inputs/outputs (for data dependency analysis) */
   inline static std::set<void *> applicationInputs, applicationOutputs;
   
-  /** @brief Maps original device pointers to their current relocated pointers in storage */
-  inline static std::map<void *, void *> deviceToStorageArrayMap;
+  // Removed deviceToStorageArrayMap as it's redundant with managedDeviceArrayToHostArrayMap
 
   /** @brief Maps original device pointers to their current relocated pointers on device */
   inline static std::map<void *, void *> managedMemoryAddressToAssignedMap;
@@ -170,7 +169,6 @@ public:
   const std::map<void*, size_t>& getAddressToSizeMap() const;
   const std::set<void*>& getApplicationInputs() const;
   const std::set<void*>& getApplicationOutputs() const;
-  const std::map<void*, void*>& getDeviceToStorageMap() const;
   const std::map<void*, void*>& getCurrentAddressMap() const;
   const std::map<void*, void*>& getDeviceToHostArrayMap() const;
   
@@ -180,7 +178,6 @@ public:
   std::map<void*, size_t>& getEditableAddressToSizeMap();
   std::set<void*>& getEditableApplicationInputs();
   std::set<void*>& getEditableApplicationOutputs();
-  std::map<void*, void*>& getEditableDeviceToStorageMap();
   std::map<void*, void*>& getEditableCurrentAddressMap();
   std::map<void*, void*>& getEditableDeviceToHostArrayMap();
 
@@ -242,6 +239,7 @@ public:
   // MemoryArrayInfo methods
   const MemoryArrayInfo& getMemoryArrayInfo(ArrayId arrayId) const;
   const std::vector<MemoryArrayInfo>& getMemoryArrayInfos() const;
+  size_t getMemoryArrayInfosSize() const;
 
   // Make these functions friends so they can access private members
   template <typename T>
@@ -276,7 +274,7 @@ void registerManagedMemoryAddress(T *devPtr, size_t size) {
     memManager.getEditableAddressToSizeMap()[ptr] = size;
     
     // Initialize the mapping to point to itself (no relocation yet)
-    memManager.getEditableDeviceToStorageMap()[ptr] = ptr;
+    // memManager.getEditableDeviceToStorageMap()[ptr] = ptr;
     
     // Create and populate new MemoryArrayInfo structure
     MemoryManager::MemoryArrayInfo info;

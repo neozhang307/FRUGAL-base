@@ -6,10 +6,22 @@ namespace memopt {
 
 // Memory information methods used by executor_v2
 size_t MemoryManager::getSize(void* addr) const {
-  auto it = managedMemoryAddressToSizeMap.find(addr);
-  if (it != managedMemoryAddressToSizeMap.end()) {
-    return it->second;
+  // First try to find the array ID using the mapping
+  auto it = managedMemoryAddressToIndexMap.find(addr);
+  if (it != managedMemoryAddressToIndexMap.end()) {
+    ArrayId arrayId = it->second;
+    // Use the MemoryArrayInfo if available
+    if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+      return memoryArrayInfos[arrayId].size;
+    }
   }
+  
+  // Fall back to the old method if not found in memoryArrayInfos
+  auto sizeIt = managedMemoryAddressToSizeMap.find(addr);
+  if (sizeIt != managedMemoryAddressToSizeMap.end()) {
+    return sizeIt->second;
+  }
+  
   return 0; // Return 0 for unmanaged memory
 }
 
@@ -22,11 +34,14 @@ ArrayId MemoryManager::getArrayId(void* addr) const {
 }
 
 bool MemoryManager::isManaged(void* addr) const {
+  // Just use the mapping to check if the address is managed
+  // This doesn't need to change, as we're still maintaining the index map
   return managedMemoryAddressToIndexMap.count(addr) > 0;
 }
 
 // Array ID utility methods
 void* MemoryManager::getPointerByArrayId(int arrayId) const {
+  // Use the original implementation for now
   if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
     return managedMemoryAddresses[arrayId];
   }
@@ -34,6 +49,7 @@ void* MemoryManager::getPointerByArrayId(int arrayId) const {
 }
 
 size_t MemoryManager::getSizeByArrayId(int arrayId) const {
+  // Use the original implementation for now
   if (arrayId >= 0 && arrayId < managedMemoryAddresses.size()) {
     void* ptr = managedMemoryAddresses[arrayId];
     return getSize(ptr);
@@ -291,6 +307,10 @@ const MemoryManager::MemoryArrayInfo& MemoryManager::getMemoryArrayInfo(ArrayId 
 
 const std::vector<MemoryManager::MemoryArrayInfo>& MemoryManager::getMemoryArrayInfos() const {
   return memoryArrayInfos;
+}
+
+size_t MemoryManager::getMemoryArrayInfosSize() const {
+  return memoryArrayInfos.size();
 }
 
 } // namespace memopt

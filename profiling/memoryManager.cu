@@ -29,9 +29,6 @@ const std::set<void*>& MemoryManager::getApplicationOutputs() const {
   return applicationOutputs; 
 }
 
-const std::map<void*, void*>& MemoryManager::getDeviceToStorageMap() const { 
-  return deviceToStorageArrayMap; 
-}
 
 const std::map<void*, void*>& MemoryManager::getCurrentAddressMap() const { 
   return managedMemoryAddressToAssignedMap; 
@@ -62,9 +59,6 @@ std::set<void*>& MemoryManager::getEditableApplicationOutputs() {
   return applicationOutputs; 
 }
 
-std::map<void*, void*>& MemoryManager::getEditableDeviceToStorageMap() { 
-  return deviceToStorageArrayMap; 
-}
 
 std::map<void*, void*>& MemoryManager::getEditableCurrentAddressMap() { 
   return managedMemoryAddressToAssignedMap; 
@@ -207,7 +201,7 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
     // Maintain the same array ID
     memManager.getEditableAddressToIndexMap()[newAddr] = i;
     // Update the device-to-host mapping
-    memManager.getEditableDeviceToStorageMap()[oldAddr] = newAddr;
+    // memManager.getEditableDeviceToStorageMap()[oldAddr] = newAddr;
 
     // Update application input registry if this was an input
     auto& appInputs = memManager.getEditableApplicationInputs();
