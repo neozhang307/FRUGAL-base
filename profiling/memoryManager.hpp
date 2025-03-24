@@ -241,6 +241,16 @@ public:
   void* allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink);
   void transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memcpyKind);
   
+  /**
+   * @brief Frees memory based on the storage configuration
+   * 
+   * This function determines whether to use cudaFree or cudaFreeHost based on 
+   * the storage configuration's useNvlink setting.
+   * 
+   * @param ptr The pointer to free
+   */
+  void freeStorage(void* ptr);
+  
   void* offloadToStorage(void* ptr, int storageDeviceId, bool useNvlink, 
                        std::map<void*, void*>& storageMap);
   

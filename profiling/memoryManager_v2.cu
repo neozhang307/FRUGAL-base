@@ -101,6 +101,18 @@ void MemoryManager::transferData(void* srcPtr, void* dstPtr, cudaMemcpyKind memc
   checkCudaErrors(cudaMemcpy(dstPtr, srcPtr, size, memcpyKind));
 }
 
+void MemoryManager::freeStorage(void* ptr) {
+  if (ptr == nullptr) {
+    return;
+  }
+  
+  if (storageConfig.useNvlink) {
+    checkCudaErrors(cudaFree(ptr));
+  } else {
+    checkCudaErrors(cudaFreeHost(ptr));
+  }
+}
+
 void* MemoryManager::offloadToStorage(
     void* ptr, 
     int storageDeviceId, 
@@ -264,11 +276,7 @@ void MemoryManager::prefetchAllDataToDevice() {
       storageConfig.prefetchMemcpyKind
     ));
      // Free temporary storage
-    if (storageConfig.useNvlink) {
-      checkCudaErrors(cudaFree(storagePtr));
-    } else {
-      checkCudaErrors(cudaFreeHost(storagePtr));
-    }
+    freeStorage(storagePtr);
     // Update the current mapping
     managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
   }
