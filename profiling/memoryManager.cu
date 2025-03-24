@@ -196,12 +196,17 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
 
     // Update address in the main list
     memManager.getEditableManagedAddresses()[i] = newAddr;
-    // Transfer the size information to the new address
+    
+    // Transfer the size information to the new address (legacy map for backward compatibility)
     memManager.getEditableAddressToSizeMap()[newAddr] = oldManagedMemoryAddressToSizeMap.at(oldAddr);
+    
     // Maintain the same array ID
     memManager.getEditableAddressToIndexMap()[newAddr] = i;
-    // Update the device-to-host mapping
-    // memManager.getEditableDeviceToStorageMap()[oldAddr] = newAddr;
+    
+    // Update the MemoryArrayInfo structure
+    if (i < memManager.memoryArrayInfos.size()) {
+      memManager.memoryArrayInfos[i].managedMemoryAddress = newAddr;
+    }
 
     // Update application input registry if this was an input
     auto& appInputs = memManager.getEditableApplicationInputs();

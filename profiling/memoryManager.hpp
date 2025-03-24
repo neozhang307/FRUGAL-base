@@ -103,7 +103,10 @@ private:
   /** @brief Maps memory addresses to their array IDs (index in managedMemoryAddresses) */
   inline static std::map<void *, ArrayId> managedMemoryAddressToIndexMap;
   
-  /** @brief Maps memory addresses to their allocation sizes in bytes */
+  /** @brief Maps memory addresses to their allocation sizes in bytes
+   * @deprecated This map is being phased out in favor of memoryArrayInfos.
+   * All new code should access size information through memoryArrayInfos via the array ID.
+   */
   inline static std::map<void *, size_t> managedMemoryAddressToSizeMap;
   
   /** @brief Tracks which arrays are application inputs/outputs (for data dependency analysis) */
@@ -166,6 +169,11 @@ public:
   // Accessor methods for the private members
   const std::vector<void*>& getManagedAddresses() const;
   const std::map<void*, ArrayId>& getAddressToIndexMap() const;
+  
+  /**
+   * @deprecated This method is being phased out. Use getMemoryArrayInfo(arrayId).size instead.
+   * @return Reference to the map of memory addresses to sizes
+   */
   const std::map<void*, size_t>& getAddressToSizeMap() const;
   const std::set<void*>& getApplicationInputs() const;
   const std::set<void*>& getApplicationOutputs() const;
@@ -175,6 +183,11 @@ public:
   // Editable accessors for methods that need to modify the members
   std::vector<void*>& getEditableManagedAddresses();
   std::map<void*, ArrayId>& getEditableAddressToIndexMap();
+  
+  /**
+   * @deprecated This method is being phased out. Use memoryArrayInfos vector directly instead.
+   * @return Reference to the map of memory addresses to sizes for modification
+   */
   std::map<void*, size_t>& getEditableAddressToSizeMap();
   std::set<void*>& getEditableApplicationInputs();
   std::set<void*>& getEditableApplicationOutputs();
