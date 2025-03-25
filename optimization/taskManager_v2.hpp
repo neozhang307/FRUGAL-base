@@ -61,7 +61,7 @@ public:
         // Process a single argument - pointer version (apply getAddress)
         template <typename T>
         static T* processArg(T* arg) {
-            return MemoryManager::getAddress(arg);
+            return memopt::MemoryManager::getAddress(arg);
         }
         
         // Create a new TaskFunctionArgs with all pointers processed with getAddress
@@ -623,7 +623,7 @@ public:
     template <typename T>
     static T* getAddress(T* ptr) {
         // Use the MemoryManager's getAddress method to get the optimized pointer
-        return memoryManager::getAddress(ptr);
+        return memopt::MemoryManager::getAddress(ptr);
     }
     
     // Helper function to create TaskFunctionArgs from arguments
