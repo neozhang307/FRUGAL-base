@@ -27,9 +27,8 @@ using namespace memopt;
 const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 
 // Implementation Note: This file has been updated to use TaskManager_v2 for all operations.
-// However, it maintains compatibility with the original TaskManager-based functions for now.
-// Tasks are registered with both managers, but all actual computation is performed by TaskManager_v2.
-// The empty task functions in the old manager are just placeholders for backward compatibility.
+// The algorithm records a CUDA graph by executing tasks through TaskManager_v2, which can then
+// be executed directly or with memory optimization.
 
 size_t N; // total matrix size (N×N)
 size_t B; // batch size in 1d (B×B per tile)
@@ -136,109 +135,8 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
   return error <= 1e-6;
 }
 
+// Define a matrix tile as a pair of coordinates (i,j)
 typedef std::pair<int, int> MatrixTile;
-
-class TiledCholeskyGraphCreator {
- public:
-  TiledCholeskyGraphCreator(cudaStream_t stream, cudaGraph_t graph) : stream(stream), graph(graph) {
-    this->lastModifiedTile = {-1, -1};
-  }
-
-  void beginCaptureOperation(MatrixTile tileToWrite, std::initializer_list<MatrixTile> tilesToRead) {
-    auto tiles = std::vector<MatrixTile>(tilesToRead);
-    tiles.push_back(tileToWrite);
-    auto dependencies = this->getDependencies(tiles);
-
-    this->lastModifiedTile = tileToWrite;
-    this->lastDependencies = dependencies;
-
-    checkCudaErrors(cudaStreamBeginCaptureToGraph(this->stream, this->graph, dependencies.data(), nullptr, dependencies.size(), cudaStreamCaptureModeGlobal));
-  }
-
-  void endCaptureOperation() {
-    assert(this->lastModifiedTile.first != -1 && this->lastModifiedTile.second != -1);
-    checkCudaErrors(cudaStreamEndCapture(this->stream, &this->graph));
-    this->tileLastModifiedByMap[this->lastModifiedTile] = this->getTailOfLastCapturedNodeChain();
-    this->lastModifiedTile = {-1, -1};
-  };
-
- private:
-  std::map<MatrixTile, cudaGraphNode_t> tileLastModifiedByMap;
-  std::map<cudaGraphNode_t, bool> visited;
-  cudaStream_t stream;
-  cudaGraph_t graph;
-  MatrixTile lastModifiedTile;
-  std::vector<cudaGraphNode_t> lastDependencies;
-
-  std::vector<cudaGraphNode_t> getDependencies(std::vector<MatrixTile> tiles) {
-    std::vector<cudaGraphNode_t> dependencies;
-    for (auto tile : tiles) {
-      auto it = this->tileLastModifiedByMap.find(tile);
-      if (it != this->tileLastModifiedByMap.end()) {
-        dependencies.push_back(it->second);
-      }
-    }
-
-    auto dedupedEnd = std::unique(dependencies.begin(), dependencies.end());
-    dependencies.resize(std::distance(dependencies.begin(), dedupedEnd));
-    return dependencies;
-  }
-
-  cudaGraphNode_t getTailOfLastCapturedNodeChain() {
-    if (lastDependencies.size() == 0) {
-      size_t numEdges;
-      checkCudaErrors(cudaGraphGetEdges(this->graph, nullptr, nullptr, &numEdges));
-      auto from = std::make_unique<cudaGraphNode_t[]>(numEdges);
-      auto to = std::make_unique<cudaGraphNode_t[]>(numEdges);
-      checkCudaErrors(cudaGraphGetEdges(this->graph, from.get(), to.get(), &numEdges));
-
-      std::map<cudaGraphNode_t, bool> hasOutGoingEdge;
-      std::set<cudaGraphNode_t> noOutGoingEdgeNodes;
-      for (int i = 0; i < numEdges; i++) {
-        hasOutGoingEdge[from[i]] = true;
-        noOutGoingEdgeNodes.erase(from[i]);
-        if (!hasOutGoingEdge[to[i]])
-          noOutGoingEdgeNodes.insert(to[i]);
-      }
-
-      assert(noOutGoingEdgeNodes.size() == 1);
-
-      return *noOutGoingEdgeNodes.begin();
-    } else {
-      auto nodeBeforeChain = lastDependencies[0];
-      size_t numDependentNodes;
-      checkCudaErrors(cudaGraphNodeGetDependentNodes(nodeBeforeChain, nullptr, &numDependentNodes));
-
-      assert(numDependentNodes > 0);
-
-      auto dependentNodes = std::make_unique<cudaGraphNode_t[]>(numDependentNodes);
-      checkCudaErrors(cudaGraphNodeGetDependentNodes(nodeBeforeChain, dependentNodes.get(), &numDependentNodes));
-
-      cudaGraphNode_t chainBeginningNode;
-      for (int i = 0; i < numDependentNodes; i++) {
-        if (!visited[dependentNodes[i]]) {
-          chainBeginningNode = dependentNodes[i];
-          break;
-        }
-      }
-
-      auto u = chainBeginningNode;
-      while (true) {
-        visited[u] = true;
-        checkCudaErrors(cudaGraphNodeGetDependentNodes(u, nullptr, &numDependentNodes));
-        if (numDependentNodes == 0) break;
-
-        assert(numDependentNodes == 1);
-
-        cudaGraphNode_t v;
-        checkCudaErrors(cudaGraphNodeGetDependentNodes(u, &v, &numDependentNodes));
-        u = v;
-      }
-
-      return u;
-    }
-  }
-};
 
 void initializeHostData(double *h_originalMatrix) {
   generateRandomSymmetricPositiveDefiniteMatrix(h_originalMatrix, N);
@@ -434,15 +332,13 @@ void tiledCholesky(bool optimize, bool verify) {
 
   clock.logWithCurrentTime("Preparation done, start to record graph");
 
-  // Initialize the graph creator to manage operation dependencies
-  auto tiledCholeskyGraphCreator = std::make_unique<TiledCholeskyGraphCreator>(s, graph);
-  
   // Create TaskManager_v2 with debug mode enabled
   TaskManager_v2 tmanager_v2(true);
 
   // SECTION 6: TILED CHOLESKY ALGORITHM IMPLEMENTATION
-  // Records the entire algorithm as a CUDA graph with dependencies
-  
+  // Begin recording algorithm operations to CUDA graph
+  checkCudaErrors(cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal));
+
   for (int k = 0; k < T; k++) {
     // =====================================================================
     // STEP 1: POTRF - Cholesky factorization of diagonal tile
@@ -450,13 +346,7 @@ void tiledCholesky(bool optimize, bool verify) {
     // L[k][k] = POTRF(A[k][k])
     // =====================================================================
     
-    // Begin graph capture with dependencies
-    tiledCholeskyGraphCreator->beginCaptureOperation(
-      {k, k},         // Tile to write
-      {{k, k}}        // Tiles to read
-    );
-    
-    // Register task using the new TaskManager_v2
+    // Register POTRF task using TaskManager_v2
     TaskId taskId_v2 = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*)>, double*>(
       [cusolverDnHandle, cusolverDnParams, d_workspace, workspaceInBytesOnDevice, 
        h_workspace, workspaceInBytesOnHost, d_info](cudaStream_t stream, double* matrixblock_k_k) {
@@ -484,12 +374,8 @@ void tiledCholesky(bool optimize, bool verify) {
       "POTRF_task"  // task name
     );
     
-    // Execute the task using TaskManager_v2 (which handles memory optimization automatically)
+    // Execute the task using TaskManager_v2
     tmanager_v2.execute(taskId_v2, s);
-
-    
-    // End graph capture
-    tiledCholeskyGraphCreator->endCaptureOperation();
 
     // =====================================================================
     // STEP 2: TRSM - Triangular solve for tiles below diagonal
@@ -500,12 +386,7 @@ void tiledCholesky(bool optimize, bool verify) {
       // L[i][k] * L[k][k]^T = A[i][k]
       // Solving for L[i][k]
       
-      tiledCholeskyGraphCreator->beginCaptureOperation(
-        {i, k},               // Tile to write
-        {{k, k}, {i, k}}      // Tiles to read
-      );
-      
-      // Register task using TaskManager_v2
+      // Register TRSM task using TaskManager_v2
       TaskId trsmTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
         [cublasHandle, one](cudaStream_t stream, double* matrixblock_k_k, double* matrixblock_i_k) {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
@@ -529,8 +410,6 @@ void tiledCholesky(bool optimize, bool verify) {
       
       // Execute the task using TaskManager_v2
       tmanager_v2.execute(trsmTaskId, s);
-
-      tiledCholeskyGraphCreator->endCaptureOperation();
     }
 
     // =====================================================================
@@ -541,12 +420,7 @@ void tiledCholesky(bool optimize, bool verify) {
       // A[i][i] = SYRK(A[i][k], A[i][i])
       // A[i][i] = A[i][i] - L[i][k] * L[i][k]^T
       
-      tiledCholeskyGraphCreator->beginCaptureOperation(
-        {i, i},              // Tile to write
-        {{i, i}, {i, k}}     // Tiles to read
-      );
-      
-      // Register task using TaskManager_v2
+      // Register SYRK task using TaskManager_v2
       TaskId syrkTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
         [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_i_k, double* matrixblock_i_i) {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
@@ -570,8 +444,6 @@ void tiledCholesky(bool optimize, bool verify) {
 
       // Execute the task using TaskManager_v2
       tmanager_v2.execute(syrkTaskId, s);
-      
-      tiledCholeskyGraphCreator->endCaptureOperation();
 
       // STEP 4: GEMM - Update off-diagonal tiles
       // For each tile below diagonal in column i
@@ -579,12 +451,7 @@ void tiledCholesky(bool optimize, bool verify) {
         // A[j][i] = GEMM(A[j][k], A[i][k])
         // A[j][i] = A[j][i] - L[j][k] * L[i][k]^T
         
-        tiledCholeskyGraphCreator->beginCaptureOperation(
-          {j, i},                     // Tile to write
-          {{j, i}, {j, k}, {i, k}}    // Tiles to read
-        );
-        
-        // Register task using TaskManager_v2
+        // Register GEMM task using TaskManager_v2
         TaskId gemmTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*, double*)>, double*, double*, double*>(
           [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_j_k, double* matrixblock_i_k, double* matrixblock_j_i) {
             // General matrix multiplication using cuBLAS
@@ -612,12 +479,12 @@ void tiledCholesky(bool optimize, bool verify) {
    
         // Execute the task using TaskManager_v2
         tmanager_v2.execute(gemmTaskId, s);
-        
-     
-          tiledCholeskyGraphCreator->endCaptureOperation();
       }
     }
   }
+  // Finish recording operations to CUDA graph
+  checkCudaErrors(cudaStreamEndCapture(s, &graph));
+  checkCudaErrors(cudaStreamDestroy(s));
 
   // Graph creation completed - now we can export it for debugging
   clock.logWithCurrentTime("Graph recorded");
@@ -723,6 +590,10 @@ void tiledCholesky(bool optimize, bool verify) {
       // Initialize device data from host matrix
       initializeDeviceData(h_originalMatrix.get(), d_tiles);
 
+      // Create a new stream for execution
+      cudaStream_t execStream;
+      checkCudaErrors(cudaStreamCreate(&execStream));
+      
       // Unified Memory prefetching (if enabled)
       if (ConfigurationManager::getConfig().generic.useUM) {
         // Limit available memory for unified memory
@@ -739,20 +610,20 @@ void tiledCholesky(bool optimize, bool verify) {
             d_tiles[i],
             tileSize,
             ConfigurationManager::getConfig().execution.mainDeviceId,
-            s
+            execStream
           ));
         }
-        checkCudaErrors(cudaStreamSynchronize(s));
+        checkCudaErrors(cudaStreamSynchronize(execStream));
       }
 
       // Optional memory usage profiling
       if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
         peakMemoryUsageProfiler.start();
       }
-
+      
       // Execute and time the graph
       cudaEventClock.start();
-      checkCudaErrors(cudaGraphLaunch(graphExec, s));
+      checkCudaErrors(cudaGraphLaunch(graphExec, execStream));
       cudaEventClock.end();
 
       checkCudaErrors(cudaDeviceSynchronize());
@@ -773,6 +644,9 @@ void tiledCholesky(bool optimize, bool verify) {
       if (ConfigurationManager::getConfig().generic.useUM) {
         resetAvailableMemoryForUM();
       }
+      
+      // Clean up the execution stream
+      checkCudaErrors(cudaStreamDestroy(execStream));
     }
   }
 
