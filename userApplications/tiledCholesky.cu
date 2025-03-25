@@ -550,12 +550,12 @@ void tiledCholesky(bool optimize, bool verify) {
 
   // Register which tiles are inputs and outputs for the application
   // Only the lower triangular portion is relevant for Cholesky
-  for (int i = 0; i < T; i++) {
-    for (int j = 0; j <= i; j++) {
-      registerApplicationInput(getMatrixBlock(i, j));
-      registerApplicationOutput(getMatrixBlock(i, j));
-    }
-  }
+  // for (int i = 0; i < T; i++) {
+  //   for (int j = 0; j <= i; j++) {
+  //     registerApplicationInput(getMatrixBlock(i, j));
+  //     registerApplicationOutput(getMatrixBlock(i, j));
+  //   }
+  // }
   clock.logWithCurrentTime("Addresses registered");
 
   // SECTION 4: CUDA LIBRARY INITIALIZATION
