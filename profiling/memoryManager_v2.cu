@@ -616,4 +616,74 @@ void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
   return nullptr;
 }
 
+// Template implementation of member function
+template <typename T>
+void MemoryManager::registerManagedMemoryAddress(T *devPtr, size_t size) {
+  // Skip small allocations based on configuration threshold
+  if (size < ConfigurationManager::getConfig().optimization.minManagedArraySize) {
+    return;
+  }
+
+  auto ptr = static_cast<void *>(devPtr);
+  
+  // Only register if not already tracked
+  if (this->findArrayIdByAddress(ptr) < 0 && this->getAddressToIndexMap().count(ptr) == 0) {
+    // Update existing data structures
+    this->getEditableManagedAddresses().push_back(ptr);
+    ArrayId arrayId = this->getManagedAddresses().size() - 1;
+    
+    // Maintain old index map for backward compatibility
+    // Will be removed in the future once transition to memoryArrayInfos is complete
+    this->getEditableAddressToIndexMap()[ptr] = arrayId;
+    
+    // Create and populate new MemoryArrayInfo structure
+    MemoryArrayInfo info;
+    info.managedMemoryAddress = ptr;
+    info.deviceAddress = ptr;         // Initially, the device address is the same as the original
+    info.storageAddress = nullptr;    // Initially, no storage allocated
+    info.size = size;
+    
+    // Expand the vector if needed
+    if (memoryArrayInfos.size() <= arrayId) {
+      memoryArrayInfos.resize(arrayId + 1);
+    }
+    memoryArrayInfos[arrayId] = info;
+  }
+}
+
+// Implementation of application input/output registration
+template <typename T>
+void MemoryManager::registerApplicationInput(T *devPtr) {
+  this->getEditableApplicationInputs().insert(static_cast<void *>(devPtr));
+}
+
+template <typename T>
+void MemoryManager::registerApplicationOutput(T *devPtr) {
+  this->getEditableApplicationOutputs().insert(static_cast<void *>(devPtr));
+}
+
+// Explicit template instantiation for common types
+template void MemoryManager::registerManagedMemoryAddress<float>(float*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<double>(double*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<int>(int*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<char>(char*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<unsigned int>(unsigned int*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<void>(void*, size_t);
+
+// Explicit template instantiation for registerApplicationInput
+template void MemoryManager::registerApplicationInput<float>(float*);
+template void MemoryManager::registerApplicationInput<double>(double*);
+template void MemoryManager::registerApplicationInput<int>(int*);
+template void MemoryManager::registerApplicationInput<char>(char*);
+template void MemoryManager::registerApplicationInput<unsigned int>(unsigned int*);
+template void MemoryManager::registerApplicationInput<void>(void*);
+
+// Explicit template instantiation for registerApplicationOutput
+template void MemoryManager::registerApplicationOutput<float>(float*);
+template void MemoryManager::registerApplicationOutput<double>(double*);
+template void MemoryManager::registerApplicationOutput<int>(int*);
+template void MemoryManager::registerApplicationOutput<char>(char*);
+template void MemoryManager::registerApplicationOutput<unsigned int>(unsigned int*);
+template void MemoryManager::registerApplicationOutput<void>(void*);
+
 } // namespace memopt

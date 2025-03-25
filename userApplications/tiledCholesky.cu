@@ -276,8 +276,14 @@ void tiledCholesky(bool optimize, bool verify) {
   
   // Register all tile addresses in the memory optimization system
   for (int i = 0; i < T; i++)
+  {
     for (int j = 0; j < T; j++)
-      registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
+    {
+      MemoryManager::getInstance().registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
+      // MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
+      // MemoryManager::getInstance().registerApplicationOutput(getMatrixBlock(i, j));
+    }  
+  }  
 
   clock.logWithCurrentTime("Addresses registered");
 

@@ -33,29 +33,6 @@ class MemoryManager;
 template <typename T>
 void registerManagedMemoryAddress(T *devPtr, size_t size);
 
-/**
- * @brief Marks a device pointer as an application input
- *
- * Application inputs are arrays that are initialized from outside the
- * optimization system and must be available at the start of execution.
- *
- * @tparam T Type of data stored in the GPU array
- * @param devPtr Pointer to device memory containing input data
- */
-template <typename T>
-void registerApplicationInput(T *devPtr);
-
-/**
- * @brief Marks a device pointer as an application output
- *
- * Application outputs are arrays that contain results needed after
- * optimization system execution completes, and must be preserved.
- *
- * @tparam T Type of data stored in the GPU array
- * @param devPtr Pointer to device memory that will store output data
- */
-template <typename T>
-void registerApplicationOutput(T *devPtr);
 
 /**
  * @brief Updates memory address mappings after memory is reallocated
@@ -399,61 +376,35 @@ public:
 
   // Make these functions friends so they can access private members
   template <typename T>
-  friend void registerManagedMemoryAddress(T *devPtr, size_t size);
+  void registerManagedMemoryAddress(T *devPtr, size_t size);
   
+  /**
+   * @brief Marks a device pointer as an application input
+   *
+   * Application inputs are arrays that are initialized from outside the
+   * optimization system and must be available at the start of execution.
+   *
+   * @tparam T Type of data stored in the GPU array
+   * @param devPtr Pointer to device memory containing input data
+   */
   template <typename T>
-  friend void registerApplicationInput(T *devPtr);
+  void registerApplicationInput(T *devPtr);
   
+  /**
+   * @brief Marks a device pointer as an application output
+   *
+   * Application outputs are arrays that contain results needed after
+   * optimization system execution completes, and must be preserved.
+   *
+   * @tparam T Type of data stored in the GPU array
+   * @param devPtr Pointer to device memory that will store output data
+   */
   template <typename T>
-  friend void registerApplicationOutput(T *devPtr);
+  void registerApplicationOutput(T *devPtr);
   
   friend void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAddressMap);
 };
 
-// Template implementation of helper functions
-template <typename T>
-void registerManagedMemoryAddress(T *devPtr, size_t size) {
-  // Skip small allocations based on configuration threshold
-  if (size < ConfigurationManager::getConfig().optimization.minManagedArraySize) {
-    return;
-  }
 
-  auto ptr = static_cast<void *>(devPtr);
-  auto& memManager = MemoryManager::getInstance();
-  
-  // Only register if not already tracked
-  if (memManager.findArrayIdByAddress(ptr) < 0 && memManager.getAddressToIndexMap().count(ptr) == 0) {
-    // Update existing data structures
-    memManager.getEditableManagedAddresses().push_back(ptr);
-    ArrayId arrayId = memManager.getManagedAddresses().size() - 1;
-    
-    // Maintain old index map for backward compatibility
-    // Will be removed in the future once transition to memoryArrayInfos is complete
-    memManager.getEditableAddressToIndexMap()[ptr] = arrayId;
-    
-    // Create and populate new MemoryArrayInfo structure
-    MemoryManager::MemoryArrayInfo info;
-    info.managedMemoryAddress = ptr;
-    info.deviceAddress = ptr;         // Initially, the device address is the same as the original
-    info.storageAddress = nullptr;        // Initially, no storage allocated
-    info.size = size;
-    
-    // Expand the vector if needed
-    if (memManager.memoryArrayInfos.size() <= arrayId) {
-      memManager.memoryArrayInfos.resize(arrayId + 1);
-    }
-    memManager.memoryArrayInfos[arrayId] = info;
-  }
-}
-
-template <typename T>
-void registerApplicationInput(T *devPtr) {
-  MemoryManager::getInstance().getEditableApplicationInputs().insert(static_cast<void *>(devPtr));
-}
-
-template <typename T>
-void registerApplicationOutput(T *devPtr) {
-  MemoryManager::getInstance().getEditableApplicationOutputs().insert(static_cast<void *>(devPtr));
-}
 
 } // namespace memopt

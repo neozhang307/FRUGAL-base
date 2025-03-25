@@ -60,15 +60,15 @@ int main() {
     checkCudaErrors(cudaMemset(d_output, 0, size));
     
     // Manually register memory with the memory manager (now required externally)
-    // Using the global template functions which are friends of MemoryManager
-    registerManagedMemoryAddress(d_array1, size);
-    registerManagedMemoryAddress(d_array2, size);
-    registerManagedMemoryAddress(d_output, size);
+    // Using the member function of MemoryManager
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_array1, size);
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_array2, size);
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_output, size);
     
-    // Mark inputs and outputs for application I/O
-    registerApplicationInput(d_array1);
-    registerApplicationInput(d_array2);
-    registerApplicationOutput(d_output);
+    // // Mark inputs and outputs for application I/O
+    // MemoryManager::getInstance().registerApplicationInput(d_array1);
+    // MemoryManager::getInstance().registerApplicationInput(d_array2);
+    // MemoryManager::getInstance().registerApplicationOutput(d_output);
     
     std::cout << "Memory registered externally before task registration" << std::endl;
     

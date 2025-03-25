@@ -29,9 +29,9 @@ int main() {
     cudaMalloc(&d_arrayC, size);
     
     // Register the arrays with the memory manager
-    registerManagedMemoryAddress(d_arrayA, size);
-    registerManagedMemoryAddress(d_arrayB, size);
-    registerManagedMemoryAddress(d_arrayC, size);
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_arrayA, size);
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_arrayB, size);
+    MemoryManager::getInstance().registerManagedMemoryAddress(d_arrayC, size);
     
     // Initialize data
     cudaMemset(d_arrayA, 0, size);

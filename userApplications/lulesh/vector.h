@@ -71,12 +71,12 @@ class Vector_d : VolatileVector_d {
 
     if (managed) {
       VolatileVectorManager::volatileDeviceVectors.push_back(this);
-      memopt::registerManagedMemoryAddress(this->_data, this->bytes());
+      memopt::MemoryManager::getInstance().registerManagedMemoryAddress(this->_data, this->bytes());
       if (input) {
-        memopt::registerApplicationInput(this->_data);
+        memopt::MemoryManager::getInstance().registerApplicationInput(this->_data);
       }
       if (output) {
-        memopt::registerApplicationOutput(this->_data);
+        memopt::MemoryManager::getInstance().registerApplicationOutput(this->_data);
       }
     }
   }
