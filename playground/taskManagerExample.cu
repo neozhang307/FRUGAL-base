@@ -161,7 +161,7 @@ int main() {
     cudaMemcpy(h_arrayB, d_arrayB, size, cudaMemcpyDeviceToHost);
     
     // Update memory manager to use the host pointer instead of the device pointer
-    MemoryManager::managedMemoryAddressToAssignedMap[d_arrayB] = h_arrayB;
+    MemoryManager::getInstance().updateCurrentMapping(d_arrayB, h_arrayB);
     
     // Execute tasks in Managed mode (pointers processed through MemoryManager::getAddress)
     std::cout << "\nExecuting tasks in Managed mode" << std::endl;
@@ -188,7 +188,7 @@ int main() {
     cudaDeviceSynchronize();
     
     // Clean up
-    MemoryManager::managedMemoryAddressToAssignedMap.clear();
+    MemoryManager::getInstance().clearCurrentMappings();
     cudaStreamDestroy(stream1);
     cudaStreamDestroy(stream2);
     cudaFreeHost(h_arrayB);
