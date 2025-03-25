@@ -33,3 +33,10 @@ target_link_libraries(
   memopt
   fmt::fmt
 )
+
+add_executable(taskManager_v2_example taskManager_v2_example.cu)
+target_link_libraries(
+  taskManager_v2_example
+  memopt
+  fmt::fmt
+)
