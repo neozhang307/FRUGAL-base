@@ -9,3 +9,4 @@
 #include "../utilities/cudaUtilities.hpp"
 #include "../utilities/logger.hpp"
 #include "../utilities/utilities.hpp"
+#include "../optimization/taskManager_v2.hpp"
