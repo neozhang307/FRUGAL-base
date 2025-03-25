@@ -3280,7 +3280,7 @@ int main(int argc, char* argv[]) {
     std::map<void*, void*> managedDeviceArrayToNewDeviceArrayMap;
     for (const auto& [oldDevicePtr, newHostPtr] : managedDeviceArrayToHostArrayMap) {
       void* newDevicePtr;
-      size_t size = MemoryManager::managedMemoryAddressToSizeMap[oldDevicePtr];
+      size_t size = MemoryManager::getInstance().getSize(oldDevicePtr);
       checkCudaErrors(cudaMalloc(&newDevicePtr, size));
       checkCudaErrors(cudaMemcpy(newDevicePtr, newHostPtr, size, cudaMemcpyDefault));
       managedDeviceArrayToNewDeviceArrayMap[oldDevicePtr] = newDevicePtr;
