@@ -136,8 +136,8 @@ void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& sto
   storageMap.clear();
   fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Cleared external storageMap\n");
   
-  clearStorage();
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Called clearStorage() to reset memoryArrayInfos\n");
+  releaseStoragePointers();
+  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Called releaseStoragePointers() to reset memoryArrayInfos\n");
   
   // Move each managed memory address to storage
   for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
