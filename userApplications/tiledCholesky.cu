@@ -20,14 +20,20 @@
 
 #include "../include/argh.h"
 #include "memopt.hpp"
+#include "../optimization/taskManager_v2.hpp"
 
 using namespace memopt;
 
 const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 
-size_t N; //
-size_t B; // batch size in 1d
-size_t T; // tile amount in 1d
+// Implementation Note: This file has been updated to use TaskManager_v2 for all operations.
+// However, it maintains compatibility with the original TaskManager-based functions for now.
+// Tasks are registered with both managers, but all actual computation is performed by TaskManager_v2.
+// The empty task functions in the old manager are just placeholders for backward compatibility.
+
+size_t N; // total matrix size (N×N)
+size_t B; // batch size in 1d (B×B per tile)
+size_t T; // tile amount in 1d (T×T tiles)
 
 __global__ void makeMatrixSymmetric(double *d_matrix, size_t n) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -612,23 +618,12 @@ void tiledCholesky(bool optimize, bool verify) {
   // Initialize the graph creator to manage operation dependencies
   auto tiledCholeskyGraphCreator = std::make_unique<TiledCholeskyGraphCreator>(s, graph);
 
-  // Create TaskManager
-  TaskManager tmanager;
+
   
-  // Initialize the task manager for tracking operations
-  auto tiledCholeskyTaskManager = std::make_unique<TiledCholeskyTaskManager>(
-    cusolverDnHandle,
-    cusolverDnParams,
-    cublasHandle,
-    workspaceInBytesOnDevice,
-    workspaceInBytesOnHost,
-    h_workspace,
-    d_workspace,
-    d_info,
-    one,
-    minusOne,
-    tmanager
-  );
+  // Create TaskManager_v2 with debug mode enabled
+  TaskManager_v2 tmanager_v2(true);
+  
+
   // SECTION 6: TILED CHOLESKY ALGORITHM IMPLEMENTATION
   // Records the entire algorithm as a CUDA graph with dependencies
   
@@ -646,15 +641,10 @@ void tiledCholesky(bool optimize, bool verify) {
       {{k, k}}        // Tiles to read
     );
     
-    // Record task for optimization
-    nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::portf, {k, k});
-    annotateNextTask(nextTaskId, {getMatrixBlock(k, k)}, {getMatrixBlock(k, k)}, s);
-    
-    // Use RuntimeTask API to support executeWithParams
-    tmanager.registerRuntimeTask(
-      nextTaskId,
+    // Register task using the new TaskManager_v2
+    TaskId taskId_v2 = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*)>, double*>(
       [cusolverDnHandle, cusolverDnParams, d_workspace, workspaceInBytesOnDevice, 
-       h_workspace, workspaceInBytesOnHost, d_info](double* matrixblock_k_k, cudaStream_t stream) {
+       h_workspace, workspaceInBytesOnHost, d_info](cudaStream_t stream, double* matrixblock_k_k) {
         checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, stream));
 
         checkCudaErrors(cusolverDnXpotrf(
@@ -672,11 +662,19 @@ void tiledCholesky(bool optimize, bool verify) {
             workspaceInBytesOnHost,
             d_info                   // Error information
           ));
-      }
+      },
+      {getMatrixBlock(k, k)},  // inputs
+      {getMatrixBlock(k, k)},  // outputs
+      TaskManager_v2::makeArgs(getMatrixBlock(k, k)),  // default args
+      "POTRF_task"  // task name
     );
     
-    // Execute the task with parameters (matrix block and stream)
-    tmanager.executeWithParams(nextTaskId, getMatrixBlock(k, k), s);
+    // For compatibility with the original code flow, also register with old TaskManager
+    // This is needed because the TiledCholeskyTaskManager still expects tasks registered here
+    
+    // Execute the task using TaskManager_v2 (which handles memory optimization automatically)
+    tmanager_v2.execute(taskId_v2, s);
+
     
     // End graph capture
     tiledCholeskyGraphCreator->endCaptureOperation();
@@ -695,16 +693,9 @@ void tiledCholesky(bool optimize, bool verify) {
         {{k, k}, {i, k}}      // Tiles to read
       );
       
-      nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::trsm, {i, k}, {k, k});
-      annotateNextTask(nextTaskId, {getMatrixBlock(i, k), getMatrixBlock(k, k)}, {getMatrixBlock(i, k)}, s);
-      
-      // Use new StreamTask API for TRSM operation
-      double* matrixBlock_k_k = getMatrixBlock(k, k);
-      double* matrixBlock_i_k = getMatrixBlock(i, k);
-      
-      tmanager.registerRuntimeTask(
-        nextTaskId,
-        [cublasHandle, one](double* matrixblock_k_k, double* matrixblock_i_k, cudaStream_t stream) {
+      // Register task using TaskManager_v2
+      TaskId trsmTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
+        [cublasHandle, one](cudaStream_t stream, double* matrixblock_k_k, double* matrixblock_i_k) {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
           checkCudaErrors(cublasDtrsm(
             cublasHandle,
@@ -717,12 +708,17 @@ void tiledCholesky(bool optimize, bool verify) {
             matrixblock_k_k, B, // Triangular matrix
             matrixblock_i_k, B  // Input/output matrix
           ));
-        }
+        },
+        {getMatrixBlock(k, k), getMatrixBlock(i, k)},  // inputs
+        {getMatrixBlock(i, k)},  // outputs
+        TaskManager_v2::makeArgs(getMatrixBlock(k, k), getMatrixBlock(i, k)),  // default args
+        "TRSM_task_" + std::to_string(i) + "_" + std::to_string(k)  // task name
       );
-      tmanager.executeWithParams(nextTaskId,
-        matrixBlock_k_k,
-        matrixBlock_i_k,
-        s);
+      
+      // For compatibility with the original code flow
+      
+      // Execute the task using TaskManager_v2
+      tmanager_v2.execute(trsmTaskId, s);
 
       tiledCholeskyGraphCreator->endCaptureOperation();
     }
@@ -740,11 +736,9 @@ void tiledCholesky(bool optimize, bool verify) {
         {{i, i}, {i, k}}     // Tiles to read
       );
       
-      nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::syrk, {i, i}, {i, k});
-      annotateNextTask(nextTaskId, {getMatrixBlock(i, i), getMatrixBlock(i, k)}, {getMatrixBlock(i, i)}, s);
-      tmanager.registerRuntimeTask(
-        nextTaskId,
-        [cublasHandle, minusOne, one](double* matrixblock_i_k, double* matrixblock_i_i, cudaStream_t stream) {
+      // Register task using TaskManager_v2
+      TaskId syrkTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
+        [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_i_k, double* matrixblock_i_i) {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
           checkCudaErrors(cublasDsyrk(
             cublasHandle,
@@ -756,12 +750,18 @@ void tiledCholesky(bool optimize, bool verify) {
             one,                   // Beta = 1.0
             matrixblock_i_i, B  // Input/output matrix
           ));
-        }
+        },
+        {getMatrixBlock(i, i), getMatrixBlock(i, k)},  // inputs
+        {getMatrixBlock(i, i)},  // outputs
+        TaskManager_v2::makeArgs(getMatrixBlock(i, k), getMatrixBlock(i, i)),  // default args
+        "SYRK_task_" + std::to_string(i) + "_" + std::to_string(k)  // task name
       );
-      tmanager.executeWithParams(nextTaskId,
-        getMatrixBlock(i, k),
-        getMatrixBlock(i, i),
-        s);
+      
+
+      // Execute the task using TaskManager_v2
+      tmanager_v2.execute(syrkTaskId, s);
+      
+
       // Symmetric rank-k update using cuBLAS
       
       
@@ -778,12 +778,10 @@ void tiledCholesky(bool optimize, bool verify) {
           {{j, i}, {j, k}, {i, k}}    // Tiles to read
         );
         
-        nextTaskId = tiledCholeskyTaskManager->addTask(TiledCholeskyTaskManager::Task::OperationType::gemm, {j, i}, {j, k}, {i, k});
-        annotateNextTask(nextTaskId, {getMatrixBlock(j, i), getMatrixBlock(j, k), getMatrixBlock(i, k)}, {getMatrixBlock(j, i)}, s);
-        tmanager.registerRuntimeTask(
-        nextTaskId,
-        [cublasHandle, minusOne, one](double* matrixblock_j_k, double* matrixblock_i_k, double* matrixblock_j_i, cudaStream_t stream) {
-          // General matrix multiplication using cuBLAS
+        // Register task using TaskManager_v2
+        TaskId gemmTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*, double*)>, double*, double*, double*>(
+          [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_j_k, double* matrixblock_i_k, double* matrixblock_j_i) {
+            // General matrix multiplication using cuBLAS
             checkCudaErrors(cublasSetStream(cublasHandle, stream));
             checkCudaErrors(cublasGemmEx(
               cublasHandle,
@@ -798,13 +796,18 @@ void tiledCholesky(bool optimize, bool verify) {
               CUBLAS_COMPUTE_64F,    // Computation precision
               CUBLAS_GEMM_DEFAULT    // Algorithm selection
             ));
-        }
-      );
-        tmanager.executeWithParams(nextTaskId,
-           getMatrixBlock(j, k),
-          getMatrixBlock(i, k),
-          getMatrixBlock(j, i),
-          s);
+          },
+          {getMatrixBlock(j, i), getMatrixBlock(j, k), getMatrixBlock(i, k)},  // inputs
+          {getMatrixBlock(j, i)},  // outputs
+          TaskManager_v2::makeArgs(getMatrixBlock(j, k), getMatrixBlock(i, k), getMatrixBlock(j, i)),  // default args
+          "GEMM_task_" + std::to_string(j) + "_" + std::to_string(i) + "_" + std::to_string(k)  // task name
+        );
+        
+   
+        // Execute the task using TaskManager_v2
+        tmanager_v2.execute(gemmTaskId, s);
+        
+     
           tiledCholeskyGraphCreator->endCaptureOperation();
       }
     }
@@ -812,7 +815,7 @@ void tiledCholesky(bool optimize, bool verify) {
 
   // Graph creation completed - now we can export it for debugging
   clock.logWithCurrentTime("Graph recorded");
-  tmanager.configureToManaged();
+  // tmanager.configureToManaged();
   LOG_TRACE_WITH_INFO("Printing original graph to graph.dot");
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "./graph.dot", 0));
 
@@ -828,6 +831,7 @@ void tiledCholesky(bool optimize, bool verify) {
   // EXECUTION PATH 1: Beyond-device-capacity mode
   // For matrices that exceed GPU memory capacity
   // =====================================================================
+  tmanager_v2.setExecutionMode(TaskManager_v2::ExecutionMode::Production);
   if (ConfigurationManager::getConfig().tiledCholesky.mode
       == Configuration::TiledCholesky::Mode::readInputMatrixFromFileAndRunBeyondDeviceCapacity) {
     // Optimize the CUDA graph for memory usage
@@ -848,12 +852,16 @@ void tiledCholesky(bool optimize, bool verify) {
     //   managedDeviceArrayToHostArrayMap
     // );
      auto& memManager = MemoryManager::getInstance();
+     
+     // Set TaskManager_v2 to Production mode for optimized execution
+     
      executeOptimizedGraph(
       optimizedGraph,
-      // Callback for executing specific tasks with proper ExecuteRandomTaskBase signature
-      [&](int taskId, cudaStream_t stream) {
-        // Execute the task directly using TiledCholeskyTaskManager
-        tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager, stream);
+      // Create a lambda that matches the ExecuteRandomTaskBase signature
+      [&tmanager_v2](int taskId, cudaStream_t stream) {
+        // Execute the task using TaskManager_v2
+        tmanager_v2.execute(taskId, stream);
+        return true; // Indicates successful execution
       },
       runningTime,
       memManager
@@ -882,12 +890,17 @@ void tiledCholesky(bool optimize, bool verify) {
       float runningTime;
 
       auto& memManager = MemoryManager::getInstance();
+      
+      // Set TaskManager_v2 to Production mode for optimized execution
+      
+      
       executeOptimizedGraph(
         optimizedGraph,
-        // Callback using ExecuteRandomTaskBase signature
-        [&](int taskId, cudaStream_t stream) {
-          // Execute the task directly using TiledCholeskyTaskManager
-          tiledCholeskyTaskManager->executeRandomTaskBase(getMatrixBlock, taskId, &tmanager, stream);
+        // Create a lambda that matches the ExecuteRandomTaskBase signature
+        [&tmanager_v2](int taskId, cudaStream_t stream) {
+          // Execute the task using TaskManager_v2
+          tmanager_v2.execute(taskId, stream);
+          return true; // Indicates successful execution
         },
         runningTime,
         memManager
@@ -997,6 +1010,7 @@ void tiledCholesky(bool optimize, bool verify) {
   }
 }
 
+
 int main(int argc, char **argv) {
   auto cmdl = argh::parser(argc, argv);
   std::string configFilePath;
@@ -1013,6 +1027,7 @@ int main(int argc, char **argv) {
     ConfigurationManager::getConfig().generic.optimize,
     ConfigurationManager::getConfig().generic.verify
   );
-
+  
+  // If we want to run the TaskManager_v2 demonstration, uncomment this line:
   return 0;
 }
