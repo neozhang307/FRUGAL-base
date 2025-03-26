@@ -270,44 +270,59 @@ void MemoryManager::offloadToStorage(
     int storageDeviceId, 
     bool useNvlink) 
 {
-  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", managedMemoryAddress);
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", managedMemoryAddress);
+  }
 
   ArrayId arrayId = getArrayId(managedMemoryAddress);
-  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, managedMemoryAddress);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, managedMemoryAddress);
+  }
+  
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     // Allocate in storage
     void* storagePtr = allocateInStorage(managedMemoryAddress, storageDeviceId, useNvlink);
-    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
+    }
     
     // Copy data from device to storage
     copyMemoryDeviceToStorage(managedMemoryAddress, storagePtr, cudaMemcpyDefault);
     
-    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
+    }
     
     // Update MemoryArrayInfo structure
-
-  
- 
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
-    fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
-            arrayId, storagePtr);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
+              arrayId, storagePtr);
+    }
     
     checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
     memoryArrayInfos[arrayId].deviceAddress=nullptr;
-    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",
+              memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+    }
   } else {
-    fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
-            managedMemoryAddress, arrayId);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
+              managedMemoryAddress, arrayId);
+    }
   }
   
   // Verify storageAddress was set
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
-            arrayId, memoryArrayInfos[arrayId].storageAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
+              arrayId, memoryArrayInfos[arrayId].storageAddress);
+    }
   }
-  
-  // Free original device memory
-  
 }
 
 // Configuration
@@ -344,6 +359,9 @@ void MemoryManager::ResetStorageConfig() {
 }
 
 void MemoryManager::releaseStoragePointers() {
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
   // Iterate through all memory array infos, free storage memory and set storageAddress to nullptr
   for (auto& info : memoryArrayInfos) {
     if(info.storageAddress != nullptr)
@@ -352,8 +370,12 @@ void MemoryManager::releaseStoragePointers() {
       void* storageAddress = info.storageAddress;
       // Set to nullptr first, then free the memory
       info.storageAddress = nullptr;
-      fprintf(stderr, "[DEBUG-STORAGE] Releasing storage pointer %p for managed address %p\n",
-              storageAddress, info.managedMemoryAddress);
+      
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-STORAGE] Releasing storage pointer %p for managed address %p\n",
+                storageAddress, info.managedMemoryAddress);
+      }
+      
       freeStorage(storageAddress);
     }
   }
