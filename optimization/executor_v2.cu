@@ -81,8 +81,10 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   MemoryManager &memManager,
   cudaStream_t stream
 ) {
-  // Debug output
-  LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Executing handleDataMovementNode for nodeId=%d", nodeId);
+  // Only output detailed logs if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    LOG_TRACE_WITH_INFO("[VERBOSE] Executing handleDataMovementNode for nodeId=%d", nodeId);
+  }
   
   // Begin capturing operations with dependencies
   creator->beginCaptureOperation(dependencies);
@@ -90,11 +92,13 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   // Get data movement details
   auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap.at(nodeId);
   
-  // Debug output
-  if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
-    LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Prefetching arrayId=%d to device", dataMovement.arrayId);
-  } else {
-    LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Offloading arrayId=%d from device", dataMovement.arrayId);
+  // Verbose output for data movement operations
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+      LOG_TRACE_WITH_INFO("[VERBOSE] Prefetching arrayId=%d to device", dataMovement.arrayId);
+    } else {
+      LOG_TRACE_WITH_INFO("[VERBOSE] Offloading arrayId=%d from device", dataMovement.arrayId);
+    }
   }
   
   // Perform the appropriate data movement operation
@@ -109,7 +113,9 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   auto newLeafNodes = creator->endCaptureOperation();
   checkCudaErrors(cudaPeekAtLastError());
   
-  LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] handleDataMovementNode completed successfully");
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    LOG_TRACE_WITH_INFO("[VERBOSE] handleDataMovementNode completed successfully");
+  }
   
   return newLeafNodes;
 }

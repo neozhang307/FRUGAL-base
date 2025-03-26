@@ -141,40 +141,53 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
 // Memory allocation and data transfer methods moved to memoryManager_v2.cu
 
 void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap) {
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Starting offloadAllManagedMemoryToStorage with external map, address count: %zu\n", 
-          managedMemoryAddresses.size());
+  // Only print verbose debug information if enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Starting offloadAllManagedMemoryToStorage with external map, address count: %zu\n", 
+            managedMemoryAddresses.size());
+  }
   
   // Ensure the storage map starts empty
   storageMap.clear();
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Cleared external storageMap\n");
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Cleared external storageMap\n");
+  }
   
   releaseStoragePointers();
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Called releaseStoragePointers() to reset memoryArrayInfos\n");
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Called releaseStoragePointers() to reset memoryArrayInfos\n");
+  }
   
   // Move each managed memory address to storage
   for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
     void* ptr = managedMemoryAddresses[i];
-    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Processing address %zu/%zu: %p\n", 
-            i+1, managedMemoryAddresses.size(), ptr);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Processing address %zu/%zu: %p\n", 
+              i+1, managedMemoryAddresses.size(), ptr);
+    }
     
     // Would automatically update MemoryArrayInfo
     void* storagePtr = offloadToStorage(ptr, storageConfig.storageDeviceId, 
                                        storageConfig.useNvlink, storageMap);
                                        
     // Verify both data structures have the same storage pointer
-    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] After offload: storageMap[%p] = %p\n", 
-            ptr, storageMap[ptr]);
-            
-    if (i < memoryArrayInfos.size()) {
-      fprintf(stderr, "[DEBUG-OFFLOAD-MAP] After offload: memoryArrayInfos[%zu].storageAddress = %p\n", 
-              i, memoryArrayInfos[i].storageAddress);
-              
-      if (memoryArrayInfos[i].storageAddress != storageMap[ptr]) {
-        fprintf(stderr, "[DEBUG-OFFLOAD-MAP] ERROR: Storage pointers don't match for address %p! (%p vs %p)\n", 
-                ptr, memoryArrayInfos[i].storageAddress, storageMap[ptr]);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD-MAP] After offload: storageMap[%p] = %p\n", 
+              ptr, storageMap[ptr]);
+      
+      if (i < memoryArrayInfos.size()) {
+        fprintf(stderr, "[DEBUG-OFFLOAD-MAP] After offload: memoryArrayInfos[%zu].storageAddress = %p\n", 
+                i, memoryArrayInfos[i].storageAddress);
+                
+        if (memoryArrayInfos[i].storageAddress != storageMap[ptr]) {
+          fprintf(stderr, "[DEBUG-OFFLOAD-MAP] ERROR: Storage pointers don't match for address %p! (%p vs %p)\n", 
+                  ptr, memoryArrayInfos[i].storageAddress, storageMap[ptr]);
+        }
+      } else {
+        fprintf(stderr, "[DEBUG-OFFLOAD-MAP] ERROR: No memoryArrayInfos entry for index %zu\n", i);
       }
-    } else {
-      fprintf(stderr, "[DEBUG-OFFLOAD-MAP] ERROR: No memoryArrayInfos entry for index %zu\n", i);
     }
   }
   
@@ -183,15 +196,20 @@ void MemoryManager::offloadAllManagedMemoryToStorage(std::map<void*, void*>& sto
   // fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Updated internal managedDeviceArrayToHostArrayMap from external map\n");
   
   // Print a summary of both data structures
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - storageMap entries: %zu\n", storageMap.size());
-  // fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
-          // managedDeviceArrayToHostArrayMap.size());
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - memoryArrayInfos entries: %zu\n", memoryArrayInfos.size());
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - storageMap entries: %zu\n", storageMap.size());
+    // fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - managedDeviceArrayToHostArrayMap entries: %zu\n", 
+            // managedDeviceArrayToHostArrayMap.size());
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Summary - memoryArrayInfos entries: %zu\n", memoryArrayInfos.size());
+  }
   
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
   checkCudaErrors(cudaDeviceSynchronize());
-  fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Completed offloadAllManagedMemoryToStorage with external map\n");
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-MAP] Completed offloadAllManagedMemoryToStorage with external map\n");
+  }
 }
 
 void MemoryManager::offloadAllManagedMemoryToStorage(

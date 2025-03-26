@@ -34,3 +34,8 @@ clean:
 .PHONY: run
 run:
 	./build/playground/helloWorld
+
+.PHONY: run-verbose
+run-verbose:
+	cp config_verbose.json config.json
+	./build/userApplications/tiledCholesky

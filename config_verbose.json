@@ -3,7 +3,7 @@
     "mainDeviceId": 0,
     "measurePeakMemoryUsage": true,
     "enableDebugOutput": false,
-    "enableVerboseOutput": false,
+    "enableVerboseOutput": true,
     "storageDeviceId": 2,
     "useNvlink": false
   },

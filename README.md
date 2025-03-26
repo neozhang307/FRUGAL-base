@@ -45,10 +45,12 @@ The project uses a flexible JSON-based configuration system that allows controll
 #### Execution Settings
 ```json
 "execution": {
-  "useNvlink": false,           // Use NVLink for multi-GPU operations
+  "useNvlink": false,            // Use NVLink for multi-GPU operations
   "measurePeakMemoryUsage": false,  // Enable memory usage profiling
-  "mainDeviceId": 1,            // Main GPU device ID
-  "storageDeviceId": 2          // Storage GPU device ID for multi-GPU
+  "enableDebugOutput": false,    // Enable debug output (dot files, etc.)
+  "enableVerboseOutput": false,  // Enable detailed operation logs
+  "mainDeviceId": 1,             // Main GPU device ID
+  "storageDeviceId": 2           // Storage GPU device ID for multi-GPU
 }
 ```
 

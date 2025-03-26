@@ -11,7 +11,8 @@ This guide explains how to use the TaskManager_v2 and memory optimization compon
 5. [Execution Modes](#execution-modes)
 6. [Memory Optimization](#memory-optimization)
 7. [Advanced Usage Patterns](#advanced-usage-patterns)
-8. [Best Practices](#best-practices)
+8. [Configuration Options](#configuration-options)
+9. [Best Practices](#best-practices)
 
 ## Introduction
 
@@ -194,3 +195,35 @@ MemoryManager::getInstance().prefetchAllDataToDevice();
    ```cpp
    checkCudaErrors(cudaDeviceSynchronize());
    ```
+
+## Configuration Options
+
+The framework provides several configuration options through the JSON configuration system:
+
+### Debug and Verbose Logging
+
+Two options control the level of debug output:
+
+```json
+"execution": {
+  "enableDebugOutput": false,  // Controls output of graph DOT files and optimization details
+  "enableVerboseOutput": false // Controls detailed operation logs for memory/task operations
+}
+```
+
+To enable verbose output, run with a configuration file that has `enableVerboseOutput` set to `true`:
+
+```bash
+# Use the provided verbose configuration
+make run-verbose
+
+# Or create your own configuration file
+./build/userApplications/tiledCholesky --configFile=myVerboseConfig.json
+```
+
+When verbose output is enabled:
+- Memory operations will print detailed logs about each prefetch/offload
+- Task execution details will be displayed
+- Execution progress will be more thoroughly reported
+
+This is useful for debugging memory optimization issues and understanding the execution flow.
