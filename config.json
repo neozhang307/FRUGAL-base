@@ -22,7 +22,7 @@
   },
   "optimization": {
     "acceptableRunningTimeFactor": 0,
-    "loadExistingPlan": false,
+    "loadExistingPlan": true,
     "maxPeakMemoryUsageInMiB":0,
     "mergeConcurrentCudaGraphNodes": true,
     "minManagedArraySize": 0,

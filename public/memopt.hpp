@@ -6,6 +6,7 @@
 #include "../profiling/peakMemoryUsageProfiler.hpp"
 #include "../utilities/configurationManager.hpp"
 #include "../utilities/cudaGraphUtilities.hpp"
+#include "../utilities/cudaGraphConstructor.hpp"
 #include "../utilities/cudaUtilities.hpp"
 #include "../utilities/logger.hpp"
 #include "../utilities/utilities.hpp"
