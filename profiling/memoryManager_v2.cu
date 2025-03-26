@@ -19,9 +19,12 @@ size_t MemoryManager::getSize(void* addr) const {
       return memoryArrayInfos[arrayId].size;
     }
   }
-  for(auto it:managedMemoryAddressToIndexMap)
-  {
-    fprintf(stderr, "[GET-SIZE-ERR]  %p at %d\n", it.first,it.second);
+  // Only print debug information if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    for(auto it:managedMemoryAddressToIndexMap)
+    {
+      fprintf(stderr, "[GET-SIZE-ERR]  %p at %d\n", it.first,it.second);
+    }
   }
   // // Fall back to the old method if not found in memoryArrayInfos
   // auto sizeIt = managedMemoryAddressToSizeMap.find(addr);
@@ -90,9 +93,13 @@ std::vector<ArrayId> MemoryManager::getArrayIds() const {
 void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
   void* newPtr = nullptr;
   size_t size = getSize(ptr);
-  fprintf(stderr, "[DEBUG-OFFLOAD] location 0 address %p device %p for storage %p with size %ld\n", 
-                      memoryArrayInfos[0].managedMemoryAddress,memoryArrayInfos[0].deviceAddress,
-                     memoryArrayInfos[0].storageAddress,memoryArrayInfos[0].size);
+  
+  // Only print debug information if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] location 0 address %p device %p for storage %p with size %ld\n", 
+                    memoryArrayInfos[0].managedMemoryAddress,memoryArrayInfos[0].deviceAddress,
+                    memoryArrayInfos[0].storageAddress,memoryArrayInfos[0].size);
+  }
   
   if (useNvlink) {
     // Allocate on secondary GPU

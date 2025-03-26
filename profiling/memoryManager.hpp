@@ -138,30 +138,44 @@ public:
     
     // First try to find the address in memoryArrayInfos (preferred method)
     ArrayId arrayId = instance.findArrayIdByAddress(addr);
+    
+    // Only print debug information if verbose output is enabled
+    bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+    
     if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
       void* deviceAddr = memoryArrayInfos[arrayId].deviceAddress;
       if (deviceAddr != nullptr) {
-        fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d].deviceAddress = %p\n", 
-                addr, arrayId, deviceAddr);
+        if (verbose) {
+          fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d].deviceAddress = %p\n", 
+                  addr, arrayId, deviceAddr);
+        }
         return static_cast<T *>(deviceAddr);
       } else {
-        fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d] but deviceAddress is nullptr\n", 
-                addr, arrayId);
+        if (verbose) {
+          fprintf(stderr, "[DEBUG-GETADDR] Found address %p in memoryArrayInfos[%d] but deviceAddress is nullptr\n", 
+                  addr, arrayId);
+        }
       }
     } else {
-      fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in memoryArrayInfos (arrayId = %d)\n", 
-              addr, arrayId);
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in memoryArrayInfos (arrayId = %d)\n", 
+                addr, arrayId);
+      }
     }
     
     // // Fall back to the legacy map if not found in memoryArrayInfos
     // auto& mapping = instance.getCurrentAddressMap();
     // auto it = mapping.find(addr);
     // if (it != mapping.end()) {
-    //   fprintf(stderr, "[DEBUG-GETADDR] Found address %p in legacy map => %p\n", 
-    //           addr, it->second);
+    //   if (verbose) {
+    //     fprintf(stderr, "[DEBUG-GETADDR] Found address %p in legacy map => %p\n", 
+    //             addr, it->second);
+    //   }
     //   return static_cast<T *>(it->second);
     // } else {
-    //   fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in legacy map, returning original\n", addr);
+    //   if (verbose) {
+    //     fprintf(stderr, "[DEBUG-GETADDR] Address %p not found in legacy map, returning original\n", addr);
+    //   }
     // }
     
     return oldAddress;
