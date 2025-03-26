@@ -109,7 +109,10 @@ void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useN
     // Allocate on host memory
     checkCudaErrors(cudaMallocHost(&newPtr, size));
   }
-  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p with size %ld\n", newPtr, ptr,size);
+  // Only print debug information if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p with size %ld\n", newPtr, ptr,size);
+  }
 
   return newPtr;
 }
@@ -117,13 +120,19 @@ void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useN
 void MemoryManager::copyMemoryDeviceToStorage(void* deviceAddress, void* storageAddress, cudaMemcpyKind memcpyKind) {
   size_t size = getSize(deviceAddress);
   if (size == 0) {
-    fprintf(stderr, "[DEBUG-COPY] Warning: Size of device address %p is 0, no memory will be copied\n", deviceAddress);
+    // Only print debug information if verbose output is enabled
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      fprintf(stderr, "[DEBUG-COPY] Warning: Size of device address %p is 0, no memory will be copied\n", deviceAddress);
+    }
     return;
   }
   
   void* actualDeviceAddress = getAddress(deviceAddress);
-  fprintf(stderr, "[DEBUG-COPY] Copying %lu bytes from device %p to storage %p (actual device address: %p)\n", 
-          size, deviceAddress, storageAddress, actualDeviceAddress);
+  // Only print debug information if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[DEBUG-COPY] Copying %lu bytes from device %p to storage %p (actual device address: %p)\n", 
+            size, deviceAddress, storageAddress, actualDeviceAddress);
+  }
           
   checkCudaErrors(cudaMemcpy(storageAddress, actualDeviceAddress, size, memcpyKind));
 }
@@ -141,37 +150,50 @@ void MemoryManager::freeStorage(void* storageAddress) {
 }
 
 bool MemoryManager::freeManagedMemory(void* managedMemoryAddress) {
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
   if (managedMemoryAddress == nullptr) {
-    fprintf(stderr, "[DEBUG-FREE] Cannot free nullptr\n");
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-FREE] Cannot free nullptr\n");
+    }
     return false;
   }
   
   // Find the array ID for this pointer
   ArrayId arrayId = findArrayIdByAddress(managedMemoryAddress);
   if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
-    fprintf(stderr, "[DEBUG-FREE] Address %p not found in memoryArrayInfos (arrayId = %d)\n", 
-            managedMemoryAddress, arrayId);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-FREE] Address %p not found in memoryArrayInfos (arrayId = %d)\n", 
+              managedMemoryAddress, arrayId);
+    }
     return false;
   }
   
   // Free device memory if it exists
   if (memoryArrayInfos[arrayId].deviceAddress != nullptr) {
-    fprintf(stderr, "[DEBUG-FREE] Freeing device memory %p for address %p\n", 
-            memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-FREE] Freeing device memory %p for address %p\n", 
+              memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+    }
     checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
     memoryArrayInfos[arrayId].deviceAddress = nullptr;
   }
   
   // Free storage memory if it exists
   if (memoryArrayInfos[arrayId].storageAddress != nullptr) {
-    fprintf(stderr, "[DEBUG-FREE] Freeing storage memory %p for address %p\n", 
-            memoryArrayInfos[arrayId].storageAddress, managedMemoryAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-FREE] Freeing storage memory %p for address %p\n", 
+              memoryArrayInfos[arrayId].storageAddress, managedMemoryAddress);
+    }
     freeStorage(memoryArrayInfos[arrayId].storageAddress);
     memoryArrayInfos[arrayId].storageAddress = nullptr;
   }
   
-  fprintf(stderr, "[DEBUG-FREE] Successfully freed all memory for address %p (arrayId = %d)\n", 
-          managedMemoryAddress, arrayId);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-FREE] Successfully freed all memory for address %p (arrayId = %d)\n", 
+            managedMemoryAddress, arrayId);
+  }
   return true;
 }
 
@@ -181,42 +203,64 @@ void* MemoryManager::offloadToStorage(
     bool useNvlink, 
     std::map<void*, void*>& storageMap) 
 {
-  fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", managedMemoryAddress);
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", managedMemoryAddress);
+  }
   
   // Allocate in storage
   void* storagePtr = allocateInStorage(managedMemoryAddress, storageDeviceId, useNvlink);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
+  }
   
   // Copy data from device to storage
   copyMemoryDeviceToStorage(managedMemoryAddress, storagePtr, cudaMemcpyDefault);
-  fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
+  }
   
   // Update mapping
   storageMap[managedMemoryAddress] = storagePtr;
-  fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", managedMemoryAddress, storagePtr);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", managedMemoryAddress, storagePtr);
+  }
   
   // Update MemoryArrayInfo structure
   ArrayId arrayId = getArrayId(managedMemoryAddress);
-  fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, managedMemoryAddress);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, managedMemoryAddress);
+  }
   
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
-    fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
-            arrayId, storagePtr);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
+              arrayId, storagePtr);
+    }
   } else {
-    fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
-            managedMemoryAddress, arrayId);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
+              managedMemoryAddress, arrayId);
+    }
   }
   
   // Verify storageAddress was set
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
-            arrayId, memoryArrayInfos[arrayId].storageAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
+              arrayId, memoryArrayInfos[arrayId].storageAddress);
+    }
   }
   
   // Free original device memory
   checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
-  fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p\n", managedMemoryAddress);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n", 
+            memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+  }
   
   return storagePtr;
 }
@@ -433,33 +477,49 @@ void MemoryManager::offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t s
 
 // Memory storage operations
 void MemoryManager::offloadAllManagedMemoryToStorage() {
-  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Starting offloadAllManagedMemoryToStorage, address count: %zu\n", 
-          managedMemoryAddresses.size());
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Starting offloadAllManagedMemoryToStorage, address count: %zu\n", 
+            managedMemoryAddresses.size());
+  }
   
   // Ensure the storage map starts empty
   // managedDeviceArrayToHostArrayMap.clear();
-  // fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Cleared managedDeviceArrayToHostArrayMap\n");
+  // if (verbose) {
+  //   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Cleared managedDeviceArrayToHostArrayMap\n");
+  // }
   
   releaseStoragePointers();
-  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Called releaseStoragePointers() to reset memoryArrayInfos\n");
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Called releaseStoragePointers() to reset memoryArrayInfos\n");
+  }
   
   // Move each managed memory address to storage
   for (size_t i = 0; i < managedMemoryAddresses.size(); i++) {
     void* ptr = memoryArrayInfos[i].managedMemoryAddress;//managedMemoryAddresses[i];
-    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
-            i+1, managedMemoryAddresses.size(), ptr);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Processing address %zu/%zu: %p\n", 
+              i+1, managedMemoryAddresses.size(), ptr);
+    }
     
     // device -> storage 
     offloadToStorage(ptr, storageConfig.storageDeviceId, 
-                                       storageConfig.useNvlink);                                   
+                     storageConfig.useNvlink);                                   
   }
-  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
-          memoryArrayInfos.size());
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Summary - memoryArrayInfos entries: %zu\n", 
+            memoryArrayInfos.size());
+  }
           
   // Switch back to main GPU
   checkCudaErrors(cudaSetDevice(storageConfig.mainDeviceId));
   checkCudaErrors(cudaDeviceSynchronize());
-  fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Completed offloadAllManagedMemoryToStorage\n");
+  
+  if (verbose) {
+    fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Completed offloadAllManagedMemoryToStorage\n");
+  }
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorage() {
