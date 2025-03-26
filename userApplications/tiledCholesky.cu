@@ -168,38 +168,99 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
+/**
+ * TiledCholeskyGraphCreator Class
+ * 
+ * This class manages the capture of CUDA operations into a graph with proper tile dependencies.
+ * It tracks which tiles have been modified by which graph nodes, and ensures correct execution ordering.
+ * 
+ * Key responsibilities:
+ * 1. Managing CUDA stream capture to build the dependency graph
+ * 2. Tracking data dependencies between matrix tile operations
+ * 3. Building a directed acyclic graph (DAG) of operations
+ */
 class TiledCholeskyGraphCreator {
  public:
+  /**
+   * Constructor
+   * 
+   * @param stream CUDA stream used for operation capture
+   * @param graph CUDA graph that will be built incrementally
+   */
   TiledCholeskyGraphCreator(cudaStream_t stream, cudaGraph_t graph) : stream(stream), graph(graph) {
     this->lastModifiedTile = {-1, -1};
   }
 
+  /**
+   * Begin capturing a new operation on matrix tiles
+   * 
+   * @param tileToWrite The tile that will be modified by this operation
+   * @param tilesToRead The tiles that will be read by this operation (dependencies)
+   * 
+   * This method identifies all dependencies for the operation and begins CUDA stream capture.
+   */
   void beginCaptureOperation(MatrixTile tileToWrite, std::initializer_list<MatrixTile> tilesToRead) {
+    // Combine read and write tiles to calculate all dependencies
     auto tiles = std::vector<MatrixTile>(tilesToRead);
     tiles.push_back(tileToWrite);
     auto dependencies = this->getDependencies(tiles);
 
+    // Store state for later use in endCaptureOperation
     this->lastModifiedTile = tileToWrite;
     this->lastDependencies = dependencies;
 
+    // Begin capturing operations to the CUDA graph with the determined dependencies
     checkCudaErrors(cudaStreamBeginCaptureToGraph(this->stream, this->graph, dependencies.data(), nullptr, dependencies.size(), cudaStreamCaptureModeGlobal));
   }
 
+  /**
+   * End the current operation capture and update dependency tracking
+   * 
+   * This method finalizes the current operation capture, identifies the latest node
+   * that modifies the target tile, and updates the dependency map.
+   */
   void endCaptureOperation() {
+    // Verify that we're in a valid capture state
     assert(this->lastModifiedTile.first != -1 && this->lastModifiedTile.second != -1);
+    
+    // End the capture and update our graph
     checkCudaErrors(cudaStreamEndCapture(this->stream, &this->graph));
+    
+    // Record which graph node last modified this tile (for future dependencies)
     this->tileLastModifiedByMap[this->lastModifiedTile] = this->getTailOfLastCapturedNodeChain();
+    
+    // Reset the last modified tile to indicate we're no longer in capture
     this->lastModifiedTile = {-1, -1};
   };
 
  private:
+  // Maps each matrix tile to the last graph node that modified it
   std::map<MatrixTile, cudaGraphNode_t> tileLastModifiedByMap;
+  
+  // Tracks which graph nodes have been visited during chain traversal
   std::map<cudaGraphNode_t, bool> visited;
+  
+  // CUDA stream used for operation capture
   cudaStream_t stream;
+  
+  // The CUDA graph being built
   cudaGraph_t graph;
+  
+  // The tile currently being modified during active capture
   MatrixTile lastModifiedTile;
+  
+  // Dependencies of the current operation
   std::vector<cudaGraphNode_t> lastDependencies;
 
+  /**
+   * Get all graph node dependencies for a set of tiles
+   * 
+   * @param tiles The tiles to check for dependencies
+   * @return Vector of graph nodes that last modified any of the tiles
+   * 
+   * This builds a list of dependencies by finding the last nodes that 
+   * modified each tile in the input list.
+   */
   std::vector<cudaGraphNode_t> getDependencies(std::vector<MatrixTile> tiles) {
     std::vector<cudaGraphNode_t> dependencies;
     for (auto tile : tiles) {
@@ -209,19 +270,32 @@ class TiledCholeskyGraphCreator {
       }
     }
 
+    // Remove duplicate dependencies
     auto dedupedEnd = std::unique(dependencies.begin(), dependencies.end());
     dependencies.resize(std::distance(dependencies.begin(), dedupedEnd));
     return dependencies;
   }
 
+  /**
+   * Find the tail node of the most recently captured operation chain
+   * 
+   * @return The last node in the captured chain
+   * 
+   * This method has two cases:
+   * 1. First capture: Find the sink node with no outgoing edges
+   * 2. Subsequent captures: Find the unvisited node chain stemming from the dependencies
+   */
   cudaGraphNode_t getTailOfLastCapturedNodeChain() {
+    // Case 1: First capture (no dependencies)
     if (lastDependencies.size() == 0) {
+      // Find the last node in the graph (the one with no outgoing edges)
       size_t numEdges;
       checkCudaErrors(cudaGraphGetEdges(this->graph, nullptr, nullptr, &numEdges));
       auto from = std::make_unique<cudaGraphNode_t[]>(numEdges);
       auto to = std::make_unique<cudaGraphNode_t[]>(numEdges);
       checkCudaErrors(cudaGraphGetEdges(this->graph, from.get(), to.get(), &numEdges));
 
+      // Identify nodes with no outgoing edges (sink nodes)
       std::map<cudaGraphNode_t, bool> hasOutGoingEdge;
       std::set<cudaGraphNode_t> noOutGoingEdgeNodes;
       for (int i = 0; i < numEdges; i++) {
@@ -231,19 +305,25 @@ class TiledCholeskyGraphCreator {
           noOutGoingEdgeNodes.insert(to[i]);
       }
 
+      // There should be exactly one sink node
       assert(noOutGoingEdgeNodes.size() == 1);
 
       return *noOutGoingEdgeNodes.begin();
-    } else {
+    } 
+    // Case 2: Subsequent captures (with dependencies)
+    else {
+      // Get the first dependency node
       auto nodeBeforeChain = lastDependencies[0];
       size_t numDependentNodes;
+      
+      // Find nodes that depend on our dependency
       checkCudaErrors(cudaGraphNodeGetDependentNodes(nodeBeforeChain, nullptr, &numDependentNodes));
-
       assert(numDependentNodes > 0);
 
       auto dependentNodes = std::make_unique<cudaGraphNode_t[]>(numDependentNodes);
       checkCudaErrors(cudaGraphNodeGetDependentNodes(nodeBeforeChain, dependentNodes.get(), &numDependentNodes));
 
+      // Find the first unvisited dependent node (start of our new chain)
       cudaGraphNode_t chainBeginningNode;
       for (int i = 0; i < numDependentNodes; i++) {
         if (!visited[dependentNodes[i]]) {
@@ -252,12 +332,14 @@ class TiledCholeskyGraphCreator {
         }
       }
 
+      // Follow the chain to the end node (the one with no dependencies)
       auto u = chainBeginningNode;
       while (true) {
         visited[u] = true;
         checkCudaErrors(cudaGraphNodeGetDependentNodes(u, nullptr, &numDependentNodes));
         if (numDependentNodes == 0) break;
 
+        // Each node in our chain should have exactly one dependent
         assert(numDependentNodes == 1);
 
         cudaGraphNode_t v;
