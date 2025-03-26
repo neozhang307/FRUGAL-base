@@ -799,7 +799,7 @@ void tiledCholesky(bool optimize, bool verify) {
   }
 
   clock.logWithCurrentTime("Synchronization done");
-
+  fmt::print("[MEMORY-INFO] Total managed memory size: {:.2f} MB\n", totalManagedMemoryMB);
   // SECTION 8: RESULT VERIFICATION
   // Optionally verify the correctness of the Cholesky factorization
   if (verify) {
