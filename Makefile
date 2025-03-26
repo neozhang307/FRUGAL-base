@@ -39,3 +39,8 @@ run:
 run-verbose:
 	cp config_verbose.json config.json
 	./build/userApplications/tiledCholesky
+	
+.PHONY: run-plain
+run-plain:
+	cp config_plain.json config.json
+	./build/userApplications/tiledCholesky
