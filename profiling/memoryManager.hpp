@@ -348,6 +348,16 @@ public:
   std::vector<ArrayId> getArrayIds() const;
   
   /**
+   * @brief Calculate the total size of all registered memory in MB
+   * 
+   * This function sums the sizes of all memory arrays that have been
+   * registered with the MemoryManager and returns the result in megabytes.
+   *
+   * @return Total size of all registered memory in MB
+   */
+  double GetMemoryManagedSizeInMB() const;
+  
+  /**
    * @brief Get the storage pointer for a given managed memory address
    * 
    * This function retrieves the storage address associated with a managed memory address

@@ -21,6 +21,18 @@ const std::map<void*, ArrayId>& MemoryManager::getAddressToIndexMap() const {
 //   return managedMemoryAddressToSizeMap; 
 // }
 
+double MemoryManager::GetMemoryManagedSizeInMB() const {
+  size_t totalSizeInBytes = 0;
+  
+  // Sum the sizes of all memory arrays in the memoryArrayInfos vector
+  for (const auto& info : memoryArrayInfos) {
+    totalSizeInBytes += info.size;
+  }
+  
+  // Convert bytes to MB (1MB = 1,048,576 bytes)
+  return static_cast<double>(totalSizeInBytes) / (1024.0 * 1024.0);
+}
+
 const std::set<void*>& MemoryManager::getApplicationInputs() const { 
   return applicationInputs; 
 }
