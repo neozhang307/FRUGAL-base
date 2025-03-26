@@ -634,40 +634,52 @@ ArrayId MemoryManager::findArrayIdByAddress(void* addr) const {
 }
 
 void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
+  
   // Handle nullptr case
   if (managedMemAddress == nullptr) {
-    fprintf(stderr, "[DEBUG] getStoragePtr: nullptr input\n");
+    if (verbose) {
+      fprintf(stderr, "[DEBUG] getStoragePtr: nullptr input\n");
+    }
     return nullptr;
   }
 
-  
-  // Then try to find the array ID using the new method
+  // Try to find the array ID using the new method
   ArrayId arrayId = findArrayIdByAddress(managedMemAddress);
   
   // If found in memoryArrayInfos, return its storage address
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     void* storageAddr = memoryArrayInfos[arrayId].storageAddress;
     if (storageAddr == nullptr) {
-      fprintf(stderr, "[DEBUG] getStoragePtr: Found arrayId %d for address %p but storageAddress is nullptr\n", 
-              arrayId, managedMemAddress);
+      if (verbose) {
+        fprintf(stderr, "[DEBUG] getStoragePtr: Found arrayId %d for address %p but storageAddress is nullptr\n", 
+                arrayId, managedMemAddress);
+      }
       
       // Special case - legacy map is empty but we found the array ID
       // Check if applicationInputs has this address, which would indicate it's a valid array
       // This helps recover after cleanStorage() clears the addresses
       // if (managedDeviceArrayToHostArrayMap.empty() && 
       //     (applicationInputs.count(managedMemAddress) > 0 || applicationOutputs.count(managedMemAddress) > 0)) {
-      //   fprintf(stderr, "[DEBUG] getStoragePtr: Address %p is a known application input/output but storage was cleared (cleanStorage ran)\n", 
-      //           managedMemAddress);
+      //   if (verbose) {
+      //     fprintf(stderr, "[DEBUG] getStoragePtr: Address %p is a known application input/output but storage was cleared (cleanStorage ran)\n", 
+      //             managedMemAddress);
+      //   }
       // }
     } else {
       // Success case
-      fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p for managed address %p using arrayId %d\n", 
-              storageAddr, managedMemAddress, arrayId);
+      if (verbose) {
+        fprintf(stderr, "[DEBUG] getStoragePtr: Successfully found storage address %p for managed address %p using arrayId %d\n", 
+                storageAddr, managedMemAddress, arrayId);
+      }
     }
     return storageAddr;
   } else {
-    fprintf(stderr, "[DEBUG] getStoragePtr: findArrayIdByAddress failed with arrayId %d for address %p\n", 
-            arrayId, managedMemAddress);
+    if (verbose) {
+      fprintf(stderr, "[DEBUG] getStoragePtr: findArrayIdByAddress failed with arrayId %d for address %p\n", 
+              arrayId, managedMemAddress);
+    }
   }
   
   // Fall back to the old index map method
@@ -696,12 +708,16 @@ void* MemoryManager::getStoragePtr(void* managedMemAddress) const {
   // This ensures backward compatibility and protects against array index changes
   // auto hostIt = managedDeviceArrayToHostArrayMap.find(managedMemAddress);
   // if (hostIt != managedDeviceArrayToHostArrayMap.end()) {
-  //   fprintf(stderr, "[DEBUG] getStoragePtr: Found in legacy hostArrayMap: %p -> %p\n", 
-  //           managedMemAddress, hostIt->second);
+  //   if (verbose) {
+  //     fprintf(stderr, "[DEBUG] getStoragePtr: Found in legacy hostArrayMap: %p -> %p\n", 
+  //             managedMemAddress, hostIt->second);
+  //   }
   //   return hostIt->second;
   // }  
   // Not found in any map
-  fprintf(stderr, "[DEBUG] getStoragePtr: CRITICAL! Address %p not found in any map!\n", managedMemAddress);
+  if (verbose) {
+    fprintf(stderr, "[DEBUG] getStoragePtr: CRITICAL! Address %p not found in any map!\n", managedMemAddress);
+  }
   return nullptr;
 }
 
