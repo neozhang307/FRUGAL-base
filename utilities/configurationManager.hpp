@@ -151,6 +151,10 @@ class ConfigurationManager {
 
       validateConfiguration();
 
+      // Print configuration status for debugging
+      std::cout << "Configuration loaded from " << fileName << std::endl;
+      std::cout << "enableVerboseOutput: " << (configuration.execution.enableVerboseOutput ? "true" : "false") << std::endl;
+      
       initialized = true;
     } catch (const std::exception& e) {
       std::cerr << "Failed to load configuration from " << fileName << std::endl;

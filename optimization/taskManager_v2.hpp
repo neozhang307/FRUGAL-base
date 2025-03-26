@@ -156,7 +156,7 @@ private:
     TaskId generateTaskId() {
         TaskId id = nextTaskId.fetch_add(1);
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Generating new task ID: " << id << std::endl;
         }
         
@@ -167,7 +167,7 @@ private:
             return generateTaskId(); // Recursively try again
         }
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Successfully allocated task ID: " << id << std::endl;
         }
         
@@ -179,7 +179,8 @@ private:
      * @param ptrs Vector of pointers to log
      */
     void logPointers(const std::vector<void*>& ptrs) {
-        if (debugMode) {
+        // Only log detailed pointer information if debugMode is on AND verbose output is enabled
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Task uses " << ptrs.size() << " pointers (memory registration handled externally)" << std::endl;
             for (void* ptr : ptrs) {
                 if (ptr) {
@@ -223,7 +224,7 @@ public:
         : memoryManager(MemoryManager::getInstance()), debugMode(enableDebug) {
         // Reset the static task ID to ensure a clean start
         nextTaskId = 1;
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "TaskManager_v2 initialized" << std::endl;
         }
     }
@@ -255,7 +256,7 @@ public:
     ) {
         TaskId taskId = generateTaskId();
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Registering task with auto-generated ID: " << taskId << std::endl;
         }
         
@@ -276,7 +277,7 @@ public:
         std::vector<void*> argPointers = extractPointers(defaultArgs);
         logPointers(argPointers);
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Note: Memory registration is assumed to be handled externally" << std::endl;
         }
         
@@ -324,7 +325,7 @@ public:
             throw std::invalid_argument("Task ID already in use");
         }
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Registering task with provided ID: " << taskId << std::endl;
         }
         
@@ -345,7 +346,7 @@ public:
         std::vector<void*> argPointers = extractPointers(defaultArgs);
         logPointers(argPointers);
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Note: Memory registration is assumed to be handled externally" << std::endl;
         }
         
@@ -396,7 +397,7 @@ public:
         // Update the default arguments
         typedTask->getDefaultArgs() = std::move(args);
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Set default parameters for task ID: " << taskId << std::endl;
         }
         
@@ -419,7 +420,7 @@ public:
             return false;
         }
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Executing task ID: " << taskId << 
                       (currentMode == ExecutionMode::Production ? " in Production mode" : " in Basic mode") << 
                       std::endl;
@@ -493,7 +494,7 @@ public:
             return false;
         }
         
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Executing task ID: " << taskId << " with custom parameters" << std::endl;
         }
         
@@ -563,7 +564,7 @@ public:
     void clearTasks() {
         tasks.clear();
         usedTaskIds.clear();
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Cleared all tasks" << std::endl;
         }
     }
@@ -598,7 +599,7 @@ public:
      */
     void setExecutionMode(ExecutionMode mode) {
         currentMode = mode;
-        if (debugMode) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Execution mode set to: " << 
                 (mode == ExecutionMode::Production ? "Production" : "Basic") << std::endl;
         }
