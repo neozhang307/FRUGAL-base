@@ -89,10 +89,11 @@ void generateRandomSymmetricPositiveDefiniteMatrix(double *h_A, const size_t n) 
 bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_tiles, const size_t n, const size_t b) {
   const size_t t = n / b;
 
-  std::vector<std::unique_ptr<double[]>> h_tiles;
+  // Use pinned memory for h_tiles for faster data transfer
+  std::vector<double*> h_tiles(t * t, nullptr);
   for (int i = 0; i < t * t; i++) {
-    h_tiles.push_back(std::move(std::make_unique<double[]>(b * b)));
-    checkCudaErrors(cudaMemcpy(h_tiles[i].get(), MemoryManager::getInstance().getAddress(d_tiles[i]), B * B * sizeof(double), cudaMemcpyDefault));
+    checkCudaErrors(cudaMallocHost(&h_tiles[i], b * b * sizeof(double)));
+    checkCudaErrors(cudaMemcpy(h_tiles[i], MemoryManager::getInstance().getAddress(d_tiles[i]), B * B * sizeof(double), cudaMemcpyDefault));
     checkCudaErrors(cudaDeviceSynchronize());
   }
 
@@ -117,8 +118,11 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
 
   const size_t rowLength = min((size_t)1024, n);
 
-  auto firstRow = std::make_unique<double[]>(rowLength);
-  memset(firstRow.get(), 0, rowLength * sizeof(double));
+  // Use pinned memory for firstRow as well
+  double* firstRow = nullptr;
+  checkCudaErrors(cudaMallocHost(&firstRow, rowLength * sizeof(double)));
+  memset(firstRow, 0, rowLength * sizeof(double));
+  
   for (int j = 0; j < rowLength; j++) {
     for (int k = 0; k < n; k++) {
       firstRow[j] += getLEntry(rowIndex, k) * getLEntry(j, k);
@@ -131,6 +135,12 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
   }
 
   fmt::print("error = {:.6f}\n", error);
+  
+  // Free pinned memory for h_tiles and firstRow
+  for (int i = 0; i < t * t; i++) {
+    checkCudaErrors(cudaFreeHost(h_tiles[i]));
+  }
+  checkCudaErrors(cudaFreeHost(firstRow));
 
   return error <= 1e-6;
 }
@@ -317,9 +327,12 @@ void tiledCholesky(bool optimize, bool verify) {
   const size_t tileSize = B * B * sizeof(double);
 
   // SECTION 1: HOST DATA INITIALIZATION
-  // Allocate and initialize the input matrix - either generated or loaded from file
+  // Allocate and initialize the input matrix using pinned memory for faster host-device transfers
   clock.logWithCurrentTime("Initialzing host data");
-  auto h_originalMatrix = std::make_unique<double[]>(N * N);  // Column-major
+  
+  // Use pinned memory (cudaMallocHost) instead of pageable memory for better transfer performance
+  double* h_originalMatrix = nullptr;
+  checkCudaErrors(cudaMallocHost(&h_originalMatrix, N * N * sizeof(double)));  // Column-major
 
   if (ConfigurationManager::getConfig().tiledCholesky.mode
       == Configuration::TiledCholesky::Mode::readInputMatrixFromFileAndRunBeyondDeviceCapacity) {
@@ -332,7 +345,7 @@ void tiledCholesky(bool optimize, bool verify) {
     }
     clock.logWithCurrentTime("Input matrix loaded");
   } else {
-    initializeHostData(h_originalMatrix.get());
+    initializeHostData(h_originalMatrix);
   }
 
   clock.logWithCurrentTime("Host data initialized");
@@ -346,6 +359,8 @@ void tiledCholesky(bool optimize, bool verify) {
       fout << h_originalMatrix[i] << '\n';
     }
     clock.logWithCurrentTime("Input matrix dumped");
+    // Free allocated memory before return
+    checkCudaErrors(cudaFreeHost(h_originalMatrix));
     return;
   }
 
@@ -639,7 +654,7 @@ void tiledCholesky(bool optimize, bool verify) {
     auto optimizedGraph = profileAndOptimize(graph);
 
     // Initialize device data from the host matrix
-    initializeDeviceData(h_originalMatrix.get(), d_tiles);
+    initializeDeviceData(h_originalMatrix, d_tiles);
 
     // Execute the optimized graph with memory management
     float runningTime;
@@ -674,7 +689,7 @@ void tiledCholesky(bool optimize, bool verify) {
     // Run the optimized graph for each repetition
     for (int i = 0; i < ConfigurationManager::getConfig().generic.repeat; i++) {
       // Initialize device data from host matrix
-      initializeDeviceData(h_originalMatrix.get(), d_tiles);
+      initializeDeviceData(h_originalMatrix, d_tiles);
 
       // Execute optimized graph with memory management
       float runningTime;
@@ -717,7 +732,7 @@ void tiledCholesky(bool optimize, bool verify) {
     // Run for specified number of repetitions
     for (int i = 0; i < ConfigurationManager::getConfig().generic.repeat; i++) {
       // Initialize device data from host matrix
-      initializeDeviceData(h_originalMatrix.get(), d_tiles);
+      initializeDeviceData(h_originalMatrix, d_tiles);
 
       // Create a new stream for execution
       cudaStream_t execStream;
@@ -785,7 +800,7 @@ void tiledCholesky(bool optimize, bool verify) {
   // Optionally verify the correctness of the Cholesky factorization
   if (verify) {
     clock.logWithCurrentTime("Start verification");
-    fmt::print("Result passes verification: {}\n", verifyCholeskyDecompositionPartially(h_originalMatrix.get(), d_tiles, N, B));
+    fmt::print("Result passes verification: {}\n", verifyCholeskyDecompositionPartially(h_originalMatrix, d_tiles, N, B));
     clock.logWithCurrentTime("Verification done");
   }
 
@@ -795,6 +810,7 @@ void tiledCholesky(bool optimize, bool verify) {
   // Free all allocated resources
   checkCudaErrors(cudaFreeHost(h_workspace));
   checkCudaErrors(cudaFree(d_workspace));
+  checkCudaErrors(cudaFreeHost(h_originalMatrix));  // Free the pinned host memory
   
   // Use freeManagedMemory to free both device and storage memory for each tile
   auto& memManager = MemoryManager::getInstance();
