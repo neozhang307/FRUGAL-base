@@ -32,8 +32,10 @@ void initializeCudaDevice(bool displayDeviceInfo) {
 
   warmUpCudaDevice();
 
-  // Create folder for debug outputs
-  system("mkdir -p debug");
+  // Create folder for debug outputs only if debug output is enabled
+  if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    system("mkdir -p debug");
+  }
 }
 
 void enablePeerAccessForNvlink(int deviceA, int deviceB) {

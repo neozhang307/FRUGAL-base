@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "strategyUtilities.hpp"
 
@@ -37,10 +38,19 @@ void printTaskGroups(FILE *fp, OptimizationInput &input) {
 }
 
 void printOptimizationInput(OptimizationInput &input) {
+  // Skip debug output if disabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   std::string outputFilePath = fmt::format("debug/{}.optimizationInput.dot", input.stageIndex);
   LOG_TRACE_WITH_INFO("Printing OptimizationInput to %s", outputFilePath.c_str());
 
   auto fp = fopen(outputFilePath.c_str(), "w");
+  if (!fp) {
+    LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+    return;
+  }
 
   fmt::print(fp, "digraph G {{\n");
 
@@ -82,10 +92,19 @@ void printEdges(FILE *fp, OptimizationOutput &output) {
 }
 
 void printOptimizationOutput(OptimizationOutput &output, int stageIndex) {
+  // Skip debug output if disabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   std::string outputFilePath = fmt::format("debug/{}.optimizationOutput.dot", stageIndex);
   LOG_TRACE_WITH_INFO("Printing OptimizationOutput to %s", outputFilePath.c_str());
 
   auto fp = fopen(outputFilePath.c_str(), "w");
+  if (!fp) {
+    LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+    return;
+  }
 
   fmt::print(fp, "digraph G {{\n");
 

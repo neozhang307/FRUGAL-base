@@ -922,10 +922,19 @@ struct IntegerProgrammingSolver {
   }
 
   void printSolution(MPSolver::ResultStatus resultStatus) {
+    // Skip debug output if disabled in configuration
+    if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      return;
+    }
+    
     std::string outputFilePath = fmt::format("debug/{}.secondStepSolver.out", input.stageIndex);
     LOG_TRACE_WITH_INFO("Printing solution to %s", outputFilePath.c_str());
 
     auto fp = fopen(outputFilePath.c_str(), "w");
+    if (!fp) {
+      LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+      return;
+    }
 
     fmt::print(fp, "Result status: {}\n", resultStatus == MPSolver::OPTIMAL ? "OPTIMAL" : "FEASIBLE");
 
@@ -1009,12 +1018,21 @@ struct IntegerProgrammingSolver {
    * in the Mixed Integer Programming formulation.
    */
   void printDurationsAndSizes() {
+    // Skip debug output if disabled in configuration
+    if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      return;
+    }
+    
     // Create output file path with the stage index for identification
     std::string outputFilePath = fmt::format("debug/{}.secondStepSolverInput.out", input.stageIndex);
     LOG_TRACE_WITH_INFO("Printing input to %s", outputFilePath.c_str());
 
     // Open output file for writing
     auto fp = fopen(outputFilePath.c_str(), "w");
+    if (!fp) {
+      LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+      return;
+    }
     
     // Find min/max task durations to understand the time scale of the problem
     float minDuration = std::numeric_limits<float>::max();

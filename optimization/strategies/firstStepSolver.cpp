@@ -2,6 +2,7 @@
 
 #include <fmt/core.h>
 
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 
 namespace memopt {
@@ -117,12 +118,21 @@ void FirstStepSolver::dfs(size_t currentTotalOverlap) {
  * Writes the solution to a debug file for analysis
  */
 void FirstStepSolver::printSolution() {
+  // Skip debug output if disabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   // Format the output filename using the stage index
   std::string outputFilePath = fmt::format("debug/{}.firstStepSolver.out", input.stageIndex);
   LOG_TRACE_WITH_INFO("Printing solution to %s", outputFilePath.c_str());
 
   // Open file and write solution details
   auto fp = fopen(outputFilePath.c_str(), "w");
+  if (!fp) {
+    LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+    return;
+  }
 
   fmt::print(fp, "maxTotalOverlap = {}\n", this->maxTotalOverlap);
 

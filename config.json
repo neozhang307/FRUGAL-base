@@ -2,6 +2,7 @@
   "execution": {
     "mainDeviceId": 0,
     "measurePeakMemoryUsage": true,
+    "enableDebugOutput": false,
     "storageDeviceId": 2,
     "useNvlink": false
   },
@@ -25,7 +26,7 @@
     "mergeConcurrentCudaGraphNodes": false,
     "minManagedArraySize": 1024,
     "planPath": "optimizationPlan.json",
-    "prefetchingBandwidthInGB": 380.7,
+    "prefetchingBandwidthInGB": 900,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
     "weightOfNumberOfMigrations": 1e-05,
     "weightOfPeakMemoryUsage": 1,
@@ -33,7 +34,7 @@
   },
   "tiledCholesky": {
     "mode": 0,
-    "n": 40960,
+    "n": 80960,
     "t": 4
   }
 }
