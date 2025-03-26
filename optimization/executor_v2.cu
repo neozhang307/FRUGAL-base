@@ -81,11 +81,21 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   MemoryManager &memManager,
   cudaStream_t stream
 ) {
+  // Debug output
+  LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Executing handleDataMovementNode for nodeId=%d", nodeId);
+  
   // Begin capturing operations with dependencies
   creator->beginCaptureOperation(dependencies);
   
   // Get data movement details
   auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap.at(nodeId);
+  
+  // Debug output
+  if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+    LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Prefetching arrayId=%d to device", dataMovement.arrayId);
+  } else {
+    LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] Offloading arrayId=%d from device", dataMovement.arrayId);
+  }
   
   // Perform the appropriate data movement operation
   if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
@@ -98,6 +108,8 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   checkCudaErrors(cudaPeekAtLastError());
   auto newLeafNodes = creator->endCaptureOperation();
   checkCudaErrors(cudaPeekAtLastError());
+  
+  LOG_TRACE_WITH_INFO("[DEBUG-OUTPUT] handleDataMovementNode completed successfully");
   
   return newLeafNodes;
 }

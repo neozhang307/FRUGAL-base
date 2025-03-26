@@ -401,7 +401,11 @@ void tiledCholesky(bool optimize, bool verify) {
       // MemoryManager::getInstance().registerApplicaftionOutput(getMatrixBlock(i, j));
     }  
   }  
-
+  
+  // Print total managed memory size in MB
+  double totalManagedMemoryMB = MemoryManager::getInstance().GetMemoryManagedSizeInMB();
+  fmt::print("[MEMORY-INFO] Total managed memory size: {:.2f} MB\n", totalManagedMemoryMB);
+  
   clock.logWithCurrentTime("Addresses registered");
 
   // SECTION 4: CUDA LIBRARY INITIALIZATION
