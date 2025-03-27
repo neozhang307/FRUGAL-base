@@ -1,0 +1,46 @@
+{
+  "generic": {
+    "optimize": false,
+    "verify": true,
+    "repeat": 1,
+    "useUM": false,
+    "availableMemoryForUMInMiB": 4096
+  },
+  "optimization": {
+    "loadExistingPlan": false,
+    "planPath": "luOptimizationPlan.json",
+    "mergeConcurrentCudaGraphNodes": true,
+    "prefetchingBandwidthInGB": 281.0,
+    "acceptableRunningTimeFactor": 0.0,
+    "minManagedArraySize": 0,
+    "solver": "SCIP",
+    "maxPeakMemoryUsageInMiB": 0.0,
+    "weightOfPeakMemoryUsage": 1.0,
+    "weightOfTotalRunningTime": 0.0001,
+    "weightOfNumberOfMigrations": 0.00001
+  },
+  "execution": {
+    "useNvlink": false,
+    "measurePeakMemoryUsage": true,
+    "enableDebugOutput": false,
+    "enableVerboseOutput": false,
+    "mainDeviceId": 0,
+    "storageDeviceId": 1
+  },
+  "tiledCholesky": {
+    "n": 256,
+    "t": 4,
+    "mode": 0
+  },
+  "lulesh": {
+    "s": 45,
+    "constrainIterationCount": false,
+    "targetIterationCount": 3000,
+    "iterationBatchSize": 1
+  },
+  "lu": {
+    "n": 1024,
+    "t": 8,
+    "mode": 0
+  }
+}

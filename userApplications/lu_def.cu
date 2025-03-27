@@ -36,6 +36,9 @@ size_t N; // total matrix size (N×N)
 size_t B; // batch size in 1d (B×B per tile)
 size_t T; // tile amount in 1d (T×T tiles)
 
+// Global flag for GPU verification
+bool forceGpuVerify = false;
+
 
 // Using utilities from the memopt namespace
 
@@ -168,6 +171,140 @@ bool verifyLUDecomposition(double *A, double *L, double *U, const int n)
     return error <= 1e-6;
 }
 
+// CUDA kernel to compute the absolute difference between two matrices
+// A is in row-major format, while B is in column-major format
+__global__ void computeAbsoluteDifferenceKernel(double* A, double* B, double* result, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n * n) {
+        // Compute row and column from linear index
+        int row = idx / n;
+        int col = idx % n;
+        
+        // Get the elements from A (row-major) and B (column-major)
+        double a_val = A[row * n + col];      // row-major access
+        double b_val = B[col * n + row];      // column-major access is transposed
+        
+        // Store the absolute difference
+        result[idx] = fabs(a_val - b_val);
+    }
+}
+
+// GPU-accelerated verification of LU decomposition using cuBLAS
+// Significantly faster than the CPU version for large matrices
+bool verifyLUDecompositionGPU(double *A, double *L, double *U, const int n)
+{
+    // Use a system clock for timing - more reliable than CUDA events in this context
+    auto startTime = std::chrono::high_resolution_clock::now();
+    
+    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+        LOG_TRACE_WITH_INFO("Starting LU verification (GPU)");
+    }
+
+    // Create a stream for this operation
+    cudaStream_t stream;
+    checkCudaErrors(cudaStreamCreate(&stream));
+
+    // Create CUBLAS handle
+    cublasHandle_t cublasHandle;
+    checkCudaErrors(cublasCreate(&cublasHandle));
+    checkCudaErrors(cublasSetStream(cublasHandle, stream));
+    
+    // Allocate device memory for matrices
+    double *d_A, *d_L, *d_U, *d_LU, *d_diff;
+    size_t matrixBytes = n * n * sizeof(double);
+    
+    checkCudaErrors(cudaMalloc(&d_A, matrixBytes));
+    checkCudaErrors(cudaMalloc(&d_L, matrixBytes));
+    checkCudaErrors(cudaMalloc(&d_U, matrixBytes));
+    checkCudaErrors(cudaMalloc(&d_LU, matrixBytes));
+    checkCudaErrors(cudaMalloc(&d_diff, matrixBytes));
+    
+    // Copy matrices to device using the stream
+    checkCudaErrors(cudaMemcpyAsync(d_A, A, matrixBytes, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_L, L, matrixBytes, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_U, U, matrixBytes, cudaMemcpyHostToDevice, stream));
+    
+    // Constants for matrix multiplication: C = alpha*A*B + beta*C
+    double alpha = 1.0;
+    double beta = 0.0;
+    
+    // For CUBLAS, we need to handle the row-major to column-major conversion
+    // We do a trick with the op parameters: cublas_op(row_major) = cublas_op_transpose(col_major)
+    // B(m,k) A(k,n) computes C(m,n) in row major, which is equivalent to:
+    // A^T(n,k) B^T(k,m) computes C^T(n,m) in column major
+    
+    // We want to compute L*U in row-major, which is equivalent to:
+    // computing U^T * L^T = (L*U)^T in column-major
+    // Here L is m×k, U is k×n in row-major
+    checkCudaErrors(cublasDgemm(
+        cublasHandle, 
+        CUBLAS_OP_N, CUBLAS_OP_N,   // No transposition in column-major results in transposition for row-major
+        n, n, n,                    // Matrix dimensions (result is n×n)
+        &alpha,                     // Alpha multiplier
+        d_U, n,                     // First matrix (U in column-major format)
+        d_L, n,                     // Second matrix (L in column-major format)
+        &beta,                      // Beta multiplier
+        d_LU, n                     // Result matrix (LU in column-major format)
+    ));
+    
+    // Compute absolute difference: |A - L*U|
+    int blockSize = 256;
+    int gridSize = (n * n + blockSize - 1) / blockSize;
+    computeAbsoluteDifferenceKernel<<<gridSize, blockSize, 0, stream>>>(d_A, d_LU, d_diff, n);
+    
+    // Sum the absolute differences to get total error
+    double error = 0.0;
+    checkCudaErrors(cublasDasum(
+        cublasHandle,
+        n * n,                     // Number of elements
+        d_diff, 1,                 // Input array and stride
+        &error                     // Result
+    ));
+
+    // Wait for all operations to complete
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    // Only print matrices when verbose mode is enabled
+    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+        // For debug output, we need to copy results back to host
+        auto h_LU = std::make_unique<double[]>(n * n);
+        checkCudaErrors(cudaMemcpy(h_LU.get(), d_LU, matrixBytes, cudaMemcpyDeviceToHost));
+        
+        printf("A:\n");
+        printSquareMatrix(A, n);
+
+        printf("\nL*U (GPU):\n");
+        printSquareMatrix(h_LU.get(), n);
+
+        printf("\nL:\n");
+        printSquareMatrix(L, n);
+        printf("\n");
+
+        printf("\nU:\n");
+        printSquareMatrix(U, n);
+        printf("\n");
+    }
+
+    // Clean up GPU resources
+    checkCudaErrors(cudaFree(d_A));
+    checkCudaErrors(cudaFree(d_L));
+    checkCudaErrors(cudaFree(d_U));
+    checkCudaErrors(cudaFree(d_LU));
+    checkCudaErrors(cudaFree(d_diff));
+    checkCudaErrors(cublasDestroy(cublasHandle));
+    checkCudaErrors(cudaStreamDestroy(stream));
+    
+    // Calculate elapsed time using system clock
+    auto endTime = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = endTime - startTime;
+    
+    printf("CUDA verification time (s): %.6f\n", elapsed.count());
+    printf("GPU error = %.6f\n", error);
+
+    // Consider the decomposition correct if error is less than threshold
+    return error <= 1e-6;
+}
+
 
 // Perform LU decomposition using a single CUDA kernel call (non-tiled approach)
 // This demonstrates the baseline implementation using cuSOLVER's getrf function
@@ -269,8 +406,15 @@ void trivialLU(bool verify)
         // Extract L and U matrices from the result
         cleanCusolverLUDecompositionResult(h_L, h_U, N);
         
-        // Verify L*U = A
-        fmt::print("Result passes verification: {}\n", verifyLUDecomposition(h_A, h_L, h_U, N));
+        if (forceGpuVerify || N > 1000) {
+            // Use the faster GPU-based verification
+            fmt::print("Using GPU-accelerated verification\n");
+            fmt::print("Result passes verification: {}\n", verifyLUDecompositionGPU(h_A, h_L, h_U, N));
+        } else {
+            // For small matrices, CPU verification is fine
+            fmt::print("Using CPU verification\n");
+            fmt::print("Result passes verification: {}\n", verifyLUDecomposition(h_A, h_L, h_U, N));
+        }
 
         // Clean up verification memory
         checkCudaErrors(cudaFreeHost(h_L));
@@ -664,7 +808,19 @@ void tiledLU(bool verify)
         checkCudaErrors(cudaMallocHost(&h_U, N * N * sizeof(double)));
         memset(h_U, 0, N * N * sizeof(double));
         cleanCusolverLUDecompositionResult(d_matrix, h_U, N);
-        fmt::print("Result passes verification: {}\n", verifyLUDecomposition(originalMatrix, d_matrix, h_U, N));
+        
+        extern bool forceGpuVerify;
+        
+        if (forceGpuVerify || N > 1000) {
+            // Use the faster GPU-based verification
+            fmt::print("Using GPU-accelerated verification\n");
+            fmt::print("Result passes verification: {}\n", verifyLUDecompositionGPU(originalMatrix, d_matrix, h_U, N));
+        } else {
+            // For small matrices, CPU verification is fine
+            fmt::print("Using CPU verification\n");
+            fmt::print("Result passes verification: {}\n", verifyLUDecomposition(originalMatrix, d_matrix, h_U, N));
+        }
+        
         checkCudaErrors(cudaFreeHost(h_U));
         clock.logWithCurrentTime("Verification completed");
     }
@@ -1036,9 +1192,19 @@ void tiledLU_Optimized(bool verify) {
     memset(h_U, 0, N * N * sizeof(double));
     cleanCusolverLUDecompositionResult(h_resultMatrix, h_U, N);
     
-    // Verify L*U = A
-    fmt::print("Result passes verification: {}\n", 
-              verifyLUDecomposition(h_originalMatrix, h_resultMatrix, h_U, N));
+    extern bool forceGpuVerify;
+    
+    if (forceGpuVerify || N > 1000) {
+      // Use the faster GPU-based verification
+      fmt::print("Using GPU-accelerated verification\n");
+      fmt::print("Result passes verification: {}\n", 
+                verifyLUDecompositionGPU(h_originalMatrix, h_resultMatrix, h_U, N));
+    } else {
+      // For small matrices, CPU verification is fine
+      fmt::print("Using CPU verification\n");
+      fmt::print("Result passes verification: {}\n", 
+                verifyLUDecomposition(h_originalMatrix, h_resultMatrix, h_U, N));
+    }
     
     // Clean up verification memory
     checkCudaErrors(cudaFreeHost(h_resultMatrix));
@@ -1064,6 +1230,8 @@ int main(int argc, char **argv) {
   auto cmdl = argh::parser(argc, argv);
   std::string configFilePath;
   cmdl("configFile", "config.json") >> configFilePath;
+  
+  bool useGpuVerify = cmdl["use-gpu-verify"];
 
   ConfigurationManager::exportDefaultConfiguration();
   ConfigurationManager::loadConfiguration(configFilePath);
@@ -1073,18 +1241,23 @@ int main(int argc, char **argv) {
   B = N / T;
 
   fmt::print("LU Decomposition with N={}, T={}, B={}\n", N, T, B);
+  
+  // Use GPU for verification if requested or matrix is large
+  bool verifyEnabled = ConfigurationManager::getConfig().generic.verify;
+  // Set the global flag for GPU verification
+  forceGpuVerify = useGpuVerify || N > 1000;
 
   // Determine which implementation to use
   if (cmdl["trivial"] || ConfigurationManager::getConfig().lu.mode == Configuration::LU::Mode::trivial) {
     fmt::print("Using single-kernel (trivial) implementation\n");
-    trivialLU(ConfigurationManager::getConfig().generic.verify);
+    trivialLU(verifyEnabled);
   } else {
     if (ConfigurationManager::getConfig().generic.optimize) {
       fmt::print("Using tiled implementation with memory optimization\n");
-      tiledLU_Optimized(ConfigurationManager::getConfig().generic.verify);
+      tiledLU_Optimized(verifyEnabled);
     } else {
       fmt::print("Using tiled implementation without optimization\n");
-      tiledLU(ConfigurationManager::getConfig().generic.verify);
+      tiledLU(verifyEnabled);
     }
   }
   
