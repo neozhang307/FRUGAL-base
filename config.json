@@ -1,46 +1,47 @@
 {
+  "generic": {
+    "optimize": true,
+    "verify": true,
+    "repeat": 1,
+    "useUM": false,
+    "availableMemoryForUMInMiB": 4096
+  },
+  "optimization": {
+    "loadExistingPlan": false,
+    "planPath": "luOptimizationPlan.json",
+    "mergeConcurrentCudaGraphNodes": false,
+    "maxTaskGroupAmount": 0,
+    "prefetchingBandwidthInGB": 380,
+    "acceptableRunningTimeFactor": 0.0,
+    "minManagedArraySize": 0,
+    "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
+    "maxPeakMemoryUsageInMiB": 30000,
+    "weightOfPeakMemoryUsage": 0.0001,
+    "weightOfTotalRunningTime": 1,
+    "weightOfNumberOfMigrations": 0.00001
+  },
   "execution": {
-    "mainDeviceId": 0,
+    "useNvlink": false,
     "measurePeakMemoryUsage": true,
     "enableDebugOutput": false,
     "enableVerboseOutput": false,
-    "storageDeviceId": 2,
-    "useNvlink": false
-  },
-  "generic": {
-    "availableMemoryForUMInMiB": 51131,
-    "optimize": true,
-    "repeat": 2,
-    "useUM": false,
-    "verify": true
-  },
-  "lulesh": {
-    "constrainIterationCount": true,
-    "iterationBatchSize": 1,
-    "s": 180,
-    "targetIterationCount": 100
-  },
-  "optimization": {
-    "acceptableRunningTimeFactor": 0,
-    "loadExistingPlan": true,
-    "mergeConcurrentCudaGraphNodes": true,
-    "minManagedArraySize": 0,
-    "planPath": "optimizationPlan.json",
-    "prefetchingBandwidthInGB": 900,
-    "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
-    "maxPeakMemoryUsageInMiB":0,
-    "weightOfNumberOfMigrations": 1e-05,
-    "weightOfPeakMemoryUsage": 1e-04,
-    "weightOfTotalRunningTime": 1
+    "mainDeviceId": 0,
+    "storageDeviceId": 1
   },
   "tiledCholesky": {
-    "mode": 0,
-    "n": 81920,
-    "t": 8
+    "n": 102400,
+    "t": 4,
+    "mode": 0
+  },
+  "lulesh": {
+    "s": 45,
+    "constrainIterationCount": false,
+    "targetIterationCount": 3000,
+    "iterationBatchSize": 1
   },
   "lu": {
     "n": 40960,
-    "t": 8,
+    "t": 4,
     "mode": 0
   }
 }

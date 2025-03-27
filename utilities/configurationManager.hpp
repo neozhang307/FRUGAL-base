@@ -32,6 +32,7 @@ struct Configuration {
     bool loadExistingPlan = false;
     std::string planPath = "optimizationPlan.json";
     bool mergeConcurrentCudaGraphNodes = true;
+    int maxTaskGroupAmount = 0;
     double prefetchingBandwidthInGB = 281.0;
     double acceptableRunningTimeFactor = 0.0;
     int minManagedArraySize = 0;
@@ -46,6 +47,7 @@ struct Configuration {
       loadExistingPlan,
       planPath,
       mergeConcurrentCudaGraphNodes,
+      maxTaskGroupAmount,
       prefetchingBandwidthInGB,
       acceptableRunningTimeFactor,
       minManagedArraySize,
