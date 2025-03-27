@@ -9,21 +9,22 @@
   "optimization": {
     "loadExistingPlan": false,
     "planPath": "luOptimizationPlan.json",
-    "mergeConcurrentCudaGraphNodes": false,
-    "maxTaskGroupAmount": 0,
+    "mergeConcurrentCudaGraphNodes": true,
+    "maxTaskGroupAmount": 1000,
+    "byPassingFirstStep": true,
     "prefetchingBandwidthInGB": 380,
     "acceptableRunningTimeFactor": 0.0,
     "minManagedArraySize": 0,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
-    "maxPeakMemoryUsageInMiB": 30000,
-    "weightOfPeakMemoryUsage": 0.0001,
-    "weightOfTotalRunningTime": 1,
+    "maxPeakMemoryUsageInMiB": 0,
+    "weightOfPeakMemoryUsage": 1,
+    "weightOfTotalRunningTime": 0.0001,
     "weightOfNumberOfMigrations": 0.00001
   },
   "execution": {
     "useNvlink": false,
     "measurePeakMemoryUsage": true,
-    "enableDebugOutput": false,
+    "enableDebugOutput": true,
     "enableVerboseOutput": false,
     "mainDeviceId": 0,
     "storageDeviceId": 1

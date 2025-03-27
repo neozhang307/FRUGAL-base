@@ -131,6 +131,24 @@ class DisjointSet {
     return this->size[this->findRoot(u)];
   }
 
+  /**
+   * Gets the total number of distinct sets in the disjoint-set data structure
+   * 
+   * This method counts the total number of roots (parent nodes that point to themselves),
+   * which represents the number of distinct sets currently in the data structure.
+   * 
+   * @return The number of distinct sets
+   */
+  size_t getNumSets() {
+    size_t count = 0;
+    for (const auto& [key, value] : parent) {
+      if (key == value) {
+        count++;
+      }
+    }
+    return count;
+  }
+
  private:
   // Maps each element to its parent element in the tree structure
   std::map<KeyType, KeyType> parent;

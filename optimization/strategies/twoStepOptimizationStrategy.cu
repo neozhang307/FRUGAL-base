@@ -135,6 +135,61 @@ FirstStepSolver::Input convertToFirstStepInput(OptimizationInput &optimizationIn
 }
 
 /**
+ * @brief Creates a valid topological ordering without optimizing memory overlap
+ * 
+ * This function takes the same input as FirstStepSolver but returns a valid
+ * topological ordering without attempting to optimize memory reuse. It's useful
+ * for testing or as a fallback when optimization is not required.
+ * 
+ * @param input FirstStepSolver::Input object with task graph information
+ * @return FirstStepSolver::Output containing a valid topological ordering
+ */
+FirstStepSolver::Output byPassingFirstStepSolver(FirstStepSolver::Input &input) {
+  // Initialize the output object with an empty execution order
+  FirstStepSolver::Output output;
+  
+  // Calculate initial in-degree for each node (number of dependencies)
+  std::vector<int> inDegree(input.n, 0);
+  for (int u = 0; u < input.n; u++) {
+    for (auto v : input.edges[u]) {
+      inDegree[v]++;  // v has u as a prerequisite
+    }
+  }
+  
+  // Queue of nodes with no dependencies (in-degree = 0)
+  std::queue<int> q;
+  for (int u = 0; u < input.n; u++) {
+    if (inDegree[u] == 0) {
+      q.push(u);
+    }
+  }
+  
+  // Standard Kahn's algorithm for topological sort
+  while (!q.empty()) {
+    int u = q.front();
+    q.pop();
+    
+    // Add this node to our execution order
+    output.taskGroupExecutionOrder.push_back(u);
+    
+    // Update in-degree of all dependent nodes
+    for (auto v : input.edges[u]) {
+      inDegree[v]--;
+      if (inDegree[v] == 0) {
+        q.push(v);
+      }
+    }
+  }
+  
+  // Validate that we've included all nodes (otherwise there's a cycle)
+  if (output.taskGroupExecutionOrder.size() != input.n) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Warning: Not all nodes included in topological sort (possible cycle)" << std::endl;
+  }
+  
+  return output;
+}
+
+/**
  * @brief Converts optimization data to SecondStepSolver::Input format
  *
  * This function prepares input for the second optimization step by:
@@ -411,17 +466,43 @@ OptimizationOutput TwoStepOptimizationStrategy::run(OptimizationInput &input) {
   // Print the input for debugging/visualization purposes
   printOptimizationInput(input);
 
+  std::cout << "[DEBUG-OUTPUT-OPTIMIZER] ==================== STARTING STEP 1: TASK SCHEDULING OPTIMIZATION ====================" << std::endl;
+  
   // STEP 1: Task Scheduling Optimization
   // Convert the optimization input to the format expected by FirstStepSolver
   auto firstStepInput = convertToFirstStepInput(input);
-  // Create and run the first step solver to find optimal task group execution order
-  FirstStepSolver firstStepSolver(std::move(firstStepInput));
-  auto firstStepOutput = firstStepSolver.solve();
+  
+  FirstStepSolver::Output firstStepOutput;
+  
+  // Check if we should bypass the first step solver
+  bool byPassingFirstStep = ConfigurationManager::getConfig().optimization.byPassingFirstStep;
+  int maxTaskGroupAmount = ConfigurationManager::getConfig().optimization.maxTaskGroupAmount;
+  
+  // Bypass if explicitly configured or if task groups exceed threshold (when maxTaskGroupAmount is set)
+  if (byPassingFirstStep || (maxTaskGroupAmount > 0 && firstStepInput.n > maxTaskGroupAmount)) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Bypassing first step solver ";
+    if (byPassingFirstStep) {
+      std::cout << "(explicitly configured in settings)" << std::endl;
+    } else {
+      std::cout << "(task group count " << firstStepInput.n 
+                << " exceeds threshold " << maxTaskGroupAmount << ")" << std::endl;
+    }
+    
+    // Use the bypass function to get a valid topological ordering without optimization
+    firstStepOutput = byPassingFirstStepSolver(firstStepInput);
+  } else {
+    // Use the original solver for optimal ordering
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Using full optimization for task scheduling" << std::endl;
+    FirstStepSolver firstStepSolver(std::move(firstStepInput));
+    firstStepOutput = firstStepSolver.solve();
+  }
 
   // Add a sentinel task group at the end to represent program completion
   // This simplifies boundary condition handling in the second step
   firstStepOutput.taskGroupExecutionOrder.push_back(firstStepOutput.taskGroupExecutionOrder.size());
 
+  std::cout << "[DEBUG-OUTPUT-OPTIMIZER] ==================== STARTING STEP 2: MEMORY MANAGEMENT OPTIMIZATION ====================" << std::endl;
+  
   // STEP 2: Memory Management Optimization
   // Convert the first step output and original input to the format for SecondStepSolver
   auto secondStepInput = convertToSecondStepInput(input, firstStepOutput);
@@ -429,6 +510,8 @@ OptimizationOutput TwoStepOptimizationStrategy::run(OptimizationInput &input) {
   SecondStepSolver secondStepSolver;
   auto secondStepOutput = secondStepSolver.solve(std::move(secondStepInput));
 
+  std::cout << "[DEBUG-OUTPUT-OPTIMIZER] ==================== COMPLETED STEP 2: FINALIZING OPTIMIZATION ====================" << std::endl;
+  
   // Combine the outputs from both steps into a unified execution plan
   // This includes task nodes and memory movement operations
   auto output = convertToOptimizationOutput(input, firstStepOutput, secondStepOutput);

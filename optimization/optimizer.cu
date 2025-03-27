@@ -174,7 +174,7 @@ void mergeConcurrentCudaGraphNodes(
     // 3. The merged set size would remain under our size limit
     if (currentWindowRepresentativeNode != nullptr && 
         lifetime.first <= currentWindowEnd && 
-        disjointSet.getSetSize(currentWindowRepresentativeNode) < logicalNodeSizeLimit) {
+        disjointSet.getSetSize(currentWindowRepresentativeNode)+disjointSet.getSetSize(node) < logicalNodeSizeLimit) {
       
       // Merge this node with the current window's representative node
       disjointSet.unionUnderlyingSets(currentWindowRepresentativeNode, node);
@@ -943,13 +943,65 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
   // Initialize disjoint set for grouping "task" related nodes
   DisjointSet<cudaGraphNode_t> disjointSet;
 
-  // Optional: merge nodes that execute concurrently to reduce graph complexity
-  if (ConfigurationManager::getConfig().optimization.mergeConcurrentCudaGraphNodes) {
-    mergeConcurrentCudaGraphNodes(timeline, disjointSet, std::numeric_limits<int>::max());
-  }
 
   // Merge nodes that share the same annotation (same logical task)
   mergeNodesWithSameAnnotation(nodes, nodeToAnnotationMap, disjointSet);
+
+  // Print the number of task groups after merging nodes with same annotation
+  size_t numSets = disjointSet.getNumSets();
+  std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Number of task groups after annotation merge: " 
+            << numSets << std::endl;
+
+  // Get the configured maximum task group amount (0 means no limit)
+  int maxTaskGroupAmount = ConfigurationManager::getConfig().optimization.maxTaskGroupAmount;
+  bool shouldMerge = ConfigurationManager::getConfig().optimization.mergeConcurrentCudaGraphNodes;
+  
+  // Skip merging if number of sets is already small enough (< 100)
+  if (numSets < 100) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Skipping concurrent node merging since task groups < 100" << std::endl;
+  }
+  // Check if we need to merge due to maxTaskGroupAmount constraint
+  else if (maxTaskGroupAmount > 0 && numSets > static_cast<size_t>(maxTaskGroupAmount)) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Task groups (" << numSets 
+              << ") exceed maxTaskGroupAmount (" << maxTaskGroupAmount 
+              << "), performing gradual merging" << std::endl;
+    
+    // Start with a small limit and gradually increase until we meet the target
+    // or until increasing doesn't reduce the group count anymore
+    int nodeLimit = 2; // Start with merging small groups
+    size_t previousNumSets = numSets;
+    
+    while (numSets > static_cast<size_t>(maxTaskGroupAmount)) {
+      mergeConcurrentCudaGraphNodes(timeline, disjointSet, nodeLimit);
+      
+      size_t newNumSets = disjointSet.getNumSets();
+      std::cout << "[DEBUG-OUTPUT-OPTIMIZER] After merging with limit " << nodeLimit 
+                << ", task groups: " << newNumSets << std::endl;
+      
+      // If increasing the limit didn't reduce the count, stop merging
+      if (newNumSets >= previousNumSets) {
+        std::cout << "[DEBUG-OUTPUT-OPTIMIZER] No further reduction possible with limit " 
+                  << nodeLimit << std::endl;
+        break;
+      }
+      
+      previousNumSets = newNumSets;
+      numSets = newNumSets;
+      
+      // Increase the node limit for the next iteration
+      nodeLimit = nodeLimit * 2;
+    }
+  }
+  // Standard merging as configured
+  else if (shouldMerge) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Performing standard concurrent node merging" << std::endl;
+    mergeConcurrentCudaGraphNodes(timeline, disjointSet, std::numeric_limits<int>::max());
+    
+    // Print the number of task groups after merging concurrent nodes
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Number of task groups after concurrent merge: " 
+              << disjointSet.getNumSets() << std::endl;
+  }
+
 
   // Extract data dependencies for each task from their annotations
   std::map<TaskId, OptimizationInput::TaskGroup::DataDependency> taskIdToDataDependencyMap;
