@@ -383,8 +383,8 @@ void tiledCholesky(bool optimize, bool verify) {
             matrixblock_i_k, B  // Input/output matrix
           ));
         },
-        {getMatrixBlock(k, k), getMatrixBlock(i, k)},  // inputs
-        {getMatrixBlock(i, k)},  // outputs
+        inputs,  // inputs
+        outputs,  // outputs
         TaskManager_v2::makeArgs(getMatrixBlock(k, k), getMatrixBlock(i, k)),  // default args
         "TRSM_task_" + std::to_string(i) + "_" + std::to_string(k)  // task name
       );
@@ -419,8 +419,8 @@ void tiledCholesky(bool optimize, bool verify) {
             matrixblock_i_i, B  // Input/output matrix
           ));
         },
-        {getMatrixBlock(i, i), getMatrixBlock(i, k)},  // inputs
-        {getMatrixBlock(i, i)},  // outputs
+        inputs,  // inputs
+        outputs,  // outputs
         TaskManager_v2::makeArgs(getMatrixBlock(i, k), getMatrixBlock(i, i)),  // default args
         "SYRK_task_" + std::to_string(i) + "_" + std::to_string(k)  // task name
       );
@@ -462,8 +462,8 @@ void tiledCholesky(bool optimize, bool verify) {
               CUBLAS_GEMM_DEFAULT    // Algorithm selection
             ));
           },
-          {getMatrixBlock(j, i), getMatrixBlock(j, k), getMatrixBlock(i, k)},  // inputs
-          {getMatrixBlock(j, i)},  // outputs
+          inputs,  // inputs
+          outputs,  // outputs
           TaskManager_v2::makeArgs(getMatrixBlock(j, k), getMatrixBlock(i, k), getMatrixBlock(j, i)),  // default args
           "GEMM_task_" + std::to_string(j) + "_" + std::to_string(i) + "_" + std::to_string(k)  // task name
         );
