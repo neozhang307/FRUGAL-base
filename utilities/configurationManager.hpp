@@ -111,13 +111,31 @@ struct Configuration {
     );
   } lulesh;
 
+  // LU Decomposition
+  struct LU {
+    int n = 1024;
+    int t = 8;
+    enum class Mode {
+      tiled = 0,
+      trivial
+    } mode = Mode::tiled;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(
+      LU,
+      n,
+      t,
+      mode
+    );
+  } lu;
+
   NLOHMANN_DEFINE_TYPE_INTRUSIVE(
     Configuration,
     generic,
     optimization,
     execution,
     tiledCholesky,
-    lulesh
+    lulesh,
+    lu
   );
 };
 

@@ -44,3 +44,15 @@ run-verbose:
 run-plain:
 	cp config_plain.json config.json
 	./build/userApplications/tiledCholesky
+	
+.PHONY: run-lu
+run-lu:
+	./build/userApplications/lu_def --configFile=config_lu.json
+
+.PHONY: run-lu-simple
+run-lu-simple:
+	./build/userApplications/lu_def --configFile=config_lu_simple.json
+
+.PHONY: run-lu-verbose
+run-lu-verbose:
+	./build/userApplications/lu_def --configFile=config_lu.json --verbose

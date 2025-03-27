@@ -18,9 +18,9 @@ target_link_libraries(
   fmt::fmt
 )
 
-add_executable(LUDecomposition lu_def.cu)
+add_executable(lu_def lu_def.cu)
 target_link_libraries(
-  LUDecomposition
+  lu_def
   memopt
   CUDA::cublas
   CUDA::cusolver

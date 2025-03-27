@@ -23,12 +23,12 @@
   "optimization": {
     "acceptableRunningTimeFactor": 0,
     "loadExistingPlan": true,
-    "maxPeakMemoryUsageInMiB":0,
     "mergeConcurrentCudaGraphNodes": true,
     "minManagedArraySize": 0,
     "planPath": "optimizationPlan.json",
     "prefetchingBandwidthInGB": 900,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
+    "maxPeakMemoryUsageInMiB":0,
     "weightOfNumberOfMigrations": 1e-05,
     "weightOfPeakMemoryUsage": 1e-04,
     "weightOfTotalRunningTime": 1
@@ -37,5 +37,10 @@
     "mode": 0,
     "n": 81920,
     "t": 8
+  },
+  "lu": {
+    "n": 40960,
+    "t": 8,
+    "mode": 0
   }
 }

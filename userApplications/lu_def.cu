@@ -1,127 +1,43 @@
-#include <cublas_v2.h>      // CUDA BLAS library for linear algebra operations
-#include <cuda_runtime.h>    // Core CUDA runtime API
-#include <cuda_runtime_api.h> // Extended CUDA runtime API
-#include <cusolverDn.h>      // CUDA solver for dense matrices
-#include <fmt/core.h>     // Commented out formatting library
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <curand.h>
+#include <cusolverDn.h>
+#include <fmt/core.h>
 
-#include <algorithm>         // STL algorithms
-#include <cassert>           // Assert macro for error checking
-#include <cmath>             // Math functions
-#include <cstdlib>           // Standard library functions
-#include <initializer_list>  // Initializer list support
-#include <iomanip>           // IO formatting
-#include <iostream>          // Standard IO streams
-#include <limits>            // Numeric limits
-#include <map>               // Map container
-#include <memory>            // Smart pointers
-#include <set>               // Set container
-#include <tuple>             // Tuple support
-#include <vector>            // Vector container
+#include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <initializer_list>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <set>
+#include <tuple>
+#include <vector>
 
-#include "../include/argh.h" // Command line argument parsing
-// #include "../utilities/cudaUtilities.hpp" // Commented out
+#include "../include/argh.h"
 #include "memopt.hpp"
 
 using namespace memopt;
 
-// Matrix dimensions and tiling parameters
-// N: Total matrix size (N x N)
-// B: Block/tile size
-// T: Number of tiles per dimension (T = N/B)
-size_t N = 15 * 1;           // Default matrix size (15x15)
-size_t B = N / 5;            // Default block size derived from N
-size_t T = N / B;            // Default number of tiles
+const std::string INPUT_MATRIX_FILE_PATH = "luInputMatrix.in";
+
+// Implementation Note: This file implements the LU decomposition algorithm
+// using the generic PointerDependencyCudaGraphConstructor for memory tracking
+// instead of the application-specific TiledLUGraphCreator.
+
+size_t N; // total matrix size (N×N)
+size_t B; // batch size in 1d (B×B per tile)
+size_t T; // tile amount in 1d (T×T tiles)
 
 
-// Error checking function for CUDA API calls
-// Checks if the result code indicates an error, and if so, prints the error and exits
-// template <typename T>
-// void __check(T result, char const *const func, const char *const file, int const line)
-// {
-//     if (result)
-//     {
-//         fprintf(stderr, "CUDA error at %s:%d code=%d \"%s\" \n", file, line, static_cast<unsigned int>(result), func);
-//         exit(EXIT_FAILURE);
-//     }
-// }
-
-// Macro for checking CUDA errors
-// Passes the result of a CUDA function call to __check along with source information
-#define checkCudaErrors(val) __check((val), #val, __FILE__, __LINE__)
-
-// Simple CUDA kernel to warm up the GPU
-// This avoids timing fluctuations for the first CUDA operations
-// __global__ void warmUp()
-// {
-//     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
-//     float ia, ib;
-//     ia = ib = 0.0f;
-//     ib += ia + static_cast<float>(tid);
-// }
-
-// Executes a warm-up kernel on the GPU
-// This initializes the CUDA runtime and makes subsequent kernel launches more consistent in timing
-// void warmUpCudaDevice()
-// {
-//     warmUp<<<32, 32>>>();
-//     cudaDeviceSynchronize();
-// }
-
-// Set up the CUDA device and optionally display its information
-// This function selects GPU 0, prints its properties if requested, and warms it up
-void initializeCudaDevice(bool displayDeviceInfo)
-{
-    // Select device 0 (first GPU)
-    checkCudaErrors(cudaSetDevice(0));
-
-    if (displayDeviceInfo)
-    {
-        cudaDeviceProp deviceProp;
-        checkCudaErrors(cudaGetDeviceProperties(&deviceProp, 0));
-        printf("GPU Device %d: %s\n", 0, deviceProp.name);
-        printf("Compute Capability: %d.%d\n\n", deviceProp.major, deviceProp.minor);
-    }
-
-    warmUpCudaDevice();
-}
-
-// Class for measuring execution time of CUDA operations using CUDA events
-// This provides more accurate GPU timing than CPU-based timers
-class LUCudaEventClock
-{
-public:
-    // Constructor - creates timing events
-    LUCudaEventClock() {
-        checkCudaErrors(cudaEventCreate(&startEvent));
-        checkCudaErrors(cudaEventCreate(&endEvent));
-    }
-    
-    // Destructor - cleans up events
-    ~LUCudaEventClock() {
-        checkCudaErrors(cudaEventDestroy(startEvent));
-        checkCudaErrors(cudaEventDestroy(endEvent));
-    }
-    
-    // Mark the start time on a specific stream
-    void start(cudaStream_t stream = 0) {
-        checkCudaErrors(cudaEventRecord(startEvent, stream));
-    }
-    
-    // Mark the end time on a specific stream
-    void end(cudaStream_t stream = 0) {
-        checkCudaErrors(cudaEventRecord(endEvent, stream));
-    }
-    
-    // Calculate elapsed time in seconds
-    float getTimeInSeconds() {
-        float time;
-        checkCudaErrors(cudaEventElapsedTime(&time, startEvent, endEvent));
-        return time * 1e-3f;  // Convert milliseconds to seconds
-    }
-
-private:
-    cudaEvent_t startEvent, endEvent;           // CUDA events for timing
-};
+// Using utilities from the memopt namespace
 
 
 // Generate a random symmetric positive definite matrix
@@ -229,20 +145,22 @@ bool verifyLUDecomposition(double *A, double *L, double *U, const int n)
         }
     }
 
-    // Print matrices for inspection
-    printf("A:\n");
-    printSquareMatrix(A, n);
+    // Only print matrices when verbose mode is enabled
+    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+        printf("A:\n");
+        printSquareMatrix(A, n);
 
-    printf("\nnewA:\n");
-    printSquareMatrix(newA.get(), n);
+        printf("\nnewA:\n");
+        printSquareMatrix(newA.get(), n);
 
-    printf("\nL:\n");
-    printSquareMatrix(L, n);
-    printf("\n");
+        printf("\nL:\n");
+        printSquareMatrix(L, n);
+        printf("\n");
 
-    printf("\nU:\n");
-    printSquareMatrix(U, n);
-    printf("\n");
+        printf("\nU:\n");
+        printSquareMatrix(U, n);
+        printf("\n");
+    }
 
     printf("error = %.6f}\n", error);
 
@@ -250,10 +168,19 @@ bool verifyLUDecomposition(double *A, double *L, double *U, const int n)
     return error <= 1e-6;
 }
 
+
 // Perform LU decomposition using a single CUDA kernel call (non-tiled approach)
 // This demonstrates the baseline implementation using cuSOLVER's getrf function
 void trivialLU(bool verify)
 {
+    // Initialize timing and CUDA device
+    memopt::SystemWallClock clock;
+    clock.start();
+
+    memopt::initializeCudaDevice(true); // Display device info
+    
+    clock.logWithCurrentTime("Initializing host data");
+    
     // Initialize cuSOLVER library handles
     cusolverDnHandle_t cusolverDnHandle;
     checkCudaErrors(cusolverDnCreate(&cusolverDnHandle));
@@ -261,14 +188,20 @@ void trivialLU(bool verify)
     cusolverDnParams_t cusolverDnParams;
     checkCudaErrors(cusolverDnCreateParams(&cusolverDnParams));
 
-    // Create and initialize the input matrix
-    double *h_A = (double *)malloc(N * N * sizeof(double));
+    // Create and initialize the input matrix - using pinned memory for better performance
+    double *h_A = nullptr;
+    checkCudaErrors(cudaMallocHost(&h_A, N * N * sizeof(double)));
     generateRandomSymmetricPositiveDefiniteMatrix(h_A, N);
+    
+    clock.logWithCurrentTime("Host data initialized");
+    clock.logWithCurrentTime("Initializing device data");
 
     // Allocate device memory and copy the matrix
     double *d_A;
     checkCudaErrors(cudaMalloc(&d_A, N * N * sizeof(double)));
     checkCudaErrors(cudaMemcpy(d_A, h_A, N * N * sizeof(double), cudaMemcpyHostToDevice));
+    
+    clock.logWithCurrentTime("Device data initialized");
 
     // Query the required workspace size for LU decomposition
     size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
@@ -285,17 +218,18 @@ void trivialLU(bool verify)
         &workspaceInBytesOnHost));
 
     // Allocate workspace memory on host and device
-    void *h_workspace = malloc(workspaceInBytesOnHost);
+    void *h_workspace = nullptr;
+    checkCudaErrors(cudaMallocHost(&h_workspace, workspaceInBytesOnHost));
     void *d_workspace;
     checkCudaErrors(cudaMalloc(&d_workspace, workspaceInBytesOnDevice));
 
     // Allocate memory for status information
     int *d_info;
     checkCudaErrors(cudaMalloc(&d_info, sizeof(int)));
-    LUCudaEventClock clock;
+    memopt::CudaEventClock cudaEventClock;
 
     // Perform LU decomposition and measure time
-    clock.start();
+    cudaEventClock.start();
     checkCudaErrors(cusolverDnXgetrf(
         cusolverDnHandle,
         cusolverDnParams,
@@ -311,7 +245,7 @@ void trivialLU(bool verify)
         h_workspace,        // Host workspace
         workspaceInBytesOnHost,
         d_info));           // Status information
-    clock.end();
+    cudaEventClock.end();
 
     // Check if decomposition was successful
     int h_info = 0;
@@ -324,8 +258,10 @@ void trivialLU(bool verify)
 
     // Verify the decomposition if requested
     if (verify) {
-        double *h_L = (double *)malloc(N * N * sizeof(double));
-        double *h_U = (double *)malloc(N * N * sizeof(double));
+        double *h_L = nullptr;
+        double *h_U = nullptr;
+        checkCudaErrors(cudaMallocHost(&h_L, N * N * sizeof(double)));
+        checkCudaErrors(cudaMallocHost(&h_U, N * N * sizeof(double)));
         
         // Copy result back to host
         checkCudaErrors(cudaMemcpy(h_L, d_A, N * N * sizeof(double), cudaMemcpyDeviceToHost));
@@ -334,19 +270,19 @@ void trivialLU(bool verify)
         cleanCusolverLUDecompositionResult(h_L, h_U, N);
         
         // Verify L*U = A
-        printf("Result passes verification: %d\n", verifyLUDecomposition(h_A, h_L, h_U, N));
+        fmt::print("Result passes verification: {}\n", verifyLUDecomposition(h_A, h_L, h_U, N));
 
         // Clean up verification memory
-        free(h_L);
-        free(h_U);
+        checkCudaErrors(cudaFreeHost(h_L));
+        checkCudaErrors(cudaFreeHost(h_U));
     }
     
     // Print execution time
-    printf("Total time used (s): %4.4f\n", clock.getTimeInSeconds());
+    fmt::print("Total time used (s): {:.4f}\n", cudaEventClock.getTimeInSeconds());
 
     // Clean up resources
-    free(h_A);
-    free(h_workspace);
+    checkCudaErrors(cudaFreeHost(h_A));
+    checkCudaErrors(cudaFreeHost(h_workspace));
     checkCudaErrors(cusolverDnDestroy(cusolverDnHandle));
     checkCudaErrors(cudaFree(d_A));
     checkCudaErrors(cudaFree(d_workspace));
@@ -518,19 +454,36 @@ private:
     }
 };
 
+// Forward declaration of tiledLU_Optimized
+void tiledLU_Optimized(bool verify);
+
 // Perform LU decomposition using a tiled approach with CUDA Graphs
-// This demonstrates an optimized implementation that operates on matrix tiles
+// This demonstrates an implementation that operates on matrix tiles
 // and builds a CUDA graph to represent the computations and their dependencies
 void tiledLU(bool verify)
 {
-    // Initialize data - create the original matrix
-    auto originalMatrix = std::make_unique<double[]>(N * N); // Column-major format
-    generateRandomSymmetricPositiveDefiniteMatrix(originalMatrix.get(), N);
-
+    // Initialize timing and CUDA device
+    memopt::SystemWallClock clock;
+    clock.start();
+    
+    memopt::initializeCudaDevice(true); // Display device info
+    
+    clock.logWithCurrentTime("Initializing host data");
+    
+    // Initialize data - create the original matrix with pinned memory
+    double* originalMatrix = nullptr;
+    checkCudaErrors(cudaMallocHost(&originalMatrix, N * N * sizeof(double))); // Column-major format
+    generateRandomSymmetricPositiveDefiniteMatrix(originalMatrix, N);
+    
+    clock.logWithCurrentTime("Host data initialized");
+    clock.logWithCurrentTime("Initializing device data");
+    
     // Copy matrix to device using unified memory for simplicity
     double *d_matrix;
     checkCudaErrors(cudaMallocManaged(&d_matrix, N * N * sizeof(double)));
-    checkCudaErrors(cudaMemcpy(d_matrix, originalMatrix.get(), N * N * sizeof(double), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_matrix, originalMatrix, N * N * sizeof(double), cudaMemcpyHostToDevice));
+    
+    clock.logWithCurrentTime("Device data initialized");
 
     // Helper lambda to get a pointer to a specific block/tile within the matrix
     // Row i, column j of the tile grid (each tile is B×B elements)
@@ -683,96 +636,457 @@ void tiledLU(bool verify)
         }
     }
 
-    // Timer for performance measurement
-    LUCudaEventClock clock;
-    
     // Export the graph as a DOT file for visualization
-    checkCudaErrors(cudaGraphDebugDotPrint(graph, "./graph.dot", 0));
+    clock.logWithCurrentTime("Graph recorded");
+    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      checkCudaErrors(cudaGraphDebugDotPrint(graph, "./graph.dot", 0));
+    }
+    clock.logWithCurrentTime("Graph printed");
 
     // Instantiate the graph for execution
     cudaGraphExec_t graphExec;
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
     
     // Execute the graph and measure time
-    clock.start(s);
+    clock.logWithCurrentTime("Start execution");
+    memopt::CudaEventClock cudaEventClock;
+    cudaEventClock.start(s);
     checkCudaErrors(cudaGraphLaunch(graphExec, s));
     checkCudaErrors(cudaStreamSynchronize(s));
-    clock.end(s);
+    cudaEventClock.end(s);
     checkCudaErrors(cudaDeviceSynchronize());
+    clock.logWithCurrentTime("Execution completed");
 
     // Verify the result if requested
     if (verify) {
-        double *h_U = (double *)malloc(N * N * sizeof(double));
+        clock.logWithCurrentTime("Starting verification");
+        double *h_U = nullptr;
+        checkCudaErrors(cudaMallocHost(&h_U, N * N * sizeof(double)));
         memset(h_U, 0, N * N * sizeof(double));
         cleanCusolverLUDecompositionResult(d_matrix, h_U, N);
-        printf("Result passes verification: %d\n", verifyLUDecomposition(originalMatrix.get(), d_matrix, h_U, N));
-        free(h_U);
+        fmt::print("Result passes verification: {}\n", verifyLUDecomposition(originalMatrix, d_matrix, h_U, N));
+        checkCudaErrors(cudaFreeHost(h_U));
+        clock.logWithCurrentTime("Verification completed");
     }
     
     // Report performance
-    printf("Total time used (s): %4.4f\n", clock.getTimeInSeconds());
+    fmt::print("Total time used (s): {:.4f}\n", cudaEventClock.getTimeInSeconds());
 
     // Clean up resources
-    free(h_workspace);
-    cudaFree(d_matrix);
-    cudaFree(d_workspace);
+    checkCudaErrors(cudaFreeHost(originalMatrix));
+    checkCudaErrors(cudaFreeHost(h_workspace));
+    checkCudaErrors(cudaFree(d_matrix));
+    checkCudaErrors(cudaFree(d_workspace));
 }
 
-// Main entry point for LU decomposition
-// Selects between tiled and non-tiled implementations based on parameter
-// Parameters:
-//   tiled - if true, use tiled implementation; if false, use single-kernel implementation
-//   verify - if true, verify the correctness of the result
-void LU(bool tiled, bool verify)
-{
-    if (tiled)
-    {
-        tiledLU(verify);
+// Perform LU decomposition using a tiled approach with memory optimization
+// This implementation uses the PointerDependencyCudaGraphConstructor and TaskManager_v2
+void tiledLU_Optimized(bool verify) {
+  // Configuration check
+  if (!ConfigurationManager::getConfig().generic.optimize) {
+    LOG_TRACE_WITH_INFO("This function requires optimization to be enabled");
+    return;
+  }
+
+  // Initialize timing and CUDA device
+  memopt::SystemWallClock clock;
+  clock.start();
+
+  memopt::initializeCudaDevice(true); // Display device info
+
+  const size_t tileSize = B * B * sizeof(double);
+
+  // SECTION 1: HOST DATA INITIALIZATION
+  clock.logWithCurrentTime("Initializing host data");
+  
+  double* h_originalMatrix = nullptr;
+  checkCudaErrors(cudaMallocHost(&h_originalMatrix, N * N * sizeof(double)));  // Column-major, using pinned memory
+  
+  // Generate input matrix
+  generateRandomSymmetricPositiveDefiniteMatrix(h_originalMatrix, N);
+  
+  clock.logWithCurrentTime("Host data initialized");
+
+  // SECTION 2: DEVICE MEMORY ALLOCATION
+  clock.logWithCurrentTime("Initializing device data");
+  std::vector<double *> d_tiles(T * T);
+  for (int i = 0; i < T * T; i++) {
+    if (ConfigurationManager::getConfig().generic.useUM) {
+      checkCudaErrors(cudaMallocManaged(&d_tiles[i], tileSize));
+    } else {
+      checkCudaErrors(cudaMalloc(&d_tiles[i], tileSize));
     }
-    else
-    {
-        trivialLU(verify);
+  }
+
+  clock.logWithCurrentTime("Device data initialized");
+
+  // Helper function to access tiles by logical indices
+  auto getMatrixBlock = [&](int i, int j) {
+    return d_tiles[i + j * T];
+  };
+
+  // SECTION 3: MEMORY REGISTRATION
+  for (int i = 0; i < T; i++) {
+    for (int j = 0; j < T; j++) {
+      MemoryManager::getInstance().registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
+      MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
+    }  
+  }  
+  
+  double totalManagedMemoryMB = MemoryManager::getInstance().GetMemoryManagedSizeInMB();
+  fmt::print("[MEMORY-INFO] Total managed memory size: {:.2f} MB\n", totalManagedMemoryMB);
+  
+  clock.logWithCurrentTime("Addresses registered");
+
+  // SECTION 4: CUDA LIBRARY INITIALIZATION
+  cusolverDnHandle_t cusolverDnHandle;
+  cusolverDnParams_t cusolverDnParams;
+  cublasHandle_t cublasHandle;
+  checkCudaErrors(cusolverDnCreate(&cusolverDnHandle));
+  checkCudaErrors(cusolverDnCreateParams(&cusolverDnParams));
+  checkCudaErrors(cublasCreate(&cublasHandle));
+
+  // Constants used in matrix operations
+  double *one, *minusOne;
+  checkCudaErrors(cudaMallocManaged(&one, sizeof(double)));
+  checkCudaErrors(cudaMallocManaged(&minusOne, sizeof(double)));
+  *one = 1.0;
+  *minusOne = -1.0;
+
+  // Calculate required workspace for LU decomposition
+  size_t workspaceInBytesOnDevice, workspaceInBytesOnHost;
+  checkCudaErrors(cusolverDnXgetrf_bufferSize(
+    cusolverDnHandle,
+    cusolverDnParams,
+    B,
+    B,
+    CUDA_R_64F,
+    d_tiles[0],
+    B,
+    CUDA_R_64F,
+    &workspaceInBytesOnDevice,
+    &workspaceInBytesOnHost
+  ));
+
+  void *h_workspace = nullptr, *d_workspace;
+  int *d_info;
+  checkCudaErrors(cudaMallocHost(&h_workspace, workspaceInBytesOnHost));
+  checkCudaErrors(cudaMalloc(&d_workspace, workspaceInBytesOnDevice));
+  checkCudaErrors(cudaMallocManaged(&d_info, sizeof(int)));
+
+  // SECTION 5: CUDA GRAPH CREATION
+  cudaGraph_t graph;
+  checkCudaErrors(cudaGraphCreate(&graph, 0));
+
+  cudaStream_t s;
+  checkCudaErrors(cudaStreamCreate(&s));
+
+  checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, s));
+  checkCudaErrors(cublasSetStream(cublasHandle, s));
+
+  clock.logWithCurrentTime("Preparation done, start to record graph");
+
+  // Create TaskManager_v2 with debug mode enabled
+  TaskManager_v2 tmanager_v2(ConfigurationManager::getConfig().execution.enableDebugOutput);
+
+  // SECTION 6: TILED LU ALGORITHM IMPLEMENTATION USING POINTER-BASED DEPENDENCY TRACKING
+  auto graphConstructor = std::make_unique<PointerDependencyCudaGraphConstructor>(s, graph);
+
+  for (int k = 0; k < T; k++) {
+    // =====================================================================
+    // STEP 1: GETRF - LU factorization of diagonal tile
+    // =====================================================================
+    
+    // Define input and output pointers for dependency tracking
+    std::vector<void*> inputs = {static_cast<void*>(getMatrixBlock(k, k))};
+    std::vector<void*> outputs = {static_cast<void*>(getMatrixBlock(k, k))};
+    
+    // Begin capturing operation with pointer-based dependencies
+    graphConstructor->beginCaptureOperation(inputs, outputs);
+
+    // Register and execute the GETRF task
+    TaskId taskId_v2 = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*)>, double*>(
+      [cusolverDnHandle, cusolverDnParams, d_workspace, workspaceInBytesOnDevice, 
+       h_workspace, workspaceInBytesOnHost, d_info](cudaStream_t stream, double* matrixblock_k_k) {
+        checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, stream));
+
+        checkCudaErrors(cusolverDnXgetrf(
+            cusolverDnHandle,
+            cusolverDnParams,
+            B,               // Matrix size
+            B,               // Matrix size
+            CUDA_R_64F,              // Data type (double)
+            matrixblock_k_k,         // Input/output matrix
+            B,               // Leading dimension
+            NULL,                    // No pivoting
+            CUDA_R_64F,              // Output data type
+            d_workspace,             // Device workspace
+            workspaceInBytesOnDevice,
+            h_workspace,             // Host workspace
+            workspaceInBytesOnHost,
+            d_info                   // Error information
+          ));
+      },
+      {getMatrixBlock(k, k)},  // inputs
+      {getMatrixBlock(k, k)},  // outputs
+      TaskManager_v2::makeArgs(getMatrixBlock(k, k)),  // default args
+      "GETRF_task"  // task name
+    );
+    
+    tmanager_v2.execute(taskId_v2, s);
+    graphConstructor->endCaptureOperation();
+
+    // =====================================================================
+    // STEP 2: Update column blocks below diagonal (L)
+    // =====================================================================
+    for (int i = k + 1; i < T; i++) {
+      // Define input and output pointers for dependency tracking
+      inputs = {static_cast<void*>(getMatrixBlock(k, k)), static_cast<void*>(getMatrixBlock(i, k))};
+      outputs = {static_cast<void*>(getMatrixBlock(i, k))};
+      
+      // Begin capturing operation with pointer-based dependencies
+      graphConstructor->beginCaptureOperation(inputs, outputs);
+      
+      // Register and execute the TRSM task for L
+      TaskId trsmLTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
+        [cublasHandle, one](cudaStream_t stream, double* matrixblock_k_k, double* matrixblock_i_k) {
+          checkCudaErrors(cublasSetStream(cublasHandle, stream));
+          checkCudaErrors(cublasDtrsm(
+            cublasHandle,
+            CUBLAS_SIDE_RIGHT,      // Multiply from right
+            CUBLAS_FILL_MODE_UPPER, // Upper triangular
+            CUBLAS_OP_N,            // No transpose
+            CUBLAS_DIAG_NON_UNIT,   // Non-unit diagonal
+            B, B,                   // Matrix dimensions
+            one,                    // Alpha = 1.0
+            matrixblock_k_k, B,     // Triangular matrix
+            matrixblock_i_k, B      // Input/output matrix
+          ));
+        },
+        inputs,  // inputs
+        outputs,  // outputs
+        TaskManager_v2::makeArgs(getMatrixBlock(k, k), getMatrixBlock(i, k)),  // default args
+        "TRSM_L_task_" + std::to_string(i) + "_" + std::to_string(k)  // task name
+      );
+      
+      tmanager_v2.execute(trsmLTaskId, s);
+      graphConstructor->endCaptureOperation();
     }
+
+    // =====================================================================
+    // STEP 3: Update row blocks to the right of diagonal (U)
+    // =====================================================================
+    for (int j = k + 1; j < T; j++) {
+      // Define input and output pointers for dependency tracking
+      inputs = {static_cast<void*>(getMatrixBlock(k, k)), static_cast<void*>(getMatrixBlock(k, j))};
+      outputs = {static_cast<void*>(getMatrixBlock(k, j))};
+      
+      // Begin capturing operation with pointer-based dependencies
+      graphConstructor->beginCaptureOperation(inputs, outputs);
+      
+      // Register and execute the TRSM task for U
+      TaskId trsmUTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*)>, double*, double*>(
+        [cublasHandle, one](cudaStream_t stream, double* matrixblock_k_k, double* matrixblock_k_j) {
+          checkCudaErrors(cublasSetStream(cublasHandle, stream));
+          checkCudaErrors(cublasDtrsm(
+            cublasHandle,
+            CUBLAS_SIDE_LEFT,       // Multiply from left
+            CUBLAS_FILL_MODE_LOWER, // Lower triangular
+            CUBLAS_OP_N,            // No transpose
+            CUBLAS_DIAG_UNIT,       // Unit diagonal
+            B, B,                   // Matrix dimensions
+            one,                    // Alpha = 1.0
+            matrixblock_k_k, B,     // Triangular matrix
+            matrixblock_k_j, B      // Input/output matrix
+          ));
+        },
+        inputs,  // inputs
+        outputs,  // outputs
+        TaskManager_v2::makeArgs(getMatrixBlock(k, k), getMatrixBlock(k, j)),  // default args
+        "TRSM_U_task_" + std::to_string(k) + "_" + std::to_string(j)  // task name
+      );
+      
+      tmanager_v2.execute(trsmUTaskId, s);
+      graphConstructor->endCaptureOperation();
+    }
+
+    // =====================================================================
+    // STEP 4: Update the remaining blocks in the trailing submatrix
+    // =====================================================================
+    for (int i = k + 1; i < T; i++) {
+      for (int j = k + 1; j < T; j++) {
+        // Define input and output pointers for dependency tracking
+        inputs = {
+          static_cast<void*>(getMatrixBlock(i, k)), 
+          static_cast<void*>(getMatrixBlock(k, j)), 
+          static_cast<void*>(getMatrixBlock(i, j))
+        };
+        outputs = {static_cast<void*>(getMatrixBlock(i, j))};
+        
+        // Begin capturing operation with pointer-based dependencies
+        graphConstructor->beginCaptureOperation(inputs, outputs);
+        
+        // Register and execute the GEMM task
+        TaskId gemmTaskId = tmanager_v2.registerTask<std::function<void(cudaStream_t, double*, double*, double*)>, double*, double*, double*>(
+          [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_i_k, double* matrixblock_k_j, double* matrixblock_i_j) {
+            // General matrix multiplication using cuBLAS
+            checkCudaErrors(cublasSetStream(cublasHandle, stream));
+            checkCudaErrors(cublasGemmEx(
+              cublasHandle,
+              CUBLAS_OP_N,           // No transpose for first matrix
+              CUBLAS_OP_N,           // No transpose second matrix
+              B, B, B,               // Matrix dimensions
+              minusOne,              // Alpha = -1.0
+              matrixblock_i_k, CUDA_R_64F, B, // First input matrix
+              matrixblock_k_j, CUDA_R_64F, B, // Second input matrix
+              one,                   // Beta = 1.0
+              matrixblock_i_j, CUDA_R_64F, B, // Input/output matrix
+              CUBLAS_COMPUTE_64F,    // Computation precision
+              CUBLAS_GEMM_DEFAULT    // Algorithm selection
+            ));
+          },
+          inputs,  // inputs
+          outputs,  // outputs
+          TaskManager_v2::makeArgs(getMatrixBlock(i, k), getMatrixBlock(k, j), getMatrixBlock(i, j)),  // default args
+          "GEMM_task_" + std::to_string(i) + "_" + std::to_string(j) + "_" + std::to_string(k)  // task name
+        );
+        
+        tmanager_v2.execute(gemmTaskId, s);
+        graphConstructor->endCaptureOperation();
+      }
+    }
+  }
+
+  // Graph creation completed - now we can export it for debugging
+  clock.logWithCurrentTime("Graph recorded");
+  if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    LOG_TRACE_WITH_INFO("Printing original graph to graph.dot");
+    checkCudaErrors(cudaGraphDebugDotPrint(graph, "./graph.dot", 0));
+  }
+
+  clock.logWithCurrentTime("Graph printed");
+
+  // SECTION 7: OPTIMIZED EXECUTION
+  tmanager_v2.setExecutionMode(TaskManager_v2::ExecutionMode::Production);
+  
+  auto optimizedGraph = profileAndOptimize(graph);
+
+  // Copy data to matrix tiles
+  for (int i = 0; i < T; i++) {
+    for (int j = 0; j < T; j++) {
+      for (int k = 0; k < B; k++) {
+        checkCudaErrors(cudaMemcpy(
+          MemoryManager::getInstance().getAddress(getMatrixBlock(i, j)) + B * k,
+          h_originalMatrix + N * (j * B + k) + B * i,
+          B * sizeof(double),
+          cudaMemcpyDefault
+        ));
+      }
+    }
+  }
+  checkCudaErrors(cudaDeviceSynchronize());
+  
+  // Run the optimized graph
+  for (int i = 0; i < ConfigurationManager::getConfig().generic.repeat; i++) {
+    float runningTime;
+    auto& memManager = MemoryManager::getInstance();
+    
+    executeOptimizedGraph(
+      optimizedGraph,
+      [&tmanager_v2](int taskId, cudaStream_t stream) {
+        tmanager_v2.execute(taskId, stream);
+        return true;
+      },
+      runningTime,
+      memManager
+    );
+    checkCudaErrors(cudaDeviceSynchronize());
+    fmt::print("Total time used (s): {}\n", runningTime);
+    memManager.prefetchAllDataToDevice();
+    checkCudaErrors(cudaDeviceSynchronize());
+    fmt::print("Finalized iteration {}\n", i+1);
+  }
+    
+  // Verification of the result if requested
+  if (verify) {
+    clock.logWithCurrentTime("Starting verification");
+    
+    // Reconstruct the full matrix from tiles for verification
+    double *h_resultMatrix = nullptr;
+    double *h_U = nullptr;
+    checkCudaErrors(cudaMallocHost(&h_resultMatrix, N * N * sizeof(double)));
+    checkCudaErrors(cudaMallocHost(&h_U, N * N * sizeof(double)));
+    
+    // Copy data from device tiles to host result matrix
+    for (int i = 0; i < T; i++) {
+      for (int j = 0; j < T; j++) {
+        for (int k = 0; k < B; k++) {
+          checkCudaErrors(cudaMemcpy(
+            h_resultMatrix + N * (j * B + k) + B * i,
+            MemoryManager::getInstance().getAddress(getMatrixBlock(i, j)) + B * k,
+            B * sizeof(double),
+            cudaMemcpyDeviceToHost
+          ));
+        }
+      }
+    }
+    checkCudaErrors(cudaDeviceSynchronize());
+    
+    // Extract L and U matrices from the result
+    memset(h_U, 0, N * N * sizeof(double));
+    cleanCusolverLUDecompositionResult(h_resultMatrix, h_U, N);
+    
+    // Verify L*U = A
+    fmt::print("Result passes verification: {}\n", 
+              verifyLUDecomposition(h_originalMatrix, h_resultMatrix, h_U, N));
+    
+    // Clean up verification memory
+    checkCudaErrors(cudaFreeHost(h_resultMatrix));
+    checkCudaErrors(cudaFreeHost(h_U));
+    clock.logWithCurrentTime("Verification completed");
+  }
+
+  // Cleanup
+  checkCudaErrors(cudaFreeHost(h_workspace));
+  checkCudaErrors(cudaFree(d_workspace));
+  checkCudaErrors(cudaFree(d_info));
+  checkCudaErrors(cudaFree(one));
+  checkCudaErrors(cudaFree(minusOne));
+  checkCudaErrors(cudaFreeHost(h_originalMatrix));
+  
+  auto& memManager = MemoryManager::getInstance();
+  for (auto d_tile : d_tiles) {
+    memManager.freeManagedMemory(d_tile);
+  }
 }
 
-// Main program entry point
-// Parses command line arguments and runs the selected LU decomposition method
-int main(int argc, char **argv)
-{
-    // Set up command line argument parsing
-    argh::parser cmdl({"n", "N", "t", "T"});
-    cmdl.parse(argc, argv);
+int main(int argc, char **argv) {
+  auto cmdl = argh::parser(argc, argv);
+  std::string configFilePath;
+  cmdl("configFile", "config.json") >> configFilePath;
 
-    // Parse matrix size N
-    if (!(cmdl({"N", "n"}, N) >> N)) {
-        std::cerr << "Must provide a valid N value! Got '" << cmdl({"N", "n"}).str() << "'" << std::endl;
-        return 0;
-    }
-    
-    // Parse number of tiles T
-    if (!(cmdl({"t", "T"}, T) >> T)) {
-        std::cerr << "Must provide a valid T value! Got '" << cmdl({"T", "t"}).str() << "'" << std::endl;
-        return 0;
-    }
-    
-    // Ensure N is divisible by T for proper tiling
-    if (N % T > 0) {
-        std::cerr << "N must be divisible by T! Got 'N=" << N << " & T=" << T << "'" << std::endl;
-        return 0;
-    }
-    
-    // Calculate tile size B
-    B = N / T;
-    
-    // Print configuration information
-    if (cmdl["tiled"])
-        std::cout << "TILED ";
-    else
-        std::cout << "Single-kernel ";
-    std::cout << "with 'N=" << N << " & T=" << T << " & B=" << B << "'" << std::endl;
+  ConfigurationManager::exportDefaultConfiguration();
+  ConfigurationManager::loadConfiguration(configFilePath);
 
-    // Execute LU decomposition with the selected options
-    LU(cmdl["tiled"], cmdl["verify"]);
+  N = ConfigurationManager::getConfig().lu.n;
+  T = ConfigurationManager::getConfig().lu.t;
+  B = N / T;
 
-    return 0;
+  fmt::print("LU Decomposition with N={}, T={}, B={}\n", N, T, B);
+
+  // Determine which implementation to use
+  if (cmdl["trivial"] || ConfigurationManager::getConfig().lu.mode == Configuration::LU::Mode::trivial) {
+    fmt::print("Using single-kernel (trivial) implementation\n");
+    trivialLU(ConfigurationManager::getConfig().generic.verify);
+  } else {
+    if (ConfigurationManager::getConfig().generic.optimize) {
+      fmt::print("Using tiled implementation with memory optimization\n");
+      tiledLU_Optimized(ConfigurationManager::getConfig().generic.verify);
+    } else {
+      fmt::print("Using tiled implementation without optimization\n");
+      tiledLU(ConfigurationManager::getConfig().generic.verify);
+    }
+  }
+  
+  return 0;
 }
