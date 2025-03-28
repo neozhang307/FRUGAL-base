@@ -26,6 +26,7 @@ target_link_libraries(
   CUDA::cusolver
   CUDA::curand
   fmt::fmt
+  OpenMP::OpenMP_CXX
 )
 
 #add_subdirectory(lulesh)

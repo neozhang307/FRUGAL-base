@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <initializer_list>
 #include <iomanip>
@@ -17,9 +18,11 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <random>
 #include <set>
 #include <tuple>
 #include <vector>
+#include <omp.h>
 
 #include "../include/argh.h"
 #include "memopt.hpp"
@@ -53,27 +56,42 @@ bool forceGpuVerify = false;
 // 3. Add n to the diagonal elements to ensure positive definiteness
 void generateRandomSymmetricPositiveDefiniteMatrix(double *h_A, const size_t n)
 {
+    memopt::SystemWallClock clock;
+    clock.start();
+
+    // Clear the matrix first
+    std::memset(h_A, 0, n * n * sizeof(double));
+    
     // Use fixed seed for reproducibility
-    // srand(time(NULL));
-    srand(420);
-
-    // Temporary matrix for initial random values
-    double *h_A_temp = (double *)malloc(n * n * sizeof(double));
-
-    // Fill with random values between 0 and 1
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++)
-            h_A_temp[i * n + j] = (float)rand() / (float)RAND_MAX;
-
-    // Make the matrix symmetric by averaging with its transpose
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++)
-            h_A[i * n + j] = 0.5 * (h_A_temp[i * n + j] + h_A_temp[j * n + i]);
-
-    // Add n to diagonal elements to ensure positive definiteness
-    // This shifts all eigenvalues by n, making them positive
-    for (int i = 0; i < n; i++)
-        h_A[i * n + i] = h_A[i * n + i] + n;
+    const unsigned int seed = 420;
+    
+    clock.logWithCurrentTime("Matrix initialized, starting random generation");
+    
+    // Only compute upper triangular portion (including diagonal)
+    // and mirror it to lower triangular portion
+    #pragma omp parallel
+    {
+        // Each thread needs its own random generator to avoid collisions
+        unsigned int thread_seed = seed + omp_get_thread_num();
+        std::mt19937 local_rng(thread_seed);
+        std::uniform_real_distribution<double> local_dist(0.0, 1.0);
+        
+        #pragma omp for
+        for (int i = 0; i < n; i++) {
+            // Set diagonal elements directly (random value + n for positive definiteness)
+            h_A[i * n + i] = local_dist(local_rng) + n;
+            
+            // Upper triangular elements
+            for (int j = i + 1; j < n; j++) {
+                // Generate one random value and use it for both symmetric positions
+                double value = local_dist(local_rng);
+                h_A[i * n + j] = value;
+                h_A[j * n + i] = value;
+            }
+        }
+    }
+    
+    clock.logWithCurrentTime("Matrix generation completed");
 }
 
 // Print a square matrix with formatting for readability
