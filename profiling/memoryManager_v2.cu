@@ -117,7 +117,7 @@ void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useN
   return newPtr;
 }
 
-void MemoryManager::copyMemoryDeviceToStorage(void* deviceAddress, void* storageAddress, cudaMemcpyKind memcpyKind) {
+void MemoryManager::copyMemoryDeviceToStorage(void* deviceAddress, void* storageAddress, cudaMemcpyKind memcpyKind, cudaStream_t stream) {
   size_t size = getSize(deviceAddress);
   if (size == 0) {
     // Only print debug information if verbose output is enabled
@@ -134,7 +134,8 @@ void MemoryManager::copyMemoryDeviceToStorage(void* deviceAddress, void* storage
             size, deviceAddress, storageAddress, actualDeviceAddress);
   }
           
-  checkCudaErrors(cudaMemcpy(storageAddress, actualDeviceAddress, size, memcpyKind));
+  checkCudaErrors(cudaMemcpyAsync(storageAddress, actualDeviceAddress, size, memcpyKind,stream));
+  checkCudaErrors(cudaStreamSynchronize(stream));
 }
 
 void MemoryManager::freeStorage(void* storageAddress) {
@@ -149,7 +150,7 @@ void MemoryManager::freeStorage(void* storageAddress) {
   }
 }
 
-bool MemoryManager::freeManagedMemory(void* managedMemoryAddress) {
+bool MemoryManager::freeManagedMemory(void* managedMemoryAddress, cudaStream_t stream) {
   // Only print debug information if verbose output is enabled
   bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
   
@@ -176,7 +177,8 @@ bool MemoryManager::freeManagedMemory(void* managedMemoryAddress) {
       fprintf(stderr, "[DEBUG-FREE] Freeing device memory %p for address %p\n", 
               memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
     }
-    checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
+    checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
+    checkCudaErrors(cudaStreamSynchronize(stream));
     memoryArrayInfos[arrayId].deviceAddress = nullptr;
   }
   
@@ -201,7 +203,8 @@ void* MemoryManager::offloadToStorage(
     void* managedMemoryAddress, 
     int storageDeviceId, 
     bool useNvlink, 
-    std::map<void*, void*>& storageMap) 
+    std::map<void*, void*>& storageMap,
+    cudaStream_t stream) 
 {
   // Only print debug information if verbose output is enabled
   bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
@@ -256,7 +259,8 @@ void* MemoryManager::offloadToStorage(
   }
   
   // Free original device memory
-  checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
+  checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
+  checkCudaErrors(cudaStreamSynchronize(stream));
   if (verbose) {
     fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n", 
             memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
@@ -268,7 +272,8 @@ void* MemoryManager::offloadToStorage(
 void MemoryManager::offloadToStorage(
     void* managedMemoryAddress, 
     int storageDeviceId, 
-    bool useNvlink) 
+    bool useNvlink,
+    cudaStream_t stream) 
 {
   // Only print debug information if verbose output is enabled
   bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
@@ -303,7 +308,8 @@ void MemoryManager::offloadToStorage(
               arrayId, storagePtr);
     }
     
-    checkCudaErrors(cudaFree(memoryArrayInfos[arrayId].deviceAddress));
+    checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
+    checkCudaErrors(cudaStreamSynchronize(stream));
     memoryArrayInfos[arrayId].deviceAddress=nullptr;
     if (verbose) {
       fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",
@@ -441,7 +447,7 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
   }
 }
 
-void MemoryManager::prefetchAllDataToDevice() {
+void MemoryManager::prefetchAllDataToDevice(cudaStream_t stream) {
   auto arrayIds=this->getArrayIds();
   for (auto arrayId : arrayIds) {
     void* originalPtr = managedMemoryAddresses[arrayId];
@@ -450,14 +456,14 @@ void MemoryManager::prefetchAllDataToDevice() {
     
     // Allocate on device and copy data from storage
     void* devicePtr;
-    checkCudaErrors(cudaMalloc(&devicePtr, size));
-    checkCudaErrors(cudaMemcpy(
+    checkCudaErrors(cudaMallocAsync(&devicePtr, size,stream));
+    checkCudaErrors(cudaMemcpyAsync(
       devicePtr, 
       storagePtr, 
       size, 
-      storageConfig.prefetchMemcpyKind
+      storageConfig.prefetchMemcpyKind, stream
     ));
-    
+    cudaStreamSynchronize(stream);
     memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
@@ -544,7 +550,7 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
   }
 }
 
-void MemoryManager::offloadRemainedManagedMemoryToStorage() {
+void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
   // auto currentAddressMap = this->getEditableCurrentAddressMap();
 
   // for (auto &[oldAddr, newAddr] : currentAddressMap) {
@@ -561,14 +567,17 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage() {
   for (auto info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;
 
-    checkCudaErrors(cudaMemcpy(
+    checkCudaErrors(cudaMemcpyAsync(
       // this->getDeviceToHostArrayMap().at(oldAddr),
       info.storageAddress,
       info.deviceAddress,
       info.size,
-      storageConfig.offloadMemcpyKind
+      storageConfig.offloadMemcpyKind,
+      stream
     ));
-    checkCudaErrors(cudaFree(info.deviceAddress));
+    checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
     info.deviceAddress=nullptr;
   }
 }

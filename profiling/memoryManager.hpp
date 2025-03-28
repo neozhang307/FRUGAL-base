@@ -275,10 +275,10 @@ public:
    * @param managedMemoryAddress The original managed memory address to free resources for
    * @return True if the address was found and memory was freed, false otherwise
    */
-  bool freeManagedMemory(void* managedMemoryAddress);
+  bool freeManagedMemory(void* managedMemoryAddress,cudaStream_t stream=0);
 
   void prefetchAllDataToDeviceAsync(const std::vector<ArrayId>& arrayIds, cudaStream_t stream);
-  void prefetchAllDataToDevice();
+  void prefetchAllDataToDevice(cudaStream_t stream=0);
   void prefetchToDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
   void offloadFromDeviceAsync(const ArrayId arrayId, cudaStream_t stream);
   
@@ -298,7 +298,7 @@ public:
    * @param storageAddress Storage memory address to copy to
    * @param memcpyKind Type of memory copy (typically cudaMemcpyDefault or cudaMemcpyDeviceToHost)
    */
-  void copyMemoryDeviceToStorage(void* managedMemoryAddress, void* storageAddress, cudaMemcpyKind memcpyKind);
+  void copyMemoryDeviceToStorage(void* managedMemoryAddress, void* storageAddress, cudaMemcpyKind memcpyKind, cudaStream_t stream=0);
   
   /**
    * @brief Frees memory in storage (host or secondary GPU)
@@ -323,7 +323,7 @@ public:
    * @return Pointer to the allocated storage memory
    */
   void* offloadToStorage(void* managedMemoryAddress, int storageDeviceId, bool useNvlink, 
-                       std::map<void*, void*>& storageMap);
+                       std::map<void*, void*>& storageMap,cudaStream_t stream=0);
 
   /**
    * @brief Offloads memory from device to storage
@@ -334,12 +334,12 @@ public:
    * @param storageDeviceId The device ID for storage (-1 for host)
    * @param useNvlink Whether to use NVLink for GPU-to-GPU transfers
    */
-  void offloadToStorage(void* managedMemoryAddress, int storageDeviceId, bool useNvlink);
+  void offloadToStorage(void* managedMemoryAddress, int storageDeviceId, bool useNvlink,cudaStream_t stream=0);
 
   // Memory storage operations
   void offloadAllManagedMemoryToStorage();
   void offloadAllManagedMemoryToStorage(std::map<void*, void*>& storageMap);
-  void offloadRemainedManagedMemoryToStorage();
+  void offloadRemainedManagedMemoryToStorage(cudaStream_t stream=0);
   void offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream);
   
   void offloadAllManagedMemoryToStorage(int mainDeviceId, int storageDeviceId, bool useNvlink,
