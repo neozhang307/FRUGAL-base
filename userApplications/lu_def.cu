@@ -149,7 +149,7 @@ bool verifyLUDecomposition(double *A, double *L, double *U, const int n)
     }
 
     // Only print matrices when verbose mode is enabled
-    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
         printf("A:\n");
         printSquareMatrix(A, n);
 
@@ -265,7 +265,7 @@ bool verifyLUDecompositionGPU(double *A, double *L, double *U, const int n)
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     // Only print matrices when verbose mode is enabled
-    if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
         // For debug output, we need to copy results back to host
         auto h_LU = std::make_unique<double[]>(n * n);
         checkCudaErrors(cudaMemcpy(h_LU.get(), d_LU, matrixBytes, cudaMemcpyDeviceToHost));
@@ -353,6 +353,10 @@ void trivialLU(bool verify)
         CUDA_R_64F,
         &workspaceInBytesOnDevice,
         &workspaceInBytesOnHost));
+        
+    // Print workspace sizes
+    fmt::print("Device workspace size: {:.2f} MB\n", workspaceInBytesOnDevice / (1024.0 * 1024.0));
+    fmt::print("Host workspace size: {:.2f} MB\n", workspaceInBytesOnHost / (1024.0 * 1024.0));
 
     // Allocate workspace memory on host and device
     void *h_workspace = nullptr;
@@ -665,6 +669,10 @@ void tiledLU(bool verify)
         CUDA_R_64F,         // Compute type
         &workspaceInBytesOnDevice,
         &workspaceInBytesOnHost));
+    
+    // Print workspace sizes for tiled implementation
+    fmt::print("Tiled implementation - Device workspace size: {:.2f} MB\n", workspaceInBytesOnDevice / (1024.0 * 1024.0));
+    fmt::print("Tiled implementation - Host workspace size: {:.2f} MB\n", workspaceInBytesOnHost / (1024.0 * 1024.0));
 
     // Allocate workspace memory
     void *h_workspace, *d_workspace;
@@ -923,6 +931,10 @@ void tiledLU_Optimized(bool verify) {
     &workspaceInBytesOnDevice,
     &workspaceInBytesOnHost
   ));
+  
+  // Print workspace sizes for optimized implementation
+  fmt::print("Optimized implementation - Device workspace size: {:.2f} MB\n", workspaceInBytesOnDevice / (1024.0 * 1024.0));
+  fmt::print("Optimized implementation - Host workspace size: {:.2f} MB\n", workspaceInBytesOnHost / (1024.0 * 1024.0));
 
   void *h_workspace = nullptr, *d_workspace;
   int *d_info;
@@ -1190,8 +1202,11 @@ void tiledLU_Optimized(bool verify) {
     
     // Extract L and U matrices from the result
     memset(h_U, 0, N * N * sizeof(double));
+
     cleanCusolverLUDecompositionResult(h_resultMatrix, h_U, N);
-    
+    double totalManagedMemoryMB = MemoryManager::getInstance().GetMemoryManagedSizeInMB();
+    fmt::print("[MEMORY-INFO] Total managed memory size: {:.2f} MB\n", totalManagedMemoryMB);  
+
     extern bool forceGpuVerify;
     
     if (forceGpuVerify || N > 1000) {
