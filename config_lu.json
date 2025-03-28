@@ -22,7 +22,7 @@
   "execution": {
     "useNvlink": false,
     "measurePeakMemoryUsage": true,
-    "enableDebugOutput": true,
+    "enableDebugOutput": false,
     "enableVerboseOutput": false,
     "mainDeviceId": 0,
     "storageDeviceId": 1
@@ -39,7 +39,7 @@
     "iterationBatchSize": 1
   },
   "lu": {
-    "n": 40960,
+    "n": 64,
     "t": 4,
     "mode": 0
   }

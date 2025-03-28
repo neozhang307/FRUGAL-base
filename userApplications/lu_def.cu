@@ -644,10 +644,29 @@ void tiledLU(bool verify)
     clock.logWithCurrentTime("Host data initialized");
     clock.logWithCurrentTime("Initializing device data");
     
-    // Copy matrix to device using unified memory for simplicity
-    double *d_matrix;
-    checkCudaErrors(cudaMallocManaged(&d_matrix, N * N * sizeof(double)));
-    checkCudaErrors(cudaMemcpy(d_matrix, originalMatrix, N * N * sizeof(double), cudaMemcpyHostToDevice));
+    // Use tiled memory allocation with UVM to handle large matrices
+    const size_t tileSize = B * B * sizeof(double);
+    std::vector<double *> d_tiles(T * T);
+    
+    fmt::print("Allocating matrix memory using tiled UVM approach with {} tiles ({}x{})\n", T*T, T, T);
+    for (int i = 0; i < T * T; i++) {
+        // Allocate UVM memory for each tile separately
+        checkCudaErrors(cudaMallocManaged(&d_tiles[i], tileSize));
+    }
+    
+    // Copy data from host to device in tiles
+    for (int i = 0; i < T; i++) {
+        for (int j = 0; j < T; j++) {
+            for (int k = 0; k < B; k++) {
+                // Copy one row of the tile at a time
+                std::memcpy(
+                    d_tiles[i + j * T] + B * k,  // Destination: tile pointer + offset within tile
+                    originalMatrix + N * (j * B + k) + B * i,  // Source: row in original matrix
+                    B * sizeof(double)  // Copy B elements (one row of the tile)
+                );
+            }
+        }
+    }
     
     clock.logWithCurrentTime("Device data initialized");
 
@@ -655,7 +674,7 @@ void tiledLU(bool verify)
     // Row i, column j of the tile grid (each tile is B×B elements)
     auto getMatrixBlock = [&](int i, int j)
     {
-        return d_matrix + i * B + j * B * N; // Locate the start of the block
+        return d_tiles[i + j * T]; // Get pointer to the specific tile
     };
 
     // Initialize CUDA libraries
@@ -682,8 +701,8 @@ void tiledLU(bool verify)
         B,                  // Tile size (rows)
         B,                  // Tile size (columns)
         CUDA_R_64F,         // Data type
-        d_matrix,           // Matrix pointer
-        N,                  // Leading dimension
+        d_tiles[0],         // Any tile pointer will work for buffer size calculation
+        B,                  // Leading dimension is B for the tile
         CUDA_R_64F,         // Compute type
         &workspaceInBytesOnDevice,
         &workspaceInBytesOnHost));
@@ -730,7 +749,7 @@ void tiledLU(bool verify)
             B, B,                           // Tile dimensions
             CUDA_R_64F,                     // Data type
             getMatrixBlock(k, k),           // Input/output matrix block
-            N,                              // Leading dimension
+            B,                              // Leading dimension is B for the tile
             NULL,                           // No pivoting used
             CUDA_R_64F,                     // Compute type
             d_workspace,
@@ -756,8 +775,8 @@ void tiledLU(bool verify)
                 CUBLAS_DIAG_UNIT,           // Unit diagonal (LU specific)
                 B, B,                       // Tile dimensions
                 &one,                       // Scalar alpha
-                getMatrixBlock(k, k), N,    // Triangle matrix
-                getMatrixBlock(k, i), N));  // Right-hand side and result
+                getMatrixBlock(k, k), B,    // Triangle matrix with leading dimension B
+                getMatrixBlock(k, i), B));  // Right-hand side and result with leading dimension B
             tiledLUGraphCreator->endCaptureOperation();
         }
 
@@ -777,8 +796,8 @@ void tiledLU(bool verify)
                 CUBLAS_DIAG_NON_UNIT,       // Non-unit diagonal (LU specific)
                 B, B,                       // Tile dimensions
                 &one,                       // Scalar alpha
-                getMatrixBlock(k, k), N,    // Triangle matrix
-                getMatrixBlock(i, k), N));  // Right-hand side and result
+                getMatrixBlock(k, k), B,    // Triangle matrix with leading dimension B
+                getMatrixBlock(i, k), B));  // Right-hand side and result with leading dimension B
             tiledLUGraphCreator->endCaptureOperation();
 
             // Step 4: Update the remaining blocks in the trailing submatrix
@@ -795,10 +814,10 @@ void tiledLU(bool verify)
                     CUBLAS_OP_N,              // No transpose for second matrix
                     B, B, B,                  // Dimensions m,n,k
                     &minusOne,                // Alpha (negative for subtraction)
-                    getMatrixBlock(i, k), CUDA_R_64F, N,  // First matrix (L[i][k])
-                    getMatrixBlock(k, j), CUDA_R_64F, N,  // Second matrix (U[k][j])
+                    getMatrixBlock(i, k), CUDA_R_64F, B,  // First matrix (L[i][k]) with leading dimension B
+                    getMatrixBlock(k, j), CUDA_R_64F, B,  // Second matrix (U[k][j]) with leading dimension B
                     &one,                     // Beta (add to existing values)
-                    getMatrixBlock(i, j), CUDA_R_64F, N,  // Result matrix (A[i][j])
+                    getMatrixBlock(i, j), CUDA_R_64F, B,  // Result matrix (A[i][j]) with leading dimension B
                     CUBLAS_COMPUTE_64F,       // Compute precision
                     CUBLAS_GEMM_DEFAULT));    // Algorithm selection
                 tiledLUGraphCreator->endCaptureOperation();
@@ -830,23 +849,47 @@ void tiledLU(bool verify)
     // Verify the result if requested
     if (verify) {
         clock.logWithCurrentTime("Starting verification");
+        
+        // Allocate host memory for result matrix and U matrix
+        double *h_resultMatrix = nullptr;
         double *h_U = nullptr;
+        checkCudaErrors(cudaMallocHost(&h_resultMatrix, N * N * sizeof(double)));
         checkCudaErrors(cudaMallocHost(&h_U, N * N * sizeof(double)));
+        
+        // Copy data from device tiles to host result matrix
+        for (int i = 0; i < T; i++) {
+            for (int j = 0; j < T; j++) {
+                for (int k = 0; k < B; k++) {
+                    // Copy one row at a time
+                    std::memcpy(
+                        h_resultMatrix + N * (j * B + k) + B * i,  // Destination: row in result matrix
+                        d_tiles[i + j * T] + B * k,                // Source: row in tile
+                        B * sizeof(double)                         // Copy B elements (one row of the tile)
+                    );
+                }
+            }
+        }
+        
+        // Initialize U matrix
         memset(h_U, 0, N * N * sizeof(double));
-        cleanCusolverLUDecompositionResult(d_matrix, h_U, N);
+        
+        // Extract L and U matrices
+        cleanCusolverLUDecompositionResult(h_resultMatrix, h_U, N);
         
         extern bool forceGpuVerify;
         
         if (forceGpuVerify || N > 1000) {
             // Use the faster GPU-based verification
             fmt::print("Using GPU-accelerated verification\n");
-            fmt::print("Result passes verification: {}\n", verifyLUDecompositionGPU(originalMatrix, d_matrix, h_U, N));
+            fmt::print("Result passes verification: {}\n", verifyLUDecompositionGPU(originalMatrix, h_resultMatrix, h_U, N));
         } else {
             // For small matrices, CPU verification is fine
             fmt::print("Using CPU verification\n");
-            fmt::print("Result passes verification: {}\n", verifyLUDecomposition(originalMatrix, d_matrix, h_U, N));
+            fmt::print("Result passes verification: {}\n", verifyLUDecomposition(originalMatrix, h_resultMatrix, h_U, N));
         }
         
+        // Clean up verification memory
+        checkCudaErrors(cudaFreeHost(h_resultMatrix));
         checkCudaErrors(cudaFreeHost(h_U));
         clock.logWithCurrentTime("Verification completed");
     }
@@ -857,7 +900,12 @@ void tiledLU(bool verify)
     // Clean up resources
     checkCudaErrors(cudaFreeHost(originalMatrix));
     checkCudaErrors(cudaFreeHost(h_workspace));
-    checkCudaErrors(cudaFree(d_matrix));
+    
+    // Free all tile memory
+    for (int i = 0; i < T * T; i++) {
+        checkCudaErrors(cudaFree(d_tiles[i]));
+    }
+    
     checkCudaErrors(cudaFree(d_workspace));
 }
 

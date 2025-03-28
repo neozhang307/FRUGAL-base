@@ -1,7 +1,7 @@
 {
   "generic": {
-    "optimize": true,
-    "verify": true,
+    "optimize": false,
+    "verify": false,
     "repeat": 1,
     "useUM": false,
     "availableMemoryForUMInMiB": 4096
@@ -10,7 +10,7 @@
     "loadExistingPlan": false,
     "planPath": "luOptimizationPlan.json",
     "mergeConcurrentCudaGraphNodes": true,
-    "maxTaskGroupAmount": 1000,
+    "maxTaskGroupAmount": 100,
     "byPassingFirstStep": true,
     "prefetchingBandwidthInGB": 380,
     "acceptableRunningTimeFactor": 0.0,
@@ -24,7 +24,7 @@
   "execution": {
     "useNvlink": false,
     "measurePeakMemoryUsage": true,
-    "enableDebugOutput": true,
+    "enableDebugOutput": false,
     "enableVerboseOutput": false,
     "mainDeviceId": 0,
     "storageDeviceId": 1
@@ -41,7 +41,7 @@
     "iterationBatchSize": 1
   },
   "lu": {
-    "n": 40960,
+    "n": 102400,
     "t": 4,
     "mode": 0
   }

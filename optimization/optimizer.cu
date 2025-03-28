@@ -979,7 +979,7 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
                 << ", task groups: " << newNumSets << std::endl;
       
       // If increasing the limit didn't reduce the count, stop merging
-      if (newNumSets >= previousNumSets) {
+      if (newNumSets >= previousNumSets&&nodeLimit>100) {
         std::cout << "[DEBUG-OUTPUT-OPTIMIZER] No further reduction possible with limit " 
                   << nodeLimit << std::endl;
         break;
