@@ -1,6 +1,6 @@
 {
   "generic": {
-    "optimize": false,
+    "optimize": true,
     "verify": false,
     "repeat": 1,
     "useUM": false,

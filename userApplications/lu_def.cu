@@ -632,6 +632,9 @@ void tiledLU(bool verify)
     memopt::SystemWallClock clock;
     clock.start();
     
+    // For memory usage tracking
+    PeakMemoryUsageProfiler peakMemoryUsageProfiler;
+    
     memopt::initializeCudaDevice(true); // Display device info
     
     clock.logWithCurrentTime("Initializing host data");
@@ -839,11 +842,39 @@ void tiledLU(bool verify)
     // Execute the graph and measure time
     clock.logWithCurrentTime("Start execution");
     memopt::CudaEventClock cudaEventClock;
+   
+    //warmup
+    checkCudaErrors(cudaGraphLaunch(graphExec, s));
+    //reset
+    checkCudaErrors(cudaDeviceSynchronize());
+    for (int i = 0; i < T; i++) {
+        for (int j = 0; j < T; j++) {
+            for (int k = 0; k < B; k++) {
+                // Copy one row of the tile at a time using cudaMemcpy
+                checkCudaErrors(cudaMemcpy(
+                    d_tiles[i + j * T] + B * k,  // Destination: tile pointer + offset within tile
+                    originalMatrix + N * (j * B + k) + B * i,  // Source: row in original matrix
+                    B * sizeof(double),  // Copy B elements (one row of the tile)
+                    cudaMemcpyHostToDevice  // Direction of copy
+                ));
+            }
+        }
+    }
+     // Start memory profiling before execution
+    checkCudaErrors(cudaDeviceSynchronize());
+    peakMemoryUsageProfiler.start();
+    
     cudaEventClock.start(s);
     checkCudaErrors(cudaGraphLaunch(graphExec, s));
-    checkCudaErrors(cudaStreamSynchronize(s));
+    // checkCudaErrors(cudaStreamSynchronize(s));
     cudaEventClock.end(s);
     checkCudaErrors(cudaDeviceSynchronize());
+    
+    // End memory profiling and report results
+    const auto peakMemoryUsage = peakMemoryUsageProfiler.end();
+    fmt::print("Peak memory usage (MiB): {:.2f}\n", 
+              static_cast<float>(peakMemoryUsage) / 1024.0 / 1024.0);
+    
     clock.logWithCurrentTime("Execution completed");
 
     // Verify the result if requested
