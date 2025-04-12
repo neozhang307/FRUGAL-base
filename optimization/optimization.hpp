@@ -132,4 +132,48 @@ void executeOptimizedGraphRepeatedly(
   std::map<void *, void *> &managedDeviceArrayToHostArrayMap
 );
 
+/// @brief Executes an optimized computation graph for evaluation purposes
+/// @param optimizedGraph The optimized computation graph to execute
+/// @param executeRandomTask Callback to execute specific computation tasks
+/// @param runningTime Output parameter to store the execution time
+/// @param memManager Reference to the MemoryManager instance to use
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime,
+  MemoryManager &memManager
+);
+
+/// @brief Executes an optimized computation graph for evaluation purposes using singleton MemoryManager
+/// @param optimizedGraph The optimized computation graph to execute
+/// @param executeRandomTask Callback to execute specific computation tasks
+/// @param runningTime Output parameter to store the execution time
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime
+);
+
+/// @brief Executes an optimized computation graph for evaluation with simplified callback
+/// @param optimizedGraph The optimized computation graph to execute
+/// @param executeRandomTaskBase Simplified callback function to execute specific tasks
+/// @param runningTime Output parameter for recording execution time
+/// @param memManager Reference to the MemoryManager instance to use
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime,
+  MemoryManager &memManager
+);
+
+/// @brief Executes an optimized computation graph for evaluation with singleton MemoryManager and simplified callback
+/// @param optimizedGraph The optimized computation graph to execute
+/// @param executeRandomTaskBase Simplified callback function to execute specific tasks
+/// @param runningTime Output parameter for recording execution time
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime
+);
+
 }  // namespace memopt
