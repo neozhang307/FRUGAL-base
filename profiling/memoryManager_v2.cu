@@ -506,68 +506,98 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
-  // auto currentAddressMap = this->getEditableCurrentAddressMap();
-
-  // for (auto &[oldAddr, newAddr] : currentAddressMap) {
-  //   checkCudaErrors(cudaMemcpy(
-  //     // this->getDeviceToHostArrayMap().at(oldAddr),
-  //     this->getStoragePtr(oldAddr),
-  //     newAddr,
-  //     this->getSize(oldAddr),
-  //     storageConfig.offloadMemcpyKind
-  //   ));
-  //   checkCudaErrors(cudaFree(newAddr));
-  // }
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
 
   for (auto info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
-
+    
+    // Handle case where storageAddress is nullptr
+    if(info.storageAddress == nullptr) {
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-OFFLOAD] Storage address is nullptr for %p, allocating now\n", 
+                info.managedMemoryAddress);
+      }
+      
+      // Allocate storage space first
+      void* storagePtr = allocateInStorage(info.managedMemoryAddress, 
+                                           storageConfig.storageDeviceId, 
+                                           storageConfig.useNvlink);
+      
+      // Update the storage address in memoryArrayInfos
+      ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
+      if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+        memoryArrayInfos[arrayId].storageAddress = storagePtr;
+        
+        if (verbose) {
+          fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
+                  arrayId, storagePtr);
+        }
+      }
+      
+      // Use updated storage address
+      info.storageAddress = storagePtr;
+    }
+    
+    // Now copy data from device to storage
     checkCudaErrors(cudaMemcpyAsync(
-      // this->getDeviceToHostArrayMap().at(oldAddr),
       info.storageAddress,
       info.deviceAddress,
       info.size,
       storageConfig.offloadMemcpyKind,
       stream
     ));
-    checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
+    checkCudaErrors(cudaFreeAsync(info.deviceAddress, stream));
     checkCudaErrors(cudaStreamSynchronize(stream));
     
     ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
     memoryArrayInfos[arrayId].deviceAddress = nullptr;
-
-    // info.deviceAddress=nullptr;
   }
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
-  // auto currentAddressMap = this->getEditableCurrentAddressMap();
-  // for (auto &[oldAddr, newAddr] : currentAddressMap) {
-  //   checkCudaErrors(cudaMemcpyAsync(
-  //     // this->getDeviceToHostArrayMap().at(oldAddr),
-  //     this->getStoragePtr(oldAddr),
-  //     newAddr,
-  //     this->getSize(oldAddr),
-  //     storageConfig.offloadMemcpyKind,
-  //     stream
-  //   ));
-  //   checkCudaErrors(cudaFreeAsync(newAddr, stream));
-  //   this->removeCurrentMapping(oldAddr);
-  // }
+  // Only print debug information if verbose output is enabled
+  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
 
   for (auto info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
+    
+    // Handle case where storageAddress is nullptr
+    if(info.storageAddress == nullptr) {
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-OFFLOAD-ASYNC] Storage address is nullptr for %p, allocating now\n", 
+                info.managedMemoryAddress);
+      }
+      
+      // Allocate storage space first
+      void* storagePtr = allocateInStorage(info.managedMemoryAddress, 
+                                          storageConfig.storageDeviceId, 
+                                          storageConfig.useNvlink);
+      
+      // Update the storage address in memoryArrayInfos
+      ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
+      if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+        memoryArrayInfos[arrayId].storageAddress = storagePtr;
+        
+        if (verbose) {
+          fprintf(stderr, "[DEBUG-OFFLOAD-ASYNC] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
+                  arrayId, storagePtr);
+        }
+      }
+      
+      // Use updated storage address
+      info.storageAddress = storagePtr;
+    }
 
     checkCudaErrors(cudaMemcpyAsync(
-      // this->getDeviceToHostArrayMap().at(oldAddr),
       info.storageAddress,
       info.deviceAddress,
       info.size,
       storageConfig.offloadMemcpyKind,
       stream
     ));
-    checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
-    // info.deviceAddress=nullptr;
+    checkCudaErrors(cudaFreeAsync(info.deviceAddress, stream));
+    
     ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
     memoryArrayInfos[arrayId].deviceAddress = nullptr;
   }
@@ -767,5 +797,130 @@ template void MemoryManager::registerApplicationOutput<int>(int*);
 template void MemoryManager::registerApplicationOutput<char>(char*);
 template void MemoryManager::registerApplicationOutput<unsigned int>(unsigned int*);
 template void MemoryManager::registerApplicationOutput<void>(void*);
+
+// GB-based memory management functions
+bool MemoryManager::consumeGPUMemory(size_t sizeInGB) {
+  // Convert GB to bytes
+  size_t sizeInBytes = sizeInGB * 1024ULL * 1024ULL * 1024ULL;
+  void* ptr = nullptr;
+  
+  // We use the main GPU device
+  int currentDevice;
+  cudaGetDevice(&currentDevice);
+  cudaSetDevice(storageConfig.mainDeviceId);
+  
+  // Attempt to allocate memory
+  cudaError_t result = cudaMalloc(&ptr, sizeInBytes);
+  
+  // Restore original device
+  cudaSetDevice(currentDevice);
+  
+  if (result != cudaSuccess) {
+    fprintf(stderr, "[MEMORY-INFO] Failed to allocate %zu GB of dummy memory: %s\n", 
+            sizeInGB, cudaGetErrorString(result));
+    return false;
+  }
+  
+  // Add to our tracking vector
+  dummyAllocations.emplace_back(ptr, sizeInBytes);
+  
+  fprintf(stderr, "[MEMORY-INFO] Successfully allocated %zu GB of dummy memory (%p)\n", 
+          sizeInGB, ptr);
+  
+  // Initialize the memory to prevent GPU driver optimizations that might not actually allocate
+  // The device will actually allocate the memory when it's first written to
+  cudaMemset(ptr, 0xAA, sizeInBytes);
+  
+  return true;
+}
+
+double MemoryManager::getConsumedGPUMemory() const {
+  size_t totalSizeInBytes = 0;
+  
+  // Sum up all dummy allocations
+  for (const auto& alloc : dummyAllocations) {
+    totalSizeInBytes += alloc.sizeInBytes;
+  }
+  
+  // Convert to GB
+  return static_cast<double>(totalSizeInBytes) / (1024.0 * 1024.0 * 1024.0);
+}
+
+bool MemoryManager::releaseDummyMemory() {
+  if (dummyAllocations.empty()) {
+    return false;
+  }
+  
+  // Free all dummy allocations
+  for (const auto& alloc : dummyAllocations) {
+    cudaFree(alloc.ptr);
+  }
+  
+  size_t count = dummyAllocations.size();
+  double totalGB = getConsumedGPUMemory();
+  
+  // Clear the vector
+  dummyAllocations.clear();
+  
+  fprintf(stderr, "[MEMORY-INFO] Released %zu dummy allocations (%.2f GB total)\n", 
+          count, totalGB);
+  
+  return true;
+}
+
+bool MemoryManager::claimNecessaryMemory(size_t sizeInGB) {
+  // Release any existing dummy allocations
+  if (!dummyAllocations.empty()) {
+    releaseDummyMemory();
+  }
+  
+  // Get total and free memory on the device
+  size_t free, total;
+  int currentDevice;
+  cudaGetDevice(&currentDevice);
+  cudaSetDevice(storageConfig.mainDeviceId);
+  
+  cudaError_t result = cudaMemGetInfo(&free, &total);
+  if (result != cudaSuccess) {
+    fprintf(stderr, "[MEMORY-ERROR] Failed to get memory info: %s\n", 
+            cudaGetErrorString(result));
+    cudaSetDevice(currentDevice);
+    return false;
+  }
+  
+  // Convert to GB for calculations and logging
+  double totalGB = static_cast<double>(total) / (1024.0 * 1024.0 * 1024.0);
+  double freeGB = static_cast<double>(free) / (1024.0 * 1024.0 * 1024.0);
+  
+  // Calculate how much memory to consume to leave exactly the requested amount
+  if (sizeInGB > freeGB) {
+    fprintf(stderr, "[MEMORY-ERROR] Cannot claim %.2f GB - only %.2f GB available\n", 
+            static_cast<double>(sizeInGB), freeGB);
+    cudaSetDevice(currentDevice);
+    return false;
+  }
+  
+  double consumeGB = freeGB - sizeInGB;
+  
+  // Ensure we don't consume everything by leaving at least 1GB headroom
+  if (consumeGB > 1.0) {
+    consumeGB -= 1.0;
+  }
+  
+  // Log what we're doing
+  fprintf(stderr, "[MEMORY-INFO] Total: %.2f GB, Free: %.2f GB\n", totalGB, freeGB);
+  fprintf(stderr, "[MEMORY-INFO] Consuming %.2f GB to leave %.2f GB available\n", 
+          consumeGB, static_cast<double>(sizeInGB));
+  
+  // Restore original device
+  cudaSetDevice(currentDevice);
+  
+  // Consume the calculated amount of memory
+  if (consumeGB > 0) {
+    return consumeGPUMemory(static_cast<size_t>(consumeGB));
+  }
+  
+  return true;
+}
 
 } // namespace memopt

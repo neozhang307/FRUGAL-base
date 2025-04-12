@@ -8,6 +8,16 @@ MemoryManager& MemoryManager::getInstance() {
   return instance;
 }
 
+// Destructor
+MemoryManager::~MemoryManager() {
+  // Release any remaining dummy memory allocations
+  if (!dummyAllocations.empty()) {
+    fprintf(stderr, "[MEMORY-INFO] Cleaning up %zu dummy allocations in MemoryManager destructor\n", 
+            dummyAllocations.size());
+    releaseDummyMemory();
+  }
+}
+
 // Const accessor methods
 const std::vector<void*>& MemoryManager::getManagedAddresses() const { 
   return managedMemoryAddresses; 
@@ -391,5 +401,11 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
     // }
   }
 }
+
+// Functions moved to memoryManager_v2.cu with GB units
+// consumeGPUMemory
+// getConsumedGPUMemory
+// releaseDummyMemory
+// claimNecessaryMemory
 
 } // namespace memopt

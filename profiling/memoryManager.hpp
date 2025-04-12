@@ -119,6 +119,17 @@ private:
         offloadMemcpyKind(cudaMemcpyDeviceToHost) {}
   };
   inline static StorageConfig storageConfig;
+  
+  /** @brief Information about dummy memory allocations used for testing */
+  struct DummyAllocation {
+    void* ptr;              // Pointer to allocated memory
+    size_t sizeInBytes;     // Size of allocation in bytes
+    
+    DummyAllocation(void* p, size_t s) : ptr(p), sizeInBytes(s) {}
+  };
+  
+  /** @brief Container to track dummy memory allocations used for testing memory pressure */
+  inline static std::vector<DummyAllocation> dummyAllocations;
 
 public:
   /**
@@ -187,6 +198,13 @@ public:
    * @return Reference to the MemoryManager instance
    */
   static MemoryManager& getInstance();
+  
+  /**
+   * @brief Destructor that cleans up all allocated resources
+   * 
+   * Ensures that any dummy memory allocations are properly freed
+   */
+  ~MemoryManager();
 
   // Accessor methods for the private members
   const std::vector<void*>& getManagedAddresses() const;
@@ -397,6 +415,48 @@ public:
    * @return Array ID if found, -1 if not found, -2 if addr is nullptr
    */
   ArrayId findArrayIdByAddress(void* addr) const;
+  
+  /**
+   * @brief Consumes a specified amount of GPU memory to simulate memory pressure
+   * 
+   * This function allocates a specified amount of memory on the GPU and keeps the pointer
+   * internally in the MemoryManager. The memory will not be freed until releaseDummyMemory()
+   * is called or the MemoryManager is destroyed. This is useful for testing memory 
+   * optimization strategies under pressure.
+   * 
+   * @param sizeInGB Size of the allocation in gigabytes
+   * @return True if allocation was successful, false otherwise
+   */
+  bool consumeGPUMemory(size_t sizeInGB);
+  
+  /**
+   * @brief Returns the total amount of memory consumed by dummy allocations in GB
+   * 
+   * @return Total memory consumed in GB
+   */
+  double getConsumedGPUMemory() const;
+  
+  /**
+   * @brief Releases all memory allocated with consumeGPUMemory
+   * 
+   * This function frees all memory that was allocated to simulate memory pressure.
+   * 
+   * @return True if any memory was freed, false if nothing was allocated
+   */
+  bool releaseDummyMemory();
+  
+  /**
+   * @brief Limits available GPU memory to only the specified amount
+   * 
+   * This function calculates the total GPU memory, subtracts the requested amount,
+   * and allocates the remainder so only the claimed amount is available.
+   * It's useful for testing memory optimization strategies under controlled
+   * memory availability conditions.
+   * 
+   * @param sizeInGB Size of memory to leave available in gigabytes
+   * @return True if successful, false if operation failed (e.g., not enough memory)
+   */
+  bool claimNecessaryMemory(size_t sizeInGB);
 
   // Make these functions friends so they can access private members
   template <typename T>
