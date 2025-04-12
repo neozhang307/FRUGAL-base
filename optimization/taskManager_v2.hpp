@@ -435,7 +435,7 @@ public:
             annotateNextTask(taskId, taskInfo.inputs, taskInfo.outputs, stream);
             
             // Execute with original arguments
-            taskInfo.taskFunction->execute(stream);
+            taskInfo.taskFunction->executeWithProcessedArgs(stream);
         } else {
             // Production mode: apply getAddress to inputs/outputs for annotation
             std::vector<void*> processedInputs;
@@ -454,7 +454,7 @@ public:
             }
             
             // Annotate with processed pointers
-            annotateNextTask(taskId, processedInputs, processedOutputs, stream);
+            // annotateNextTask(taskId, processedInputs, processedOutputs, stream);
             
             // Execute with processed arguments
             taskInfo.taskFunction->executeWithProcessedArgs(stream);

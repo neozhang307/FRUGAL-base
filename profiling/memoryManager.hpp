@@ -178,7 +178,7 @@ public:
     //   }
     // }
     
-    return nullptr;//oldAddress;
+    return oldAddress;
   }
 
   /**

@@ -758,10 +758,18 @@ void MemoryManager::registerManagedMemoryAddress(T *devPtr, size_t size) {
     // Will be removed in the future once transition to memoryArrayInfos is complete
     this->getEditableAddressToIndexMap()[ptr] = arrayId;
     
+    //malloc memory for device address
+    void* devicePtr;
+    // checkCudaErrors(cudaMalloc(&devicePtr, size));
+    //copy data from managed memory to device memory
+    // checkCudaErrors(cudaMemcpy(devicePtr, ptr, size, cudaMemcpyDeviceToDevice));
+    //free managed memory
+    // checkCudaErrors(cudaFree(ptr));
+
     // Create and populate new MemoryArrayInfo structure
     MemoryArrayInfo info;
     info.managedMemoryAddress = ptr;
-    info.deviceAddress = ptr;         // Initially, the device address is the same as the original
+    info.deviceAddress = ptr;//devicePtr;         // Initially, the device address is the same as the original
     info.storageAddress = nullptr;    // Initially, no storage allocated
     info.size = size;
     

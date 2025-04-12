@@ -98,16 +98,16 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
     void* srcAddress = memManager.getAddress(d_tiles[i]);
     
     // If getAddress returns nullptr, get data from storage instead
-    if (srcAddress == nullptr) {
+    if (srcAddress == d_tiles[i]) {
       srcAddress = memManager.getStoragePtr(d_tiles[i]);
       if(srcAddress!=nullptr)
-      {}  // checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyHostToHost));
+        checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyHostToHost));
       else
         printf("ERROR\n");
     }
     else
     {
-      // checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyDefault));
+        checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyDefault));
     }
   }
   checkCudaErrors(cudaDeviceSynchronize());
