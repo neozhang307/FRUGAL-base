@@ -325,6 +325,10 @@ OptimizationOutput convertToOptimizationOutput(
   }
 
   optimizedGraph.optimal = true;
+  
+  // Copy memory usage information
+  optimizedGraph.originalMemoryUsage = secondStepOutput.originalMemoryUsage;
+  optimizedGraph.anticipatedPeakMemoryUsage = secondStepOutput.anticipatedPeakMemoryUsage;
 
   // Add arrays that should be on device initially
   for (auto index : secondStepOutput.indicesOfArraysInitiallyOnDevice) {

@@ -55,6 +55,20 @@ struct OptimizationOutput {
    * When false, the solution may be a heuristic approximation.
    */
   bool optimal;
+  
+  /**
+   * @brief Original memory usage before optimization (in MiB)
+   * 
+   * The peak memory usage of the original computation graph before any optimization
+   */
+  double originalMemoryUsage;
+  
+  /**
+   * @brief Anticipated peak memory usage after optimization (in MiB)
+   * 
+   * The expected peak memory usage after applying the optimization strategy
+   */
+  double anticipatedPeakMemoryUsage;
 
   /**
    * @brief List of all node IDs in the computation graph

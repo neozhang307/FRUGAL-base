@@ -1210,6 +1210,10 @@ struct IntegerProgrammingSolver {
 
       // Solution found - mark as optimal
       output.optimal = true;
+      
+      // Copy memory usage information
+      output.originalMemoryUsage = originalPeakMemoryUsage;
+      output.anticipatedPeakMemoryUsage = peakMemoryUsage->solution_value();
 
       // Extract arrays that should be initially on the device
       for (int i = 0; i < numberOfArraysManaged; i++) {

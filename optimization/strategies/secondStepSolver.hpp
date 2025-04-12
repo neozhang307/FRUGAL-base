@@ -62,6 +62,8 @@ class SecondStepSolver {
     typedef std::tuple<TaskGroupId, ArrayId, TaskGroupId> Offload;  // When to offload array to host
 
     bool optimal;                                  // Whether a feasible solution was found
+    double originalMemoryUsage;                    // Original memory usage before optimization (in MiB)
+    double anticipatedPeakMemoryUsage;             // Anticipated peak memory usage after optimization (in MiB)
     std::vector<ArrayId> indicesOfArraysInitiallyOnDevice;  // Arrays that start on the device
     std::vector<Prefetch> prefetches;              // List of prefetch operations to schedule
     std::vector<Offload> offloadings;              // List of offload operations to schedule
