@@ -144,4 +144,60 @@ void executeOptimizedGraphRepeatedly(
   );
 }
 
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  LOG_TRACE();
+  Executor::getInstance()->executeOptimizedGraphForEvaluation(
+    optimizedGraph,
+    executeRandomTask,
+    runningTime,
+    memManager
+  );
+}
+
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime
+) {
+  LOG_TRACE();
+  Executor::getInstance()->executeOptimizedGraphForEvaluation(
+    optimizedGraph,
+    executeRandomTask,
+    runningTime
+  );
+}
+
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  LOG_TRACE();
+  Executor::getInstance()->executeOptimizedGraphForEvaluation(
+    optimizedGraph,
+    executeRandomTaskBase,
+    runningTime,
+    memManager
+  );
+}
+
+void executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime
+) {
+  LOG_TRACE();
+  Executor::getInstance()->executeOptimizedGraphForEvaluation(
+    optimizedGraph,
+    executeRandomTaskBase,
+    runningTime
+  );
+}
+
 }  // namespace memopt

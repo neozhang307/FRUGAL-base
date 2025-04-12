@@ -393,8 +393,7 @@ void Executor::executeOptimizedGraph(
   cudaGraph_t graph = buildOptimizedGraph(
     optimizedGraph, executeRandomTask, memManager, stream);
   
-  // Execute the optimized graph
-  executeGraph(graph, stream, runningTime);
+
   
   // Clean up resources
   LOG_TRACE_WITH_INFO("Clean up");
@@ -719,5 +718,205 @@ void Executor::executeOptimizedGraphRepeatedly(
 }
 
 
+
+/**
+ * @brief Implementation of executeOptimizedGraphForEvaluation
+ * 
+ * This function executes a computation graph that has been optimized to reduce memory usage
+ * for evaluation purposes. It is similar to executeOptimizedGraph but with specific
+ * modifications for evaluating performance characteristics.
+ *
+ * @param optimizedGraph The optimized computation graph to execute
+ * @param executeRandomTask Callback to execute specific computation tasks
+ * @param runningTime Output parameter to store the execution time
+ * @param memManager Reference to the MemoryManager instance to use
+ */
+void Executor::executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  LOG_TRACE_WITH_INFO("Initialize for evaluation");
+  
+  // Create CUDA stream
+  cudaStream_t stream;
+  checkCudaErrors(cudaStreamCreate(&stream));
+  
+  // Initialize memory setup and get initial data graph
+  memManager.configureStorage(
+    ConfigurationManager::getConfig().execution.mainDeviceId,
+    ConfigurationManager::getConfig().execution.storageDeviceId,
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  
+  // Move all managed data to storage (host or secondary GPU)
+  memManager.offloadAllManagedMemoryToStorage();
+  fprintf(stderr, "[DEBUG] offloadAllManagedMemoryToStorage done\n");
+  cudaGraphExec_t initialDataGraphExec;// = initializeMemory(
+  cudaGraph_t graphForInitialDataDistribution;
+    // optimizedGraph, memManager, stream);
+  {
+  
+    LOG_TRACE_WITH_INFO("Initialize managed data distribution");
+  
+    checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+    
+    // Prefetch arrays needed at the start
+    memManager.prefetchAllDataToDeviceAsync(
+      optimizedGraph.arraysInitiallyAllocatedOnDevice,
+      stream
+    );
+    
+    // End capture and create graph
+    
+    checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
+    
+    // Instantiate and execute the initial data distribution graph
+    // cudaGraphExec_t initialDataGraphExec;
+    checkCudaErrors(cudaGraphInstantiate(
+      &initialDataGraphExec, graphForInitialDataDistribution, nullptr, nullptr, 0));
+   
+    checkCudaErrors(cudaDeviceSynchronize());
+    
+    // Cleanup the capture graph but keep the executable
+
+    
+  }
+  fprintf(stderr, "[DEBUG] initializeMemory done\n");
+  
+  // Build the optimized execution graph
+  cudaGraph_t graph = buildOptimizedGraph(
+    optimizedGraph, executeRandomTask, memManager, stream);
+  
+  // Execute the optimized graph
+  // executeGraph(graph, stream, runningTime);
+    // Execute the optimized graph
+  {
+    LOG_TRACE_WITH_INFO("Execute the new CUDA Graph");
+    
+    // Set up profiling if requested
+    PeakMemoryUsageProfiler peakMemoryUsageProfiler;
+    CudaEventClock cudaEventClock;
+    
+    // Instantiate the graph for execution
+    cudaGraphExec_t graphExec;
+    checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
+    
+    // Upload the graph to the device for faster execution
+    checkCudaErrors(cudaGraphUpload(graphExec, stream));
+    checkCudaErrors(cudaStreamSynchronize(stream));
+    
+    // Start memory usage profiling if requested
+    if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
+      peakMemoryUsageProfiler.start();
+    }
+    
+    // Execute and time the graph
+    cudaEventClock.start();
+     checkCudaErrors(cudaGraphLaunch(initialDataGraphExec, stream));
+    checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    cudaEventClock.end();
+    checkCudaErrors(cudaDeviceSynchronize());
+    
+    // Report peak memory usage if requested
+    if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
+      const auto peakMemoryUsage = peakMemoryUsageProfiler.end();
+      LOG_TRACE_WITH_INFO(
+        "Peak memory usage (MiB): %.2f",
+        static_cast<float>(peakMemoryUsage) / 1024.0 / 1024.0
+      );
+    }
+    
+    // Store the execution time
+    runningTime = cudaEventClock.getTimeInSeconds();
+    
+    // Cleanup graph execution resources
+    checkCudaErrors(cudaGraphExecDestroy(graphExec));
+  }
+
+  // Clean up resources
+  LOG_TRACE_WITH_INFO("Clean up");
+  
+  // Copy remaining data back to storage
+  memManager.offloadRemainedManagedMemoryToStorage();
+  
+  // Clean up CUDA resources
+  checkCudaErrors(cudaGraphDestroy(graphForInitialDataDistribution));
+  checkCudaErrors(cudaGraphExecDestroy(initialDataGraphExec));
+  checkCudaErrors(cudaGraphDestroy(graph));
+  checkCudaErrors(cudaStreamDestroy(stream));
+  
+  // Reset Storage Config
+  memManager.ResetStorageConfig();
+}
+
+/**
+ * @brief Executes an optimized graph for evaluation using singleton MemoryManager
+ * 
+ * This version uses the singleton instance of MemoryManager.
+ *
+ * @param optimizedGraph The optimized computation graph to execute
+ * @param executeRandomTask Callback to execute specific computation tasks
+ * @param runningTime Output parameter to store the execution time
+ */
+void Executor::executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime
+) {
+  // Call the implementation version that takes a MemoryManager instance
+  executeOptimizedGraphForEvaluation(optimizedGraph, executeRandomTask, runningTime, MemoryManager::getInstance());
+}
+
+/**
+ * @brief Executes an optimized computation graph for evaluation with simplified callback
+ * 
+ * This overload accepts an ExecuteRandomTaskBase callback that doesn't require address mapping.
+ * It wraps the simplified callback with an adapter that provides the mapping.
+ *
+ * @param optimizedGraph The optimized computation graph to execute
+ * @param executeRandomTaskBase Simplified callback function to execute specific tasks
+ * @param runningTime Output parameter for recording execution time
+ * @param memManager Reference to the MemoryManager instance to use
+ */
+void Executor::executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  // Adapter to convert ExecuteRandomTaskBase to ExecuteRandomTask
+  ExecuteRandomTask executeRandomTask = [executeRandomTaskBase](
+    int taskId, std::map<void *, void *> addressMapping, cudaStream_t stream
+  ) {
+    return executeRandomTaskBase(taskId, stream);
+  };
+  
+  // Call the main implementation
+  executeOptimizedGraphForEvaluation(optimizedGraph, executeRandomTask, runningTime, memManager);
+}
+
+/**
+ * @brief Executes an optimized computation graph for evaluation with singleton MemoryManager and simplified callback
+ * 
+ * This version uses the singleton MemoryManager instance and a simplified callback.
+ *
+ * @param optimizedGraph The optimized computation graph to execute
+ * @param executeRandomTaskBase Simplified callback function to execute specific tasks
+ * @param runningTime Output parameter for recording execution time
+ */
+void Executor::executeOptimizedGraphForEvaluation(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTaskBase executeRandomTaskBase,
+  float &runningTime
+) {
+  executeOptimizedGraphForEvaluation(
+    optimizedGraph, 
+    executeRandomTaskBase, 
+    runningTime, 
+    MemoryManager::getInstance()
+  );
+}
 
 }  // namespace memopt

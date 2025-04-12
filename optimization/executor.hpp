@@ -363,6 +363,71 @@ class Executor {
     float &runningTime,
     std::map<void *, void *> &managedDeviceArrayToHostArrayMap
   );
+  
+  /**
+   * @brief Executes an optimized computation graph for evaluation with provided MemoryManager
+   * 
+   * This method is a variant of executeOptimizedGraph specifically designed for evaluation purposes.
+   * It follows the same basic flow but may include additional instrumentation or logging.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTask Callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   * @param memManager Reference to the MemoryManager instance to use
+   */
+  void executeOptimizedGraphForEvaluation(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    float &runningTime,
+    MemoryManager &memManager
+  );
+  
+  /**
+   * @brief Executes an optimized computation graph for evaluation using singleton MemoryManager
+   * 
+   * This is a convenience wrapper that uses the singleton MemoryManager instance.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTask Callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   */
+  void executeOptimizedGraphForEvaluation(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    float &runningTime
+  );
+  
+  /**
+   * @brief Executes an optimized computation graph for evaluation with simplified callback
+   * 
+   * This overload accepts an ExecuteRandomTaskBase callback that doesn't require address mapping.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTaskBase Simplified callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   * @param memManager Reference to the MemoryManager instance to use
+   */
+  void executeOptimizedGraphForEvaluation(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTaskBase executeRandomTaskBase,
+    float &runningTime,
+    MemoryManager &memManager
+  );
+  
+  /**
+   * @brief Executes an optimized computation graph for evaluation with singleton MemoryManager and simplified callback
+   * 
+   * This version uses the singleton MemoryManager instance and a simplified callback.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTaskBase Simplified callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   */
+  void executeOptimizedGraphForEvaluation(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTaskBase executeRandomTaskBase,
+    float &runningTime
+  );
 
  protected:
   /**
