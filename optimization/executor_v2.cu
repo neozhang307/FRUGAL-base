@@ -268,16 +268,7 @@ cudaGraphExec_t Executor::initializeMemory(
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
   
   // Configure memory manager storage
-  memManager.configureStorage(
-    ConfigurationManager::getConfig().execution.mainDeviceId,
-    ConfigurationManager::getConfig().execution.storageDeviceId,
-    ConfigurationManager::getConfig().execution.useNvlink
-  );
-  
-  // Move all managed data to storage (host or secondary GPU)
-  // The control would automatically go back to the main device. 
-  memManager.offloadAllManagedMemoryToStorage();
-  
+
   // Clear current memory mappings
   // memManager.clearCurrentMappings();
   
@@ -385,9 +376,19 @@ void Executor::executeOptimizedGraph(
   checkCudaErrors(cudaStreamCreate(&stream));
   
   // Initialize memory setup and get initial data graph
+    memManager.configureStorage(
+    ConfigurationManager::getConfig().execution.mainDeviceId,
+    ConfigurationManager::getConfig().execution.storageDeviceId,
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  
+  // Move all managed data to storage (host or secondary GPU)
+  // The control would automatically go back to the main device. 
+  memManager.offloadAllManagedMemoryToStorage();
+  fprintf(stderr, "[DEBUG] offloadAllManagedMemoryToStorage done\n");
   cudaGraphExec_t initialDataGraphExec = initializeMemory(
     optimizedGraph, memManager, stream);
-  
+  fprintf(stderr, "[DEBUG] initializeMemory done\n");
   // Build the optimized execution graph
   cudaGraph_t graph = buildOptimizedGraph(
     optimizedGraph, executeRandomTask, memManager, stream);

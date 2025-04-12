@@ -100,35 +100,31 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
     // If getAddress returns nullptr, get data from storage instead
     if (srcAddress == d_tiles[i]) {
       srcAddress = memManager.getStoragePtr(d_tiles[i]);
-      if(srcAddress!=nullptr)
-        checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyHostToHost));
-      else
+      if(srcAddress==nullptr)
         printf("ERROR\n");
     }
-    else
-    {
-        checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyDefault));
-    }
+
+     checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyDefault));
   }
   checkCudaErrors(cudaDeviceSynchronize());
-  auto getAEntry = [&](size_t row, size_t col) {
-    return A[row + col * n];
-  };
+  // auto getAEntry = [&](size_t row, size_t col) {
+  //   return A[row + col * n];
+  // };
 
-  auto getLEntry = [&](size_t row, size_t col) {
-    if (row < col) {
-      return static_cast<double>(0);
-    }
-    const size_t i = row / b;
-    const size_t k = row - (i * b);
-    const size_t j = col / b;
-    const size_t l = col - (j * b);
+  // auto getLEntry = [&](size_t row, size_t col) {
+  //   if (row < col) {
+  //     return static_cast<double>(0);
+  //   }
+  //   const size_t i = row / b;
+  //   const size_t k = row - (i * b);
+  //   const size_t j = col / b;
+  //   const size_t l = col - (j * b);
 
-    return h_tiles[i + j * t][k + l * b];
-  };
+  //   return h_tiles[i + j * t][k + l * b];
+  // };
 
-  // Only check the last row;
-  const size_t rowIndex = n - 1;
+  // // Only check the last row;
+  // const size_t rowIndex = n - 1;
 
   const size_t rowLength = min((size_t)1024, n);
 
@@ -164,11 +160,28 @@ void initializeHostData(double *h_originalMatrix) {
 }
 
 void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_tiles) {
+  fprintf(stderr, "initializeDeviceData\n");
   for (int i = 0; i < T; i++) {
     for (int j = 0; j < T; j++) {
       for (int k = 0; k < B; k++) {
+        auto& memManager = MemoryManager::getInstance();
+        void* srcAddress = memManager.getAddress(d_tiles[i + j * T]);
+        
+        // If getAddress returns save value, try to get data from storage instead
+        if (srcAddress == d_tiles[i]) {
+          srcAddress = memManager.getStoragePtr(d_tiles[i + j * T]);
+          if(srcAddress==nullptr)
+          {
+            printf("no storage and device=srcddress\n");
+            srcAddress=d_tiles[i + j * T];
+          }
+        }
+
+        // checkCudaErrors(cudaMemcpy(h_tiles[i], srcAddress, B * B * sizeof(double), cudaMemcpyDefault));
+
         checkCudaErrors(cudaMemcpy(
-          MemoryManager::getAddress(d_tiles[i + j * T]) + B * k,
+          // MemoryManager::getAddress(d_tiles[i + j * T]) + B * k,
+          srcAddress+ B * k,
           h_originalMatrix + N * (j * B + k) + B * i,
           B * sizeof(double),
           cudaMemcpyDefault
@@ -544,12 +557,14 @@ void tiledCholesky(bool optimize, bool verify) {
     
     fmt::print("Original peak memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
     fmt::print("Optimized peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
+    auto& memManager = MemoryManager::getInstance();
 
     for (int i = 0; i < ConfigurationManager::getConfig().generic.repeat; i++) {
+      
       initializeDeviceData(h_originalMatrix, d_tiles);
-
+      // memManager.prefetchAllDataToDevice();
       float runningTime;
-      auto& memManager = MemoryManager::getInstance();
+      
       
       executeOptimizedGraph(
         optimizedGraph,
@@ -563,7 +578,7 @@ void tiledCholesky(bool optimize, bool verify) {
       
       checkCudaErrors(cudaDeviceSynchronize());
       fmt::print("Total time used (s): {}\n", runningTime);
-      // memManager.prefetchAllDataToDevice();
+      memManager.prefetchAllDataToDevice();
       checkCudaErrors(cudaDeviceSynchronize());
       fmt::print("Finalized iteration\n");
     }

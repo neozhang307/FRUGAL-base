@@ -91,7 +91,10 @@ std::vector<ArrayId> MemoryManager::getArrayIds() const {
 }
 
 void* MemoryManager::allocateInStorage(void* ptr, int storageDeviceId, bool useNvlink) {
-  void* newPtr = nullptr;
+  // ArrayId id = getArrayId(ptr);
+  
+  void* newPtr = getStoragePtr(ptr);
+  if(newPtr!=nullptr)return newPtr;
   size_t size = getSize(ptr);
   
   // Only print debug information if verbose output is enabled
@@ -199,75 +202,6 @@ bool MemoryManager::freeManagedMemory(void* managedMemoryAddress, cudaStream_t s
   return true;
 }
 
-void* MemoryManager::offloadToStorage(
-    void* managedMemoryAddress, 
-    int storageDeviceId, 
-    bool useNvlink, 
-    std::map<void*, void*>& storageMap,
-    cudaStream_t stream) 
-{
-  // Only print debug information if verbose output is enabled
-  bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
-  
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Starting offload for address %p\n", managedMemoryAddress);
-  }
-  
-  // Allocate in storage
-  void* storagePtr = allocateInStorage(managedMemoryAddress, storageDeviceId, useNvlink);
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
-  }
-  
-  // Copy data from device to storage
-  copyMemoryDeviceToStorage(managedMemoryAddress, storagePtr, cudaMemcpyDefault);
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
-  }
-  
-  // Update mapping
-  storageMap[managedMemoryAddress] = storagePtr;
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Updated storageMap: %p -> %p\n", managedMemoryAddress, storagePtr);
-  }
-  
-  // Update MemoryArrayInfo structure
-  ArrayId arrayId = getArrayId(managedMemoryAddress);
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] getArrayId returned %d for address %p\n", arrayId, managedMemoryAddress);
-  }
-  
-  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-    memoryArrayInfos[arrayId].storageAddress = storagePtr;
-    if (verbose) {
-      fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
-              arrayId, storagePtr);
-    }
-  } else {
-    if (verbose) {
-      fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
-              managedMemoryAddress, arrayId);
-    }
-  }
-  
-  // Verify storageAddress was set
-  if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
-    if (verbose) {
-      fprintf(stderr, "[DEBUG-OFFLOAD] Verification: memoryArrayInfos[%d].storageAddress = %p\n", 
-              arrayId, memoryArrayInfos[arrayId].storageAddress);
-    }
-  }
-  
-  // Free original device memory
-  checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
-  checkCudaErrors(cudaStreamSynchronize(stream));
-  if (verbose) {
-    fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n", 
-            memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
-  }
-  memoryArrayInfos[arrayId].deviceAddress=nullptr;
-  return storagePtr;
-}
 
 void MemoryManager::offloadToStorage(
     void* managedMemoryAddress, 
@@ -289,17 +223,12 @@ void MemoryManager::offloadToStorage(
   
   if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
     // Allocate in storage
-    void* storagePtr = allocateInStorage(managedMemoryAddress, storageDeviceId, useNvlink);
+    void* storagePtr = allocateInStorage(managedMemoryAddress, storageDeviceId, useNvlink);//if it is not empty
     if (verbose) {
       fprintf(stderr, "[DEBUG-OFFLOAD] Allocated storage %p for address %p\n", storagePtr, managedMemoryAddress);
     }
     
-    // Copy data from device to storage
-    copyMemoryDeviceToStorage(managedMemoryAddress, storagePtr, cudaMemcpyDefault);
     
-    if (verbose) {
-      fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
-    }
     
     // Update MemoryArrayInfo structure
     memoryArrayInfos[arrayId].storageAddress = storagePtr;
@@ -307,14 +236,25 @@ void MemoryManager::offloadToStorage(
       fprintf(stderr, "[DEBUG-OFFLOAD] Updated memoryArrayInfos[%d].storageAddress = %p\n", 
               arrayId, storagePtr);
     }
-    
-    checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
-    checkCudaErrors(cudaStreamSynchronize(stream));
-    memoryArrayInfos[arrayId].deviceAddress=nullptr;
-    if (verbose) {
-      fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",
-              memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+    if(memoryArrayInfos[arrayId].deviceAddress!=nullptr)
+    {
+      // Copy data from device to storage
+      copyMemoryDeviceToStorage(managedMemoryAddress, storagePtr, cudaMemcpyDefault);
+      
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-OFFLOAD] Data transferred from %p to %p\n", managedMemoryAddress, storagePtr);
+      }
+
+      checkCudaErrors(cudaFreeAsync(memoryArrayInfos[arrayId].deviceAddress,stream));
+      
+      checkCudaErrors(cudaStreamSynchronize(stream));
+      memoryArrayInfos[arrayId].deviceAddress=nullptr;
+      if (verbose) {
+        fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n",
+                memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
+      }
     }
+    
   } else {
     if (verbose) {
       fprintf(stderr, "[DEBUG-OFFLOAD] WARNING: Could not update memoryArrayInfos for address %p, arrayId=%d\n", 
@@ -372,6 +312,11 @@ void MemoryManager::releaseStoragePointers() {
   for (auto& info : memoryArrayInfos) {
     if(info.storageAddress != nullptr)
     {
+      if(info.deviceAddress==nullptr)
+      {
+        fprintf(stderr,"[DEBUG] releaseStoragePointers not working on %p as data stored in storage now\n",info.managedMemoryAddress);
+        continue;
+      }
       // Store the address before setting to nullptr to avoid double-free issues
       void* storageAddress = info.storageAddress;
       // Set to nullptr first, then free the memory
@@ -384,7 +329,7 @@ void MemoryManager::releaseStoragePointers() {
       
       freeStorage(storageAddress);
       ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
-      memoryArrayInfos[arrayId].deviceAddress = nullptr;
+      memoryArrayInfos[arrayId].storageAddress = nullptr;
       
     }
   }
@@ -429,15 +374,20 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
     const std::vector<ArrayId>& arrayIds,
     cudaStream_t stream) {
   for (auto arrayId : arrayIds) {
+    if(memoryArrayInfos[arrayId].deviceAddress!=nullptr)continue;//already in device
     void* originalPtr = managedMemoryAddresses[arrayId];
     void* storagePtr = getStoragePtr(originalPtr);//managedDeviceArrayToHostArrayMap.at(originalPtr);
+    if(storagePtr==nullptr)continue;//not in sotrage 
+
     size_t size = getSize(originalPtr);
     
     // Allocate on device and copy data from storage
-    void* devicePtr;
-    checkCudaErrors(cudaMallocAsync(&devicePtr, size, stream));
+    // void* devicePtr;
+    if (memoryArrayInfos[arrayId].deviceAddress==nullptr)
+      checkCudaErrors(cudaMallocAsync(&memoryArrayInfos[arrayId].deviceAddress, size, stream));
+
     checkCudaErrors(cudaMemcpyAsync(
-      devicePtr, 
+      memoryArrayInfos[arrayId].deviceAddress, 
       storagePtr, 
       size, 
       storageConfig.prefetchMemcpyKind, 
@@ -446,13 +396,15 @@ void MemoryManager::prefetchAllDataToDeviceAsync(
     
     // Update the current mapping
     // managedMemoryAddressToAssignedMap[originalPtr] = devicePtr;
-    memoryArrayInfos[arrayId].deviceAddress=devicePtr;
+    // memoryArrayInfos[arrayId].deviceAddress=devicePtr;
   }
 }
 
 void MemoryManager::prefetchAllDataToDevice(cudaStream_t stream) {
   auto arrayIds=this->getArrayIds();
   for (auto arrayId : arrayIds) {
+    if(memoryArrayInfos[arrayId].deviceAddress!=nullptr)continue;//already in device
+    
     void* originalPtr = managedMemoryAddresses[arrayId];
     void* storagePtr = getStoragePtr(originalPtr);//managedDeviceArrayToHostArrayMap.at(originalPtr);
     size_t size = getSize(originalPtr);
@@ -522,7 +474,7 @@ void MemoryManager::offloadAllManagedMemoryToStorage() {
   //   fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Cleared managedDeviceArrayToHostArrayMap\n");
   // }
   
-  releaseStoragePointers();
+  releaseStoragePointers();//only if devicememory is not null
   if (verbose) {
     fprintf(stderr, "[DEBUG-OFFLOAD-ALL] Called releaseStoragePointers() to reset memoryArrayInfos\n");
   }
@@ -568,7 +520,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
   // }
 
   for (auto info : memoryArrayInfos) {
-    if(info.deviceAddress==nullptr)continue;
+    if(info.deviceAddress==nullptr)continue;//already in storage
 
     checkCudaErrors(cudaMemcpyAsync(
       // this->getDeviceToHostArrayMap().at(oldAddr),
@@ -604,7 +556,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
   // }
 
   for (auto info : memoryArrayInfos) {
-    if(info.deviceAddress==nullptr)continue;
+    if(info.deviceAddress==nullptr)continue;//already in storage
 
     checkCudaErrors(cudaMemcpyAsync(
       // this->getDeviceToHostArrayMap().at(oldAddr),
