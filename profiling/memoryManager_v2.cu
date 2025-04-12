@@ -265,7 +265,7 @@ void* MemoryManager::offloadToStorage(
     fprintf(stderr, "[DEBUG-OFFLOAD] Freed original device memory %p of %p\n", 
             memoryArrayInfos[arrayId].deviceAddress, managedMemoryAddress);
   }
-  
+  memoryArrayInfos[arrayId].deviceAddress=nullptr;
   return storagePtr;
 }
 
@@ -383,6 +383,9 @@ void MemoryManager::releaseStoragePointers() {
       }
       
       freeStorage(storageAddress);
+      ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
+      memoryArrayInfos[arrayId].deviceAddress = nullptr;
+      
     }
   }
   checkCudaErrors(cudaDeviceSynchronize());
@@ -577,8 +580,11 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
     ));
     checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
     checkCudaErrors(cudaStreamSynchronize(stream));
+    
+    ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
+    memoryArrayInfos[arrayId].deviceAddress = nullptr;
 
-    info.deviceAddress=nullptr;
+    // info.deviceAddress=nullptr;
   }
 }
 
@@ -609,7 +615,9 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
       stream
     ));
     checkCudaErrors(cudaFreeAsync(info.deviceAddress,stream));
-    info.deviceAddress=nullptr;
+    // info.deviceAddress=nullptr;
+    ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
+    memoryArrayInfos[arrayId].deviceAddress = nullptr;
   }
 }
 
