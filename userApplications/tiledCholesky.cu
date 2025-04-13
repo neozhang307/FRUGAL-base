@@ -390,6 +390,24 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
+
+void initializeHostData(double *h_originalMatrix, std::vector<double *> &d_tiles) {
+  for (int i = 0; i < T; i++) {
+    for (int j = 0; j < T; j++) {
+      for (int k = 0; k < B; k++) {
+        memcpy(d_tiles[i + j * T] + B * k,h_originalMatrix + N * (j * B + k) + B * i,B * sizeof(double));
+        // checkCudaErrors(cudaMemcpy(
+        //   d_tiles[i + j * T] + B * k,
+        //   h_originalMatrix + N * (j * B + k) + B * i,
+        //   B * sizeof(double),
+        //   cudaMemcpyDefault
+        // ));
+      }
+    }
+  }
+  checkCudaErrors(cudaDeviceSynchronize());
+}
+
 /*
  * TILED CHOLESKY DECOMPOSITION ALGORITHM
  * 
@@ -825,7 +843,8 @@ void tiledCholesky(bool optimize, bool verify) {
       updateManagedMemoryAddress(oldManagedDeviceArrayToNewManagedDeviceArrayMap);
 
       fmt::print("Total time used (s): {}\n", runningTime);
-      double gflops_pdpotrf = 1.0 / 3.0 * ((double) N * (double) N * (double) N) / (1000000000.0);
+      // double gflops_pdpotrf = 1.0 / 6.0 * ((double) N * (double) N * (double) N) / (1000000000.0);
+      double gflops_pdpotrf = 1.0 / 6.0 * (((double)T*(double)T*(double)T+(double)T) *(double)B*(double)B*(double)B) / (1000000000.0);
       std::cout << "[PDPOTRF] ELAPSED: " << runningTime
             << " s, GFLOPS: " << gflops_pdpotrf / (runningTime) << std::endl;
     }
@@ -835,6 +854,7 @@ void tiledCholesky(bool optimize, bool verify) {
   // Direct CUDA graph execution without optimization
   // =====================================================================
   else {
+    
     // For memory usage tracking
     PeakMemoryUsageProfiler peakMemoryUsageProfiler;
     CudaEventClock cudaEventClock;
@@ -848,13 +868,15 @@ void tiledCholesky(bool optimize, bool verify) {
     // Run for specified number of repetitions
     for (int i = 0; i < ConfigurationManager::getConfig().generic.repeat; i++) {
       // Initialize device data from host matrix
-      initializeDeviceData(h_originalMatrix.get(), d_tiles);
+      initializeHostData(h_originalMatrix.get(), d_tiles);
+      double* ptrwast;
+      cudaMalloc(&ptrwast,(long)1024*1024*1024*20);
 
       // Unified Memory prefetching (if enabled)
       if (ConfigurationManager::getConfig().generic.useUM) {
         // Limit available memory for unified memory
         size_t available = 1024ULL * 1024ULL * ConfigurationManager::getConfig().generic.availableMemoryForUMInMiB;
-        reduceAvailableMemoryForUM(available);
+        // reduceAvailableMemoryForUM(available);
 
         // Prefetch data to device (up to available memory limit)
         size_t sum = 0;
@@ -894,11 +916,15 @@ void tiledCholesky(bool optimize, bool verify) {
       }
 
       // Report execution time
+      auto runningTime=cudaEventClock.getTimeInSeconds();
       fmt::print("Total time used (s): {}\n", cudaEventClock.getTimeInSeconds());
+      double gflops_pdpotrf = 1.0 / 6.0 * (((double)T*(double)T*(double)T+(double)T) *(double)B*(double)B*(double)B) / (1000000000.0);
+      std::cout << "[PDPOTRF] ELAPSED: " << runningTime
+            << " s, GFLOPS: " << gflops_pdpotrf / (runningTime) << std::endl;
 
       // Reset memory limit for unified memory
       if (ConfigurationManager::getConfig().generic.useUM) {
-        resetAvailableMemoryForUM();
+        // resetAvailableMemoryForUM();
       }
     }
   }
