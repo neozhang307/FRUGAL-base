@@ -825,8 +825,11 @@ void tiledCholesky(bool optimize, bool verify) {
       updateManagedMemoryAddress(oldManagedDeviceArrayToNewManagedDeviceArrayMap);
 
       fmt::print("Total time used (s): {}\n", runningTime);
+      double gflops_pdpotrf = 1.0 / 3.0 * ((double) N * (double) N * (double) N) / (1000000000.0);
+      std::cout << "[PDPOTRF] ELAPSED: " << runningTime
+            << " s, GFLOPS: " << gflops_pdpotrf / (runningTime) << std::endl;
     }
-  } 
+  }
   // =====================================================================
   // EXECUTION PATH 3: Standard execution mode
   // Direct CUDA graph execution without optimization

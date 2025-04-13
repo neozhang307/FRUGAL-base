@@ -414,6 +414,7 @@ void Executor::executeOptimizedGraph(
 
   // Execute and time the graph
   cudaEventClock.start();
+  // checkCudaErrors(cudaGraphLaunch(graphExecForInitialDataDistribution, stream));
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
   cudaEventClock.end();
   checkCudaErrors(cudaDeviceSynchronize());
