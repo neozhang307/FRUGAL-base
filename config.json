@@ -9,7 +9,7 @@
   "optimization": {
     "loadExistingPlan": false,
     "planPath": "luOptimizationPlan.json",
-    "mergeConcurrentCudaGraphNodes": true,
+    "mergeConcurrentCudaGraphNodes": false,
     "maxTaskGroupAmount": 100,
     "byPassingFirstStep": true,
     "prefetchingBandwidthInGB": 380,
