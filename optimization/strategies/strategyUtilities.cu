@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "strategyUtilities.hpp"
 
@@ -37,6 +38,11 @@ void printTaskGroups(FILE *fp, OptimizationInput &input) {
 }
 
 void printOptimizationInput(OptimizationInput &input) {
+  // Check if debug output is enabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   std::string outputFilePath = fmt::format("debug/{}.optimizationInput.dot", input.stageIndex);
   LOG_TRACE_WITH_INFO("Printing OptimizationInput to %s", outputFilePath.c_str());
 
@@ -82,6 +88,11 @@ void printEdges(FILE *fp, OptimizationOutput &output) {
 }
 
 void printOptimizationOutput(OptimizationOutput &output, int stageIndex) {
+  // Check if debug output is enabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   std::string outputFilePath = fmt::format("debug/{}.optimizationOutput.dot", stageIndex);
   LOG_TRACE_WITH_INFO("Printing OptimizationOutput to %s", outputFilePath.c_str());
 

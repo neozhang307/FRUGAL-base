@@ -922,6 +922,24 @@ struct IntegerProgrammingSolver {
   }
 
   void printSolution(MPSolver::ResultStatus resultStatus) {
+    auto optimizedPeakMemoryUsage = peakMemoryUsage->solution_value();
+    auto totalRunningTime = z[getTaskGroupVertexIndex(numberOfTaskGroups - 1)]->solution_value();
+    
+    // Check if verbose output is enabled
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      fmt::print( "Original peak memory usage (MiB): {:.6f}\n", originalPeakMemoryUsage);
+      fmt::print( "Lowest peak memory usage possible (MiB): {:.6f}\n", lowestPeakMemoryUsagePossible);
+      fmt::print( "Optimal peak memory usage (MiB): {:.6f}\n", optimizedPeakMemoryUsage);
+      fmt::print("Original total running time (s): {:.6f}\n", originalTotalRunningTime);
+      fmt::print("Anticipate Total running time (s): {:.6f}\n", totalRunningTime);
+      fmt::print("Anticipate Total running time / original: {:.6f}%\n", totalRunningTime / originalTotalRunningTime * 100.0);
+    }
+    
+    // Check if debug output is enabled in configuration
+    if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      return;
+    }
+    
     std::string outputFilePath = fmt::format("debug/{}.secondStepSolver.out", input.stageIndex);
     LOG_TRACE_WITH_INFO("Printing solution to %s", outputFilePath.c_str());
 
@@ -929,23 +947,14 @@ struct IntegerProgrammingSolver {
 
     fmt::print(fp, "Result status: {}\n", resultStatus == MPSolver::OPTIMAL ? "OPTIMAL" : "FEASIBLE");
 
-    auto optimizedPeakMemoryUsage = peakMemoryUsage->solution_value();
-    auto totalRunningTime = z[getTaskGroupVertexIndex(numberOfTaskGroups - 1)]->solution_value();
-
     fmt::print(fp, "Original peak memory usage (MiB): {:.6f}\n", originalPeakMemoryUsage);
-    fmt::print( "Original peak memory usage (MiB): {:.6f}\n", originalPeakMemoryUsage);
     fmt::print(fp, "Lowest peak memory usage possible (MiB): {:.6f}\n", lowestPeakMemoryUsagePossible);
-    fmt::print( "Lowest peak memory usage possible (MiB): {:.6f}\n", lowestPeakMemoryUsagePossible);
     fmt::print(fp, "Optimal peak memory usage (MiB): {:.6f}\n", optimizedPeakMemoryUsage);
-    fmt::print( "Optimal peak memory usage (MiB): {:.6f}\n", optimizedPeakMemoryUsage);
     fmt::print(fp, "Optimal peak memory usage  / Original peak memory usage: {:.6f}%\n", optimizedPeakMemoryUsage / originalPeakMemoryUsage * 100.0);
 
     fmt::print(fp, "Original total running time (s): {:.6f}\n", originalTotalRunningTime);
     fmt::print(fp, "Total running time (s): {:.6f}\n", totalRunningTime);
     fmt::print(fp, "Total running time / original: {:.6f}%\n", totalRunningTime / originalTotalRunningTime * 100.0);
-    fmt::print("Original total running time (s): {:.6f}\n", originalTotalRunningTime);
-    fmt::print("Anticipate Total running time (s): {:.6f}\n", totalRunningTime);
-    fmt::print("Anticipate Total running time / original: {:.6f}%\n", totalRunningTime / originalTotalRunningTime * 100.0);
     fmt::print(fp, "Solution:\n");
 
     for (int i = 0; i < numberOfTaskGroups; i++) {
@@ -1014,6 +1023,11 @@ struct IntegerProgrammingSolver {
    * in the Mixed Integer Programming formulation.
    */
   void printDurationsAndSizes() {
+    // Check if debug output is enabled in configuration
+    if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      return;
+    }
+    
     // Create output file path with the stage index for identification
     std::string outputFilePath = fmt::format("debug/{}.secondStepSolverInput.out", input.stageIndex);
     LOG_TRACE_WITH_INFO("Printing input to %s", outputFilePath.c_str());

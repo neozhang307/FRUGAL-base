@@ -2,6 +2,7 @@
 
 #include <fmt/core.h>
 
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 
 namespace memopt {
@@ -117,6 +118,11 @@ void FirstStepSolver::dfs(size_t currentTotalOverlap) {
  * Writes the solution to a debug file for analysis
  */
 void FirstStepSolver::printSolution() {
+  // Check if debug output is enabled in configuration
+  if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    return;
+  }
+  
   // Format the output filename using the stage index
   std::string outputFilePath = fmt::format("debug/{}.firstStepSolver.out", input.stageIndex);
   LOG_TRACE_WITH_INFO("Printing solution to %s", outputFilePath.c_str());

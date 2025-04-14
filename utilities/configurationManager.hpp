@@ -60,6 +60,8 @@ struct Configuration {
   struct Execution {
     bool useNvlink = false;
     bool measurePeakMemoryUsage = false;
+    bool enableDebugOutput = false;
+    bool enableVerboseOutput = false;
     int mainDeviceId = 1;
     int storageDeviceId = 2;
 
@@ -67,6 +69,8 @@ struct Configuration {
       Execution,
       useNvlink,
       measurePeakMemoryUsage,
+      enableDebugOutput,
+      enableVerboseOutput,
       mainDeviceId,
       storageDeviceId
     );
