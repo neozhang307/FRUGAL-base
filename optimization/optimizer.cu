@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <exception>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <utility>
 
@@ -720,6 +722,140 @@ OptimizationInput constructOptimizationInput(
   return optimizationInput;
 }
 
+/**
+ * @brief Output task graph with execution times, dependencies, and array information in DOT format
+ * 
+ * This function generates a Graphviz DOT file that visualizes:
+ * 1. Task groups as rectangular nodes showing execution time
+ * 2. Memory arrays as elliptical nodes showing size
+ * 3. Data flow edges (array -> task for inputs, task -> array for outputs)
+ * 4. Task dependency edges between task groups
+ * 
+ * @param optimizationInput The optimization input containing task groups and dependencies
+ * @param outputPath Path to write the DOT file
+ */
+void writeTaskGraphToDot(const OptimizationInput &optimizationInput, const std::string &outputPath) {
+  LOG_TRACE_WITH_INFO("Writing task graph to DOT file: %s", outputPath.c_str());
+  
+  std::ofstream dotFile(outputPath);
+  if (!dotFile.is_open()) {
+    LOG_TRACE_WITH_INFO("Failed to open DOT output file: %s", outputPath.c_str());
+    return;
+  }
+
+  auto &memManager = MemoryManager::getInstance();
+  
+  dotFile << "digraph TaskGraph {\n";
+  dotFile << "  rankdir=TB;\n";
+  dotFile << "  node [fontname=\"Arial\"];\n";
+  dotFile << "  edge [fontname=\"Arial\"];\n\n";
+  
+  // Style definitions
+  dotFile << "  // Task group nodes\n";
+  dotFile << "  node [shape=box, style=filled, fillcolor=lightblue];\n";
+  
+  // Create task group nodes
+  for (size_t i = 0; i < optimizationInput.nodes.size(); i++) {
+    const auto &taskGroup = optimizationInput.nodes[i];
+    dotFile << "  task_" << i << " [label=\"Task Group " << i 
+            << "\\nTime: " << std::fixed << std::setprecision(6) << taskGroup.runningTime << "s";
+    
+    // Add task IDs if available
+    if (!taskGroup.nodes.empty()) {
+      dotFile << "\\nTasks: ";
+      bool first = true;
+      for (auto taskId : taskGroup.nodes) {
+        if (!first) dotFile << ",";
+        dotFile << taskId;
+        first = false;
+      }
+    }
+    dotFile << "\"];\n";
+  }
+  
+  // Array nodes
+  dotFile << "\n  // Array nodes\n";
+  dotFile << "  node [shape=ellipse, style=filled, fillcolor=lightgreen];\n";
+  
+  // Collect all unique arrays and their sizes
+  std::map<void*, size_t> uniqueArrays;
+  std::map<void*, std::string> arrayLabels;
+  int arrayCounter = 0;
+  
+  for (size_t i = 0; i < optimizationInput.nodes.size(); i++) {
+    const auto &taskGroup = optimizationInput.nodes[i];
+    
+    // Process input arrays
+    for (auto ptr : taskGroup.dataDependency.inputs) {
+      if (uniqueArrays.find(ptr) == uniqueArrays.end()) {
+        uniqueArrays[ptr] = memManager.getSize(ptr);
+        arrayLabels[ptr] = "array_" + std::to_string(arrayCounter++);
+      }
+    }
+    
+    // Process output arrays
+    for (auto ptr : taskGroup.dataDependency.outputs) {
+      if (uniqueArrays.find(ptr) == uniqueArrays.end()) {
+        uniqueArrays[ptr] = memManager.getSize(ptr);
+        arrayLabels[ptr] = "array_" + std::to_string(arrayCounter++);
+      }
+    }
+  }
+  
+  // Output array nodes
+  for (const auto &[ptr, size] : uniqueArrays) {
+    double sizeInMB = static_cast<double>(size) / (1024.0 * 1024.0);
+    dotFile << "  " << arrayLabels[ptr] << " [label=\"Array\\n" 
+            << std::fixed << std::setprecision(2) << sizeInMB << " MB"
+            << "\\nPtr: 0x" << std::hex << reinterpret_cast<uintptr_t>(ptr) << std::dec 
+            << "\"];\n";
+  }
+  
+  // Data flow edges
+  dotFile << "\n  // Data flow edges\n";
+  for (size_t i = 0; i < optimizationInput.nodes.size(); i++) {
+    const auto &taskGroup = optimizationInput.nodes[i];
+    
+    // Input edges (array -> task)
+    for (auto ptr : taskGroup.dataDependency.inputs) {
+      dotFile << "  " << arrayLabels[ptr] << " -> task_" << i 
+              << " [color=blue, label=\"input\"];\n";
+    }
+    
+    // Output edges (task -> array)
+    for (auto ptr : taskGroup.dataDependency.outputs) {
+      dotFile << "  task_" << i << " -> " << arrayLabels[ptr] 
+              << " [color=red, label=\"output\"];\n";
+    }
+  }
+  
+  // Task dependency edges
+  dotFile << "\n  // Task dependency edges\n";
+  for (const auto &[fromTaskGroup, toTaskGroups] : optimizationInput.edges) {
+    for (auto toTaskGroup : toTaskGroups) {
+      dotFile << "  task_" << fromTaskGroup << " -> task_" << toTaskGroup 
+              << " [color=black, style=bold, label=\"dependency\"];\n";
+    }
+  }
+  
+  // Legend
+  dotFile << "\n  // Legend\n";
+  dotFile << "  subgraph cluster_legend {\n";
+  dotFile << "    label=\"Legend\";\n";
+  dotFile << "    style=filled;\n";
+  dotFile << "    fillcolor=lightyellow;\n";
+  dotFile << "    legend_task [shape=box, fillcolor=lightblue, label=\"Task Group\\n(execution time)\"];\n";
+  dotFile << "    legend_array [shape=ellipse, fillcolor=lightgreen, label=\"Memory Array\\n(size)\"];\n";
+  dotFile << "    legend_task -> legend_array [color=red, label=\"output\"];\n";
+  dotFile << "    legend_array -> legend_task [color=blue, label=\"input\"];\n";
+  dotFile << "  }\n";
+  
+  dotFile << "}\n";
+  dotFile.close();
+  
+  LOG_TRACE_WITH_INFO("Task graph DOT file written successfully");
+}
+
 std::vector<OptimizationInput> constructOptimizationInputsForStages(
   cudaGraph_t originalGraph,
   std::vector<cudaGraphNode_t> &allNodes,
@@ -1048,6 +1184,9 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     
     // Construct a single optimization input from the entire graph's profiling data
     auto optimizationInput = constructOptimizationInput(originalGraph, nodes, edges, timeline, disjointSet, nodeToAnnotationMap, taskIdToDataDependencyMap);
+
+    // Generate DOT visualization of the task graph
+    writeTaskGraphToDot(optimizationInput, "task_graph.dot");
 
     // Report profiling time
     clock.end();
