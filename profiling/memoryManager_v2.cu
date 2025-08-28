@@ -519,7 +519,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
   //   checkCudaErrors(cudaFree(newAddr));
   // }
 
-  for (auto info : memoryArrayInfos) {
+  for (auto& info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
 
     checkCudaErrors(cudaMemcpyAsync(
@@ -560,7 +560,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
   //   this->removeCurrentMapping(oldAddr);
   // }
 
-  for (auto info : memoryArrayInfos) {
+  for (auto& info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
 
     checkCudaErrors(cudaMemcpyAsync(
