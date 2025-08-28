@@ -40,3 +40,10 @@ target_link_libraries(
   memopt
   fmt::fmt
 )
+
+add_executable(consecutiveGraphMemoryTest consecutiveGraphMemoryTest.cu)
+target_link_libraries(
+  consecutiveGraphMemoryTest
+  memopt
+  CUDA::cublas
+)
