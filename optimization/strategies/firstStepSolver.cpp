@@ -50,8 +50,9 @@ FirstStepSolver::Output FirstStepSolver::solve() {
   this->maxTotalOverlap = 0;  // Start with zero overlap
   this->currentTopologicalSort.clear();  // Clear the working solution
 
-  // Start DFS exploration of all valid task orderings
-  dfs(0);  // Start with 0 overlap
+  // Use iterative DFS instead of recursive to avoid stack overflow
+  // and enable easier optimization in the future
+  dfsIterative();
 
   // Output solution for debugging
   this->printSolution();
@@ -110,6 +111,88 @@ void FirstStepSolver::dfs(size_t currentTotalOverlap) {
     // Restore the in-degree values (undo the temporary changes)
     for (auto v : this->input.edges[u]) {
       this->inDegree[v]++;
+    }
+  }
+}
+
+/**
+ * Iterative DFS implementation using explicit stack instead of recursion
+ * This avoids stack overflow for large graphs and enables easier optimization
+ */
+void FirstStepSolver::dfsIterative() {
+  // Create explicit stack for DFS
+  std::stack<DFSState> stateStack;
+  
+  // Initialize and push the initial state
+  DFSState initialState;
+  initialState.nextTaskToTry = 0;
+  initialState.currentOverlap = 0;
+  initialState.currentPath.clear();
+  initialState.inDegree = this->inDegree;  // Copy initial in-degree
+  initialState.visited = this->visited;    // Copy initial visited (all false)
+  
+  stateStack.push(initialState);
+  
+  // Main iterative DFS loop
+  while (!stateStack.empty()) {
+    DFSState& currentState = stateStack.top();
+    
+    // Check if we have a complete solution
+    if (currentState.currentPath.size() == this->input.n) {
+      // Update best solution if current is better or equal
+      // Must accept equal to handle case when best overlap is zero
+      if (currentState.currentOverlap >= this->maxTotalOverlap) {
+        this->maxTotalOverlap = currentState.currentOverlap;
+        this->output.taskGroupExecutionOrder = currentState.currentPath;
+      }
+      stateStack.pop();
+      continue;
+    }
+    
+    // Find next unvisited task with in-degree 0
+    bool foundNext = false;
+    for (int u = currentState.nextTaskToTry; u < this->input.n; u++) {
+      // Skip if task has dependencies or already visited
+      if (currentState.inDegree[u] != 0 || currentState.visited[u]) continue;
+      
+      // Found a valid task to schedule next
+      foundNext = true;
+      
+      // Calculate memory overlap with previous task (if any)
+      size_t overlapIncrease = 0;
+      if (!currentState.currentPath.empty()) {
+        int lastTask = currentState.currentPath.back();
+        overlapIncrease = this->input.dataDependencyOverlapInBytes[lastTask][u];
+      }
+      
+      // Create new state for exploring this branch
+      DFSState newState;
+      newState.nextTaskToTry = 0;  // Start from beginning for next level
+      newState.currentOverlap = currentState.currentOverlap + overlapIncrease;
+      newState.currentPath = currentState.currentPath;
+      newState.currentPath.push_back(u);
+      newState.inDegree = currentState.inDegree;
+      newState.visited = currentState.visited;
+      
+      // Update in-degree for tasks dependent on u
+      for (auto v : this->input.edges[u]) {
+        newState.inDegree[v]--;
+      }
+      
+      // Mark u as visited
+      newState.visited[u] = true;
+      
+      // Update current state to resume from next task
+      currentState.nextTaskToTry = u + 1;
+      
+      // Push new state to explore this branch
+      stateStack.push(newState);
+      break;
+    }
+    
+    // If no valid next task found, backtrack
+    if (!foundNext) {
+      stateStack.pop();
     }
   }
 }

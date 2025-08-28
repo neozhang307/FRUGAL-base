@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <stack>
 
 #include "../../utilities/types.hpp"
 
@@ -63,6 +64,18 @@ class FirstStepSolver {
   Output solve();
 
  private:
+  /**
+   * @struct DFSState
+   * @brief State information for iterative DFS traversal
+   */
+  struct DFSState {
+    int nextTaskToTry;                      // Next task index to evaluate (for resuming)
+    size_t currentOverlap;                  // Running total overlap at this state
+    std::vector<TaskGroupId> currentPath;   // Current partial solution path
+    std::vector<int> inDegree;              // In-degree state at this level
+    std::vector<bool> visited;              // Visited state at this level
+  };
+
   Input input;                                  // Solver input parameters
   Output output;                                // Solution being constructed
   size_t maxTotalOverlap;                       // Best overlap found so far
@@ -78,6 +91,14 @@ class FirstStepSolver {
    * while respecting the dependency constraints in the directed acyclic graph
    */
   void dfs(size_t currentTotalOverlap);
+
+  /**
+   * @brief Iterative DFS to explore all valid topological orderings
+   * 
+   * Stack-based implementation that avoids recursion depth limits and provides
+   * better control for future optimizations like pruning and early termination.
+   */
+  void dfsIterative();
   
   /**
    * @brief Outputs the solution to a debug file
