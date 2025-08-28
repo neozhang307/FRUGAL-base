@@ -314,7 +314,9 @@ void MemoryManager::releaseStoragePointers() {
     {
       if(info.deviceAddress==nullptr)
       {
-        fprintf(stderr,"[DEBUG] releaseStoragePointers not working on %p as data stored in storage now\n",info.managedMemoryAddress);
+        if (verbose) {
+          fprintf(stderr,"[DEBUG] releaseStoragePointers not working on %p as data stored in storage now\n",info.managedMemoryAddress);
+        }
         continue;
       }
       // Store the address before setting to nullptr to avoid double-free issues
@@ -821,16 +823,20 @@ bool MemoryManager::consumeGPUMemory(size_t sizeInGB) {
   cudaSetDevice(currentDevice);
   
   if (result != cudaSuccess) {
-    fprintf(stderr, "[MEMORY-INFO] Failed to allocate %zu GB of dummy memory: %s\n", 
-            sizeInGB, cudaGetErrorString(result));
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      fprintf(stderr, "[MEMORY-INFO] Failed to allocate %zu GB of dummy memory: %s\n", 
+              sizeInGB, cudaGetErrorString(result));
+    }
     return false;
   }
   
   // Add to our tracking vector
   dummyAllocations.emplace_back(ptr, sizeInBytes);
   
-  fprintf(stderr, "[MEMORY-INFO] Successfully allocated %zu GB of dummy memory (%p)\n", 
-          sizeInGB, ptr);
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[MEMORY-INFO] Successfully allocated %zu GB of dummy memory (%p)\n", 
+            sizeInGB, ptr);
+  }
   
   // Initialize the memory to prevent GPU driver optimizations that might not actually allocate
   // The device will actually allocate the memory when it's first written to
@@ -867,8 +873,10 @@ bool MemoryManager::releaseDummyMemory() {
   // Clear the vector
   dummyAllocations.clear();
   
-  fprintf(stderr, "[MEMORY-INFO] Released %zu dummy allocations (%.2f GB total)\n", 
-          count, totalGB);
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[MEMORY-INFO] Released %zu dummy allocations (%.2f GB total)\n", 
+            count, totalGB);
+  }
   
   return true;
 }
@@ -887,8 +895,10 @@ bool MemoryManager::claimNecessaryMemory(size_t sizeInGB) {
   
   cudaError_t result = cudaMemGetInfo(&free, &total);
   if (result != cudaSuccess) {
-    fprintf(stderr, "[MEMORY-ERROR] Failed to get memory info: %s\n", 
-            cudaGetErrorString(result));
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      fprintf(stderr, "[MEMORY-ERROR] Failed to get memory info: %s\n", 
+              cudaGetErrorString(result));
+    }
     cudaSetDevice(currentDevice);
     return false;
   }
@@ -899,8 +909,10 @@ bool MemoryManager::claimNecessaryMemory(size_t sizeInGB) {
   
   // Calculate how much memory to consume to leave exactly the requested amount
   if (sizeInGB > freeGB) {
-    fprintf(stderr, "[MEMORY-ERROR] Cannot claim %.2f GB - only %.2f GB available\n", 
-            static_cast<double>(sizeInGB), freeGB);
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      fprintf(stderr, "[MEMORY-ERROR] Cannot claim %.2f GB - only %.2f GB available\n", 
+              static_cast<double>(sizeInGB), freeGB);
+    }
     cudaSetDevice(currentDevice);
     return false;
   }
@@ -912,10 +924,12 @@ bool MemoryManager::claimNecessaryMemory(size_t sizeInGB) {
     consumeGB -= 1.0;
   }
   
-  // Log what we're doing
-  fprintf(stderr, "[MEMORY-INFO] Total: %.2f GB, Free: %.2f GB\n", totalGB, freeGB);
-  fprintf(stderr, "[MEMORY-INFO] Consuming %.2f GB to leave %.2f GB available\n", 
-          consumeGB, static_cast<double>(sizeInGB));
+  // Log what we're doing (verbose only)
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[MEMORY-INFO] Total: %.2f GB, Free: %.2f GB\n", totalGB, freeGB);
+    fprintf(stderr, "[MEMORY-INFO] Consuming %.2f GB to leave %.2f GB available\n", 
+            consumeGB, static_cast<double>(sizeInGB));
+  }
   
   // Restore original device
   cudaSetDevice(currentDevice);
