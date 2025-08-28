@@ -84,18 +84,20 @@ void FirstStepSolver::dfs(size_t currentTotalOverlap) {
     // Skip if this task still has dependencies or has already been processed
     if (this->inDegree[u] != 0 || this->visited[u]) continue;
 
-    // Calculate memory overlap with previously scheduled tasks (gap-aware)
+    // Calculate memory overlap with previously scheduled tasks (configurable gap-aware)
     size_t totalOverlapIncrease = 0;
     if (this->currentTopologicalSort.size() > 0) {
       // Overlap with immediately previous task (full weight)
       int lastTask = *(this->currentTopologicalSort.rbegin());
       totalOverlapIncrease = this->input.dataDependencyOverlapInBytes[lastTask][u];
       
-      // Overlap with second-to-last task (gap overlap with 0.5 weight)
-      if (this->currentTopologicalSort.size() >= 2) {
+      // Gap overlap with second-to-last task (if enabled)
+      if (ConfigurationManager::getConfig().optimization.enableGapOverlap && 
+          this->currentTopologicalSort.size() >= 2) {
         int secondLastTask = this->currentTopologicalSort[this->currentTopologicalSort.size() - 2];
         size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondLastTask][u];
-        totalOverlapIncrease += static_cast<size_t>(gapOverlap * 0.5);
+        double decayFactor = ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor;
+        totalOverlapIncrease += static_cast<size_t>(gapOverlap * decayFactor);
       }
     }
 
@@ -166,18 +168,20 @@ void FirstStepSolver::dfsIterative() {
       // Found a valid task to schedule next
       foundNext = true;
       
-      // Calculate memory overlap with previous tasks (gap-aware)
+      // Calculate memory overlap with previous tasks (configurable gap-aware)
       size_t overlapIncrease = 0;
       if (!currentState.currentPath.empty()) {
         // Overlap with immediately previous task (full weight)
         int lastTask = currentState.currentPath.back();
         overlapIncrease = this->input.dataDependencyOverlapInBytes[lastTask][u];
         
-        // Overlap with second-to-last task (gap overlap with 0.5 weight)
-        if (currentState.currentPath.size() >= 2) {
+        // Gap overlap with second-to-last task (if enabled)
+        if (ConfigurationManager::getConfig().optimization.enableGapOverlap && 
+            currentState.currentPath.size() >= 2) {
           int secondLastTask = currentState.currentPath[currentState.currentPath.size() - 2];
           size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondLastTask][u];
-          overlapIncrease += static_cast<size_t>(gapOverlap * 0.5);
+          double decayFactor = ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor;
+          overlapIncrease += static_cast<size_t>(gapOverlap * decayFactor);
         }
       }
       

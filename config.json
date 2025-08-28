@@ -12,6 +12,8 @@
     "mergeConcurrentCudaGraphNodes": false,
     "maxTaskGroupAmount": 100,
     "byPassingFirstStep": false,
+    "enableGapOverlap": true,
+    "gapOverlapDecayFactor": 0.5,
     "prefetchingBandwidthInGB": 380,
     "acceptableRunningTimeFactor": 0.0,
     "minManagedArraySize": 0,

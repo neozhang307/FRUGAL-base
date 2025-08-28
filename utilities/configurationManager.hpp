@@ -42,6 +42,8 @@ struct Configuration {
     double weightOfPeakMemoryUsage = 1.0;
     double weightOfTotalRunningTime = 0.0001;
     double weightOfNumberOfMigrations = 0.00001;
+    bool enableGapOverlap = false;
+    double gapOverlapDecayFactor = 0.5;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -57,7 +59,9 @@ struct Configuration {
       maxPeakMemoryUsageInMiB,
       weightOfPeakMemoryUsage,
       weightOfTotalRunningTime,
-      weightOfNumberOfMigrations
+      weightOfNumberOfMigrations,
+      enableGapOverlap,
+      gapOverlapDecayFactor
     );
   } optimization;
 
