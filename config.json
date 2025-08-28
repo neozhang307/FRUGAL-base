@@ -11,7 +11,7 @@
     "planPath": "luOptimizationPlan.json",
     "mergeConcurrentCudaGraphNodes": false,
     "maxTaskGroupAmount": 100,
-    "byPassingFirstStep": true,
+    "byPassingFirstStep": false,
     "prefetchingBandwidthInGB": 380,
     "acceptableRunningTimeFactor": 0.0,
     "minManagedArraySize": 0,
