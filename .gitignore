@@ -4,10 +4,11 @@
 # Build artifacts
 build/
 
-# Config
+# Config and JSON files
 config.json
 currentConfig.json
 defaultConfig.json
+*.json
 
 # Artifacts
 *Plan*.json
@@ -16,3 +17,10 @@ defaultConfig.json
 *.in
 *.out
 debug/
+
+# Temporary directories
+debug_base/
+debug_tile_16/
+graph/
+graph_info/
+graph_info_lu/
