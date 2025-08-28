@@ -143,9 +143,17 @@ void FirstStepSolver::dfsIterative() {
   
   stateStack.push(initialState);
   
+  // Reset statistics (only if debug output is enabled)
+  bool trackStats = ConfigurationManager::getConfig().execution.enableDebugOutput;
+  if (trackStats) {
+    this->totalStatesExplored = 0;
+    this->totalStatesPruned = 0;
+  }
+  
   // Main iterative DFS loop
   while (!stateStack.empty()) {
     DFSState& currentState = stateStack.top();
+    if (trackStats) this->totalStatesExplored++;
     
     // Check if we have a complete solution
     if (currentState.currentPath.size() == this->input.n) {
@@ -157,6 +165,20 @@ void FirstStepSolver::dfsIterative() {
       }
       stateStack.pop();
       continue;
+    }
+    
+    // Branch and bound pruning: check if this branch can possibly improve the best solution
+    if (this->maxTotalOverlap > 0) {  // Only prune if we have a solution to compare against      
+      size_t maxRemainingOverlap = estimateMaxRemainingOverlap(currentState.currentPath, 
+                                                               currentState.inDegree, 
+                                                               currentState.visited);
+      
+      // Prune if current + remaining can't beat the best solution
+      if (currentState.currentOverlap + maxRemainingOverlap <= this->maxTotalOverlap) {
+        if (trackStats) this->totalStatesPruned++;
+        stateStack.pop();
+        continue;
+      }
     }
     
     // Find next unvisited task with in-degree 0
@@ -218,6 +240,56 @@ void FirstStepSolver::dfsIterative() {
 }
 
 /**
+ * Estimates the maximum possible remaining overlap for branch and bound pruning
+ * 
+ * This function calculates an upper bound on the total overlap that can be achieved
+ * from the current partial solution. It considers both immediate overlap (with the
+ * last task) and gap overlap (with the second-to-last task) when enabled.
+ * 
+ * Memory-optimized version that doesn't create temporary vectors.
+ */
+size_t FirstStepSolver::estimateMaxRemainingOverlap(const std::vector<TaskGroupId>& currentPath, 
+                                                    const std::vector<int>& inDegree,
+                                                    const std::vector<bool>& visited) {
+  size_t maxPossibleOverlap = 0;
+  
+  // If no tasks scheduled yet, return 0 (no overlap possible)
+  if (currentPath.empty()) {
+    return 0;
+  }
+  
+  // Get the last task in the current path
+  int lastTask = currentPath.back();
+  int secondLastTask = (currentPath.size() >= 2) ? currentPath[currentPath.size() - 2] : -1;
+  
+  // Cache configuration values to avoid repeated lookups
+  bool gapOverlapEnabled = ConfigurationManager::getConfig().optimization.enableGapOverlap;
+  double decayFactor = gapOverlapEnabled ? ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor : 0.0;
+  
+  // For each remaining available task, calculate the maximum overlap it could contribute
+  for (int u = 0; u < this->input.n; u++) {
+    // Skip if task has dependencies or already visited
+    if (inDegree[u] != 0 || visited[u]) continue;
+    
+    size_t taskOverlap = 0;
+    
+    // Immediate overlap with last task (full weight)
+    taskOverlap = this->input.dataDependencyOverlapInBytes[lastTask][u];
+    
+    // Gap overlap with second-to-last task (if enabled and applicable)
+    if (gapOverlapEnabled && secondLastTask >= 0) {
+      size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondLastTask][u];
+      taskOverlap += static_cast<size_t>(gapOverlap * decayFactor);
+    }
+    
+    // Accumulate the maximum possible overlap
+    maxPossibleOverlap += taskOverlap;
+  }
+  
+  return maxPossibleOverlap;
+}
+
+/**
  * Writes the solution to a debug file for analysis
  */
 void FirstStepSolver::printSolution() {
@@ -238,6 +310,14 @@ void FirstStepSolver::printSolution() {
   }
 
   fmt::print(fp, "maxTotalOverlap = {}\n", this->maxTotalOverlap);
+  
+  // Print branch and bound statistics
+  fmt::print(fp, "totalStatesExplored = {}\n", this->totalStatesExplored);
+  fmt::print(fp, "totalStatesPruned = {}\n", this->totalStatesPruned);
+  if (this->totalStatesExplored > 0) {
+    double pruningRatio = (double)this->totalStatesPruned / (double)this->totalStatesExplored * 100.0;
+    fmt::print(fp, "pruningRatio = {:.2f}%\n", pruningRatio);
+  }
 
   for (int i = 0; i < this->input.n; i++) {
     fmt::print(fp, "taskGroupExecutionOrder[{}] = {}\n", i, this->output.taskGroupExecutionOrder[i]);

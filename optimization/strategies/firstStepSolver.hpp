@@ -82,6 +82,10 @@ class FirstStepSolver {
   std::vector<bool> visited;                    // Tracks visited nodes during DFS
   std::vector<int> inDegree;                    // In-degree count for each node (for topological ordering)
   std::vector<TaskGroupId> currentTopologicalSort; // Current task order being explored
+  
+  // Branch and bound statistics
+  size_t totalStatesExplored = 0;               // Total states processed
+  size_t totalStatesPruned = 0;                 // States pruned by branch and bound
 
   /**
    * @brief Recursive DFS to explore all valid topological orderings
@@ -99,6 +103,17 @@ class FirstStepSolver {
    * better control for future optimizations like pruning and early termination.
    */
   void dfsIterative();
+
+  /**
+   * @brief Estimates the maximum possible remaining overlap for branch and bound pruning
+   * @param currentPath Current partial solution path
+   * @param inDegree Current in-degree state for dependency checking
+   * @param visited Current visited state for availability checking
+   * @return Upper bound on remaining overlap that can be achieved
+   */
+  size_t estimateMaxRemainingOverlap(const std::vector<TaskGroupId>& currentPath, 
+                                     const std::vector<int>& inDegree,
+                                     const std::vector<bool>& visited);
   
   /**
    * @brief Outputs the solution to a debug file
