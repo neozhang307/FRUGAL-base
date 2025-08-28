@@ -83,6 +83,12 @@ CudaGraphExecutionTimeline getCudaGraphExecutionTimeline(cudaGraph_t graph) {
   // that might affect timing measurements
   cudaGraphExec_t graphExecWarmup;
   checkCudaErrors(cudaGraphInstantiate(&graphExecWarmup, graph, nullptr, nullptr, 0));
+  
+  //limit cuncurrency
+  size_t originalLimit;
+  cudaDeviceGetLimit(&originalLimit, cudaLimitDevRuntimePendingLaunchCount);
+  cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, 1);  // Force sequential
+
   checkCudaErrors(cudaGraphLaunch(graphExecWarmup, stream));
   checkCudaErrors(cudaDeviceSynchronize());  // Wait for completion
   checkCudaErrors(cudaGraphExecDestroy(graphExecWarmup));  // Clean up
@@ -102,6 +108,7 @@ CudaGraphExecutionTimeline getCudaGraphExecutionTimeline(cudaGraph_t graph) {
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
   checkCudaErrors(cudaDeviceSynchronize());  // Wait for completion
 
+  cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, originalLimit);  // Restore concurrency
   // Step 4: Finalize profiling and collect results
   // This flushes activity buffers and disables profiling
   profiler->finalize();

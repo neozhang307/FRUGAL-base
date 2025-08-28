@@ -553,6 +553,11 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
     ArrayId arrayId = findArrayIdByAddress(info.managedMemoryAddress);
     memoryArrayInfos[arrayId].deviceAddress = nullptr;
   }
+  
+  // Free unused graph memory back to the OS
+  int currentDevice;
+  checkCudaErrors(cudaGetDevice(&currentDevice));
+  checkCudaErrors(cudaDeviceGraphMemTrim(currentDevice));
 }
 
 void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stream) {
