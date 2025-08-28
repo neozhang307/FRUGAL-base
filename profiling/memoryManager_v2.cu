@@ -509,7 +509,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorage(cudaStream_t stream) {
   // Only print debug information if verbose output is enabled
   bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
 
-  for (auto info : memoryArrayInfos) {
+  for (auto& info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
     
     // Handle case where storageAddress is nullptr
@@ -564,7 +564,7 @@ void MemoryManager::offloadRemainedManagedMemoryToStorageAsync(cudaStream_t stre
   // Only print debug information if verbose output is enabled
   bool verbose = ConfigurationManager::getConfig().execution.enableVerboseOutput;
 
-  for (auto info : memoryArrayInfos) {
+  for (auto& info : memoryArrayInfos) {
     if(info.deviceAddress==nullptr)continue;//already in storage
     
     // Handle case where storageAddress is nullptr
