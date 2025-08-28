@@ -4,14 +4,16 @@
 # Build artifacts
 build/
 
-# Config and JSON files
-config.json
+# Config files (exclude config*.json except config.json)
+config_*.json
 currentConfig.json
 defaultConfig.json
-*.json
+memopt-config.json
+
+# Other JSON files to ignore
+*Plan*.json
 
 # Artifacts
-*Plan*.json
 *.dot
 *.z3-trace
 *.in
