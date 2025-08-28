@@ -393,7 +393,8 @@ void Executor::executeOptimizedGraph(
   cudaGraph_t graph = buildOptimizedGraph(
     optimizedGraph, executeRandomTask, memManager, stream);
   
-
+  // Execute the optimized graph
+  executeGraph(graph, stream, runningTime);
   
   // Clean up resources
   LOG_TRACE_WITH_INFO("Clean up");
