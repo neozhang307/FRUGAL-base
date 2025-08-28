@@ -923,6 +923,18 @@ struct IntegerProgrammingSolver {
 
   void printSolution(MPSolver::ResultStatus resultStatus) {
     // Skip debug output if disabled in configuration
+    auto optimizedPeakMemoryUsage = peakMemoryUsage->solution_value();
+    auto totalRunningTime = z[getTaskGroupVertexIndex(numberOfTaskGroups - 1)]->solution_value();
+
+    fmt::print( "Original peak memory usage (MiB): {:.6f}\n", originalPeakMemoryUsage);
+    fmt::print( "Lowest peak memory usage possible (MiB): {:.6f}\n", lowestPeakMemoryUsagePossible);
+    fmt::print( "Optimal peak memory usage (MiB): {:.6f}\n", optimizedPeakMemoryUsage);
+    fmt::print( "Optimal peak memory usage  / Original peak memory usage: {:.6f}%\n", optimizedPeakMemoryUsage / originalPeakMemoryUsage * 100.0);
+
+    fmt::print( "Original total running time (s): {:.6f}\n", originalTotalRunningTime);
+    fmt::print( "Total running time (s): {:.6f}\n", totalRunningTime);
+    fmt::print("Total running time / original: {:.6f}%\n", totalRunningTime / originalTotalRunningTime * 100.0);
+
     if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
       return;
     }
@@ -938,8 +950,6 @@ struct IntegerProgrammingSolver {
 
     fmt::print(fp, "Result status: {}\n", resultStatus == MPSolver::OPTIMAL ? "OPTIMAL" : "FEASIBLE");
 
-    auto optimizedPeakMemoryUsage = peakMemoryUsage->solution_value();
-    auto totalRunningTime = z[getTaskGroupVertexIndex(numberOfTaskGroups - 1)]->solution_value();
 
     fmt::print(fp, "Original peak memory usage (MiB): {:.6f}\n", originalPeakMemoryUsage);
     fmt::print(fp, "Lowest peak memory usage possible (MiB): {:.6f}\n", lowestPeakMemoryUsagePossible);
@@ -949,6 +959,8 @@ struct IntegerProgrammingSolver {
     fmt::print(fp, "Original total running time (s): {:.6f}\n", originalTotalRunningTime);
     fmt::print(fp, "Total running time (s): {:.6f}\n", totalRunningTime);
     fmt::print(fp, "Total running time / original: {:.6f}%\n", totalRunningTime / originalTotalRunningTime * 100.0);
+
+
 
     fmt::print(fp, "Solution:\n");
 

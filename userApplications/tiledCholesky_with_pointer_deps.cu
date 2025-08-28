@@ -278,7 +278,7 @@ void tiledCholesky(bool optimize, bool verify) {
   for (int i = 0; i < T; i++) {
     for (int j = 0; j < T; j++) {
       MemoryManager::getInstance().registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
-      MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
+      // MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
     }  
   }  
   

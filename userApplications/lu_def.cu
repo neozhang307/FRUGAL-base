@@ -990,7 +990,7 @@ void tiledLU_Optimized(bool verify) {
   for (int i = 0; i < T; i++) {
     for (int j = 0; j < T; j++) {
       MemoryManager::getInstance().registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
-      MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
+      // MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
     }  
   }  
   
@@ -1267,6 +1267,9 @@ void tiledLU_Optimized(bool verify) {
     );
     checkCudaErrors(cudaDeviceSynchronize());
     fmt::print("Total time used (s): {}\n", runningTime);
+    double gflops_pdpotrf = 2.0 / 3.0 * (((double)N*(double)N*(double)N) ) / (1000000000.0);
+    std::cout << "[PDPOTRF] ELAPSED: " << runningTime
+          << " s, GFLOPS: " << gflops_pdpotrf / (runningTime) << std::endl;
     memManager.prefetchAllDataToDevice();
     checkCudaErrors(cudaDeviceSynchronize());
     fmt::print("Finalized iteration {}\n", i+1);
