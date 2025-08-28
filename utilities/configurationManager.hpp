@@ -44,6 +44,9 @@ struct Configuration {
     double weightOfNumberOfMigrations = 0.00001;
     bool enableGapOverlap = false;
     double gapOverlapDecayFactor = 0.5;
+    std::string firstStepSolverType = "BRANCH_AND_BOUND";
+    bool enableEarlyTermination = false;
+    int maxSolverIterations = 1000000;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -61,7 +64,10 @@ struct Configuration {
       weightOfTotalRunningTime,
       weightOfNumberOfMigrations,
       enableGapOverlap,
-      gapOverlapDecayFactor
+      gapOverlapDecayFactor,
+      firstStepSolverType,
+      enableEarlyTermination,
+      maxSolverIterations
     );
   } optimization;
 

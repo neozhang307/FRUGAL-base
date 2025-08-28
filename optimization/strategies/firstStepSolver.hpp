@@ -114,6 +114,31 @@ class FirstStepSolver {
   size_t estimateMaxRemainingOverlap(const std::vector<TaskGroupId>& currentPath, 
                                      const std::vector<int>& inDegree,
                                      const std::vector<bool>& visited);
+
+  /**
+   * @brief Brute force search - exhaustive search without pruning
+   */
+  void bruteForceSearch();
+
+  /**
+   * @brief Beam search with limited beam width
+   */
+  void beamSearch();
+
+  /**
+   * @brief Hybrid solver that selects the best approach based on problem size
+   */
+  void hybridSearch();
+  
+  /**
+   * @brief Complete a partial solution with a random valid topological order
+   * @param partialSolution The partial solution to complete
+   * @param currentInDegree Current in-degree state
+   * @param currentVisited Current visited state
+   */
+  void completePartialSolution(std::vector<TaskGroupId>& partialSolution,
+                               std::vector<int>& currentInDegree,
+                               std::vector<bool>& currentVisited);
   
   /**
    * @brief Outputs the solution to a debug file

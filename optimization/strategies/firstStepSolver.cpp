@@ -50,9 +50,22 @@ FirstStepSolver::Output FirstStepSolver::solve() {
   this->maxTotalOverlap = 0;  // Start with zero overlap
   this->currentTopologicalSort.clear();  // Clear the working solution
 
-  // Use iterative DFS instead of recursive to avoid stack overflow
-  // and enable easier optimization in the future
-  dfsIterative();
+  // Select solver type based on configuration
+  std::string solverType = ConfigurationManager::getConfig().optimization.firstStepSolverType;
+  
+  if (solverType == "BRUTE_FORCE") {
+    bruteForceSearch();
+  } else if (solverType == "BRANCH_AND_BOUND") {
+    dfsIterative();  // Current iterative implementation with branch and bound
+  } else if (solverType == "BEAM_SEARCH") {
+    beamSearch();
+  } else if (solverType == "HYBRID") {
+    hybridSearch();
+  } else {
+    // Default to branch and bound
+    LOG_TRACE_WITH_INFO("Unknown solver type %s, defaulting to BRANCH_AND_BOUND", solverType.c_str());
+    dfsIterative();
+  }
 
   // Output solution for debugging
   this->printSolution();
@@ -150,10 +163,33 @@ void FirstStepSolver::dfsIterative() {
     this->totalStatesPruned = 0;
   }
   
+  // Early termination configuration
+  bool enableEarlyTermination = ConfigurationManager::getConfig().optimization.enableEarlyTermination;
+  int maxIterations = ConfigurationManager::getConfig().optimization.maxSolverIterations;
+  int iterations = 0;
+  bool earlyTerminated = false;
+  std::vector<TaskGroupId> bestPartialSolution;
+  std::vector<int> bestPartialInDegree;
+  std::vector<bool> bestPartialVisited;
+  
   // Main iterative DFS loop
   while (!stateStack.empty()) {
     DFSState& currentState = stateStack.top();
     if (trackStats) this->totalStatesExplored++;
+    iterations++;
+    
+    // Check for early termination
+    if (enableEarlyTermination && iterations >= maxIterations) {
+      // Save the best partial solution if we haven't found a complete one
+      if (this->output.taskGroupExecutionOrder.empty() && 
+          currentState.currentPath.size() > bestPartialSolution.size()) {
+        bestPartialSolution = currentState.currentPath;
+        bestPartialInDegree = currentState.inDegree;
+        bestPartialVisited = currentState.visited;
+      }
+      earlyTerminated = true;
+      break;
+    }
     
     // Check if we have a complete solution
     if (currentState.currentPath.size() == this->input.n) {
@@ -237,6 +273,36 @@ void FirstStepSolver::dfsIterative() {
       stateStack.pop();
     }
   }
+  
+  // Handle early termination
+  if (earlyTerminated) {
+    if (!this->output.taskGroupExecutionOrder.empty()) {
+      // We found at least one complete solution
+      fprintf(stderr, "[WARNING] Early termination triggered after %d iterations (limit: %d). Found complete solution but may not be optimal.\n", 
+              iterations, maxIterations);
+      LOG_TRACE_WITH_INFO("Early termination after %d iterations with complete solution", iterations);
+    } else if (!bestPartialSolution.empty()) {
+      // No complete solution found, use partial and complete it
+      fprintf(stderr, "[ERROR] Early termination triggered after %d iterations (limit: %d). Only found partial solution with %zu/%d tasks. Completing with random topological order.\n",
+              iterations, maxIterations, bestPartialSolution.size(), this->input.n);
+      LOG_TRACE_WITH_INFO("Early termination after %d iterations. Found partial solution with %zu/%d tasks. Completing with random valid topological order.", 
+                         iterations, bestPartialSolution.size(), this->input.n);
+      completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
+      this->output.taskGroupExecutionOrder = bestPartialSolution;
+      this->maxTotalOverlap = 0; // Mark as non-optimal solution
+    } else {
+      // No solution at all, create a random valid topological order
+      fprintf(stderr, "[ERROR] Early termination triggered after %d iterations (limit: %d). No solution found at all. Creating random valid topological order.\n",
+              iterations, maxIterations);
+      LOG_TRACE_WITH_INFO("Early termination after %d iterations with no solution. Creating random valid topological order.", iterations);
+      std::vector<TaskGroupId> randomSolution;
+      std::vector<int> tempInDegree = this->inDegree;
+      std::vector<bool> tempVisited = this->visited;
+      completePartialSolution(randomSolution, tempInDegree, tempVisited);
+      this->output.taskGroupExecutionOrder = randomSolution;
+      this->maxTotalOverlap = 0;
+    }
+  }
 }
 
 /**
@@ -287,6 +353,223 @@ size_t FirstStepSolver::estimateMaxRemainingOverlap(const std::vector<TaskGroupI
   }
   
   return maxPossibleOverlap;
+}
+
+/**
+ * Brute force search - exhaustive search without any pruning optimizations
+ * This serves as a baseline for performance comparison with other algorithms
+ */
+void FirstStepSolver::bruteForceSearch() {
+  // Simply call the iterative DFS without any branch and bound pruning
+  // We'll modify dfsIterative to have a parameter to disable pruning
+  std::stack<DFSState> stateStack;
+  
+  // Initialize and push the initial state
+  DFSState initialState;
+  initialState.nextTaskToTry = 0;
+  initialState.currentOverlap = 0;
+  initialState.currentPath.clear();
+  initialState.inDegree = this->inDegree;  // Copy initial in-degree
+  initialState.visited = this->visited;    // Copy initial visited (all false)
+  
+  stateStack.push(initialState);
+  
+  // Reset statistics 
+  bool trackStats = ConfigurationManager::getConfig().execution.enableDebugOutput;
+  if (trackStats) {
+    this->totalStatesExplored = 0;
+    this->totalStatesPruned = 0;  // Will be 0 for brute force
+  }
+  
+  // Early termination configuration
+  bool enableEarlyTermination = ConfigurationManager::getConfig().optimization.enableEarlyTermination;
+  int maxIterations = ConfigurationManager::getConfig().optimization.maxSolverIterations;
+  int iterations = 0;
+  bool earlyTerminated = false;
+  std::vector<TaskGroupId> bestPartialSolution;
+  std::vector<int> bestPartialInDegree;
+  std::vector<bool> bestPartialVisited;
+  
+  // Main iterative DFS loop WITHOUT pruning
+  while (!stateStack.empty()) {
+    DFSState& currentState = stateStack.top();
+    if (trackStats) this->totalStatesExplored++;
+    iterations++;
+    
+    // Check for early termination
+    if (enableEarlyTermination && iterations >= maxIterations) {
+      // Save the best partial solution if we haven't found a complete one
+      if (this->output.taskGroupExecutionOrder.empty() && 
+          currentState.currentPath.size() > bestPartialSolution.size()) {
+        bestPartialSolution = currentState.currentPath;
+        bestPartialInDegree = currentState.inDegree;
+        bestPartialVisited = currentState.visited;
+      }
+      earlyTerminated = true;
+      break;
+    }
+    
+    // Check if we have a complete solution
+    if (currentState.currentPath.size() == this->input.n) {
+      // Update best solution if current is better or equal
+      if (currentState.currentOverlap >= this->maxTotalOverlap) {
+        this->maxTotalOverlap = currentState.currentOverlap;
+        this->output.taskGroupExecutionOrder = currentState.currentPath;
+      }
+      stateStack.pop();
+      continue;
+    }
+    
+    // NO BRANCH AND BOUND PRUNING - explore all paths
+    
+    // Find next unvisited task with in-degree 0
+    bool foundNext = false;
+    for (int u = currentState.nextTaskToTry; u < this->input.n; u++) {
+      // Skip if task has dependencies or already visited
+      if (currentState.inDegree[u] != 0 || currentState.visited[u]) continue;
+      
+      // Found a valid task to schedule next
+      foundNext = true;
+      
+      // Calculate memory overlap with previous tasks (configurable gap-aware)
+      size_t overlapIncrease = 0;
+      if (!currentState.currentPath.empty()) {
+        // Overlap with immediately previous task (full weight)
+        int lastTask = currentState.currentPath.back();
+        overlapIncrease = this->input.dataDependencyOverlapInBytes[lastTask][u];
+        
+        // Gap overlap with second-to-last task (if enabled)
+        if (ConfigurationManager::getConfig().optimization.enableGapOverlap && 
+            currentState.currentPath.size() >= 2) {
+          int secondLastTask = currentState.currentPath[currentState.currentPath.size() - 2];
+          size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondLastTask][u];
+          double decayFactor = ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor;
+          overlapIncrease += static_cast<size_t>(gapOverlap * decayFactor);
+        }
+      }
+      
+      // Create new state for exploring this branch
+      DFSState newState;
+      newState.nextTaskToTry = 0;  // Start from beginning for next level
+      newState.currentOverlap = currentState.currentOverlap + overlapIncrease;
+      newState.currentPath = currentState.currentPath;
+      newState.currentPath.push_back(u);
+      newState.inDegree = currentState.inDegree;
+      newState.visited = currentState.visited;
+      
+      // Update in-degree for tasks dependent on u
+      for (auto v : this->input.edges[u]) {
+        newState.inDegree[v]--;
+      }
+      
+      // Mark u as visited
+      newState.visited[u] = true;
+      
+      // Update current state to resume from next task
+      currentState.nextTaskToTry = u + 1;
+      
+      // Push new state to explore this branch
+      stateStack.push(newState);
+      break;
+    }
+    
+    // If no valid next task found, backtrack
+    if (!foundNext) {
+      stateStack.pop();
+    }
+  }
+  
+  // Handle early termination
+  if (earlyTerminated) {
+    if (!this->output.taskGroupExecutionOrder.empty()) {
+      // We found at least one complete solution
+      fprintf(stderr, "[WARNING] Brute force early termination triggered after %d iterations (limit: %d). Found complete solution but may not be optimal.\n", 
+              iterations, maxIterations);
+      LOG_TRACE_WITH_INFO("Brute force early termination after %d iterations with complete solution", iterations);
+    } else if (!bestPartialSolution.empty()) {
+      // No complete solution found, use partial and complete it
+      fprintf(stderr, "[ERROR] Brute force early termination triggered after %d iterations (limit: %d). Only found partial solution with %zu/%d tasks. Completing with random topological order.\n",
+              iterations, maxIterations, bestPartialSolution.size(), this->input.n);
+      LOG_TRACE_WITH_INFO("Brute force early termination after %d iterations. Found partial solution with %zu/%d tasks.", 
+                         iterations, bestPartialSolution.size(), this->input.n);
+      completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
+      this->output.taskGroupExecutionOrder = bestPartialSolution;
+      this->maxTotalOverlap = 0; // Mark as non-optimal solution
+    } else {
+      // No solution at all, create a random valid topological order
+      fprintf(stderr, "[ERROR] Brute force early termination triggered after %d iterations (limit: %d). No solution found at all. Creating random valid topological order.\n",
+              iterations, maxIterations);
+      LOG_TRACE_WITH_INFO("Brute force early termination after %d iterations with no solution.", iterations);
+      std::vector<TaskGroupId> randomSolution;
+      std::vector<int> tempInDegree = this->inDegree;
+      std::vector<bool> tempVisited = this->visited;
+      completePartialSolution(randomSolution, tempInDegree, tempVisited);
+      this->output.taskGroupExecutionOrder = randomSolution;
+      this->maxTotalOverlap = 0;
+    }
+  }
+}
+
+/**
+ * Beam search with limited beam width
+ * TODO: Implement beam search algorithm
+ */
+void FirstStepSolver::beamSearch() {
+  // For now, fall back to branch and bound
+  // TODO: Implement actual beam search with configurable beam width
+  dfsIterative();
+}
+
+/**
+ * Hybrid solver that selects the best approach based on problem size
+ * TODO: Implement hybrid selection logic
+ */
+void FirstStepSolver::hybridSearch() {
+  // For now, use problem size to select algorithm
+  // TODO: Implement more sophisticated selection heuristics
+  if (this->input.n <= 10) {
+    bruteForceSearch();  // Small problems - use brute force
+  } else if (this->input.n <= 50) {
+    dfsIterative();      // Medium problems - use branch and bound  
+  } else {
+    beamSearch();        // Large problems - use beam search (when implemented)
+  }
+}
+
+/**
+ * Complete a partial solution with a random valid topological order
+ * This is used when early termination occurs and we need to fill in remaining tasks
+ */
+void FirstStepSolver::completePartialSolution(std::vector<TaskGroupId>& partialSolution,
+                                              std::vector<int>& currentInDegree,
+                                              std::vector<bool>& currentVisited) {
+  // Keep adding tasks that have no dependencies until all are scheduled
+  while (partialSolution.size() < this->input.n) {
+    bool foundTask = false;
+    
+    // Find any task with in-degree 0 that hasn't been visited
+    for (int u = 0; u < this->input.n; u++) {
+      if (currentInDegree[u] == 0 && !currentVisited[u]) {
+        // Add this task to the solution
+        partialSolution.push_back(u);
+        currentVisited[u] = true;
+        
+        // Update in-degree for dependent tasks
+        for (auto v : this->input.edges[u]) {
+          currentInDegree[v]--;
+        }
+        
+        foundTask = true;
+        break;  // Just take the first valid one (could randomize this later)
+      }
+    }
+    
+    if (!foundTask) {
+      // This shouldn't happen if the graph is valid
+      fprintf(stderr, "[ERROR] completePartialSolution: No valid task found, graph may have cycles!\n");
+      break;
+    }
+  }
 }
 
 /**
