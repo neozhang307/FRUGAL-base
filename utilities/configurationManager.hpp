@@ -47,6 +47,7 @@ struct Configuration {
     std::string firstStepSolverType = "BRANCH_AND_BOUND";
     bool enableEarlyTermination = false;
     int maxSolverIterations = 1000000;
+    int beamWidth = 100;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -67,7 +68,8 @@ struct Configuration {
       gapOverlapDecayFactor,
       firstStepSolverType,
       enableEarlyTermination,
-      maxSolverIterations
+      maxSolverIterations,
+      beamWidth
     );
   } optimization;
 

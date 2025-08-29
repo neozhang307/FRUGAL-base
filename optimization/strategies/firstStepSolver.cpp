@@ -1,5 +1,6 @@
 #include "firstStepSolver.hpp"
 
+#include <algorithm>
 #include <fmt/core.h>
 
 #include "../../utilities/configurationManager.hpp"
@@ -53,16 +54,33 @@ FirstStepSolver::Output FirstStepSolver::solve() {
   // Select solver type based on configuration
   std::string solverType = ConfigurationManager::getConfig().optimization.firstStepSolverType;
   
+  // Print which solver is being used
+  fprintf(stderr, "[FirstStepSolver] Using %s algorithm for task scheduling optimization (n=%d tasks)\n", 
+          solverType.c_str(), this->input.n);
+  
+  // Print additional configuration details
+  if (ConfigurationManager::getConfig().optimization.enableEarlyTermination) {
+    fprintf(stderr, "[FirstStepSolver] Early termination enabled (max iterations: %d)\n", 
+            ConfigurationManager::getConfig().optimization.maxSolverIterations);
+  }
+  if (ConfigurationManager::getConfig().optimization.enableGapOverlap) {
+    fprintf(stderr, "[FirstStepSolver] Gap overlap enabled (decay factor: %.2f)\n", 
+            ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor);
+  }
+  
   if (solverType == "BRUTE_FORCE") {
     bruteForceSearch();
   } else if (solverType == "BRANCH_AND_BOUND") {
     dfsIterative();  // Current iterative implementation with branch and bound
   } else if (solverType == "BEAM_SEARCH") {
+    int beamWidth = ConfigurationManager::getConfig().optimization.beamWidth;
+    fprintf(stderr, "[FirstStepSolver] Beam width set to %d\n", beamWidth);
     beamSearch();
   } else if (solverType == "HYBRID") {
     hybridSearch();
   } else {
     // Default to branch and bound
+    fprintf(stderr, "[FirstStepSolver] Unknown solver type %s, defaulting to BRANCH_AND_BOUND\n", solverType.c_str());
     LOG_TRACE_WITH_INFO("Unknown solver type %s, defaulting to BRANCH_AND_BOUND", solverType.c_str());
     dfsIterative();
   }
@@ -512,12 +530,171 @@ void FirstStepSolver::bruteForceSearch() {
 
 /**
  * Beam search with limited beam width
- * TODO: Implement beam search algorithm
+ * Explores only the top K most promising states at each level
  */
 void FirstStepSolver::beamSearch() {
-  // For now, fall back to branch and bound
-  // TODO: Implement actual beam search with configurable beam width
-  dfsIterative();
+  // Get configuration
+  int beamWidth = ConfigurationManager::getConfig().optimization.beamWidth;
+  bool enableEarlyTermination = ConfigurationManager::getConfig().optimization.enableEarlyTermination;
+  int maxIterations = ConfigurationManager::getConfig().optimization.maxSolverIterations;
+  bool trackStats = ConfigurationManager::getConfig().execution.enableDebugOutput;
+  
+  // Reset statistics
+  if (trackStats) {
+    this->totalStatesExplored = 0;
+    this->totalStatesPruned = 0;
+  }
+  
+  // Initialize beam with the initial state
+  std::vector<DFSState> currentBeam;
+  DFSState initialState;
+  initialState.nextTaskToTry = 0;
+  initialState.currentOverlap = 0;
+  initialState.currentPath.clear();
+  initialState.inDegree = this->inDegree;
+  initialState.visited = this->visited;
+  currentBeam.push_back(initialState);
+  
+  int iterations = 0;
+  bool earlyTerminated = false;
+  std::vector<TaskGroupId> bestPartialSolution;
+  std::vector<int> bestPartialInDegree;
+  std::vector<bool> bestPartialVisited;
+  
+  // Process level by level
+  for (int level = 0; level < this->input.n; level++) {
+    std::vector<DFSState> nextBeam;
+    
+    // Generate all possible next states from current beam
+    for (const auto& state : currentBeam) {
+      if (trackStats) this->totalStatesExplored++;
+      iterations++;
+      
+      // Check for early termination
+      if (enableEarlyTermination && iterations >= maxIterations) {
+        // Save the best partial solution
+        if (!state.currentPath.empty() && state.currentPath.size() > bestPartialSolution.size()) {
+          bestPartialSolution = state.currentPath;
+          bestPartialInDegree = state.inDegree;
+          bestPartialVisited = state.visited;
+        }
+        earlyTerminated = true;
+        break;
+      }
+      
+      // Check if this is a complete solution
+      if (state.currentPath.size() == this->input.n) {
+        if (state.currentOverlap >= this->maxTotalOverlap) {
+          this->maxTotalOverlap = state.currentOverlap;
+          this->output.taskGroupExecutionOrder = state.currentPath;
+        }
+        continue;
+      }
+      
+      // Generate all valid next tasks
+      for (int u = 0; u < this->input.n; u++) {
+        // Skip if task has dependencies or already visited
+        if (state.inDegree[u] != 0 || state.visited[u]) continue;
+        
+        // Calculate memory overlap
+        size_t overlapIncrease = 0;
+        if (!state.currentPath.empty()) {
+          int lastTask = state.currentPath.back();
+          overlapIncrease = this->input.dataDependencyOverlapInBytes[lastTask][u];
+          
+          // Gap overlap if enabled
+          if (ConfigurationManager::getConfig().optimization.enableGapOverlap && 
+              state.currentPath.size() >= 2) {
+            int secondLastTask = state.currentPath[state.currentPath.size() - 2];
+            size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondLastTask][u];
+            double decayFactor = ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor;
+            overlapIncrease += static_cast<size_t>(gapOverlap * decayFactor);
+          }
+        }
+        
+        // Create new state
+        DFSState newState;
+        newState.nextTaskToTry = 0;
+        newState.currentOverlap = state.currentOverlap + overlapIncrease;
+        newState.currentPath = state.currentPath;
+        newState.currentPath.push_back(u);
+        newState.inDegree = state.inDegree;
+        newState.visited = state.visited;
+        
+        // Update in-degree for dependent tasks
+        for (auto v : this->input.edges[u]) {
+          newState.inDegree[v]--;
+        }
+        
+        // Mark u as visited
+        newState.visited[u] = true;
+        
+        nextBeam.push_back(newState);
+      }
+    }
+    
+    if (earlyTerminated) break;
+    
+    // Sort next beam by overlap (descending) and keep only top beamWidth states
+    std::sort(nextBeam.begin(), nextBeam.end(), 
+              [](const DFSState& a, const DFSState& b) {
+                return a.currentOverlap > b.currentOverlap;
+              });
+    
+    // Prune to beam width
+    if (nextBeam.size() > static_cast<size_t>(beamWidth)) {
+      if (trackStats) {
+        this->totalStatesPruned += nextBeam.size() - beamWidth;
+      }
+      nextBeam.resize(beamWidth);
+    }
+    
+    // If no states left, we're done
+    if (nextBeam.empty()) {
+      break;
+    }
+    
+    currentBeam = std::move(nextBeam);
+  }
+  
+  // Check final beam for best solution
+  for (const auto& state : currentBeam) {
+    if (state.currentPath.size() == this->input.n && 
+        state.currentOverlap >= this->maxTotalOverlap) {
+      this->maxTotalOverlap = state.currentOverlap;
+      this->output.taskGroupExecutionOrder = state.currentPath;
+    }
+  }
+  
+  // Handle early termination
+  if (earlyTerminated) {
+    if (!this->output.taskGroupExecutionOrder.empty()) {
+      fprintf(stderr, "[WARNING] Beam search early termination after %d iterations (limit: %d). Found complete solution but may not be optimal.\n", 
+              iterations, maxIterations);
+      LOG_TRACE_WITH_INFO("Beam search early termination after %d iterations with complete solution", iterations);
+    } else if (!bestPartialSolution.empty()) {
+      fprintf(stderr, "[ERROR] Beam search early termination after %d iterations (limit: %d). Only found partial solution with %zu/%d tasks. Completing with random topological order.\n",
+              iterations, maxIterations, bestPartialSolution.size(), this->input.n);
+      completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
+      this->output.taskGroupExecutionOrder = bestPartialSolution;
+      this->maxTotalOverlap = 0;
+    } else {
+      fprintf(stderr, "[ERROR] Beam search early termination after %d iterations (limit: %d). No solution found. Creating random valid topological order.\n",
+              iterations, maxIterations);
+      std::vector<TaskGroupId> randomSolution;
+      std::vector<int> tempInDegree = this->inDegree;
+      std::vector<bool> tempVisited = this->visited;
+      completePartialSolution(randomSolution, tempInDegree, tempVisited);
+      this->output.taskGroupExecutionOrder = randomSolution;
+      this->maxTotalOverlap = 0;
+    }
+  }
+  
+  // Log beam search statistics if debug enabled
+  if (trackStats) {
+    LOG_TRACE_WITH_INFO("Beam search completed: beamWidth=%d, statesExplored=%zu, statesPruned=%zu", 
+                       beamWidth, this->totalStatesExplored, this->totalStatesPruned);
+  }
 }
 
 /**
