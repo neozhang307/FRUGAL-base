@@ -141,6 +141,13 @@ class FirstStepSolver {
                                std::vector<bool>& currentVisited);
   
   /**
+   * @brief Calculate total overlap for a given task execution order
+   * @param taskOrder The execution order to evaluate
+   * @return Total memory overlap in bytes
+   */
+  size_t calculateTotalOverlap(const std::vector<TaskGroupId>& taskOrder);
+  
+  /**
    * @brief Outputs the solution to a debug file
    */
   void printSolution();

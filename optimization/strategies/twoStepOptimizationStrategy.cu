@@ -476,30 +476,9 @@ OptimizationOutput TwoStepOptimizationStrategy::run(OptimizationInput &input) {
   // Convert the optimization input to the format expected by FirstStepSolver
   auto firstStepInput = convertToFirstStepInput(input);
   
-  FirstStepSolver::Output firstStepOutput;
-  
-  // Check if we should bypass the first step solver
-  bool byPassingFirstStep = ConfigurationManager::getConfig().optimization.byPassingFirstStep;
-  int maxTaskGroupAmount = ConfigurationManager::getConfig().optimization.maxTaskGroupAmount;
-  
-  // Bypass if explicitly configured or if task groups exceed threshold (when maxTaskGroupAmount is set)
-  if (byPassingFirstStep || (maxTaskGroupAmount > 0 && firstStepInput.n > maxTaskGroupAmount)) {
-    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Bypassing first step solver ";
-    if (byPassingFirstStep) {
-      std::cout << "(explicitly configured in settings)" << std::endl;
-    } else {
-      std::cout << "(task group count " << firstStepInput.n 
-                << " exceeds threshold " << maxTaskGroupAmount << ")" << std::endl;
-    }
-    
-    // Use the bypass function to get a valid topological ordering without optimization
-    firstStepOutput = byPassingFirstStepSolver(firstStepInput);
-  } else {
-    // Use the original solver for optimal ordering
-    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Using full optimization for task scheduling" << std::endl;
-    FirstStepSolver firstStepSolver(std::move(firstStepInput));
-    firstStepOutput = firstStepSolver.solve();
-  }
+  // The FirstStepSolver now handles bypassing internally based on configuration
+  FirstStepSolver firstStepSolver(std::move(firstStepInput));
+  FirstStepSolver::Output firstStepOutput = firstStepSolver.solve();
 
   // Add a sentinel task group at the end to represent program completion
   // This simplifies boundary condition handling in the second step

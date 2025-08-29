@@ -52,8 +52,80 @@ FirstStepSolver::Output FirstStepSolver::solve() {
   this->maxTotalOverlap = 0;  // Start with zero overlap
   this->currentTopologicalSort.clear();  // Clear the working solution
 
+  // Check if we should bypass optimization
+  bool byPassingFirstStep = ConfigurationManager::getConfig().optimization.byPassingFirstStep;
+  int maxTaskGroupAmount = ConfigurationManager::getConfig().optimization.maxTaskGroupAmount;
+  
+  // Bypass if explicitly configured or if task groups exceed threshold
+  if (byPassingFirstStep || (maxTaskGroupAmount > 0 && this->input.n > maxTaskGroupAmount)) {
+    fprintf(stderr, "[FirstStepSolver] BYPASSING optimization - using random topological order ");
+    if (byPassingFirstStep) {
+      fprintf(stderr, "(explicitly configured)\n");
+    } else {
+      fprintf(stderr, "(task count %d > threshold %d)\n", this->input.n, maxTaskGroupAmount);
+    }
+    
+    // Start timer for bypass
+    auto startTime = std::chrono::high_resolution_clock::now();
+    
+    // Generate a random valid topological order
+    std::vector<TaskGroupId> randomSolution;
+    std::vector<int> tempInDegree = this->inDegree;
+    std::vector<bool> tempVisited = this->visited;
+    completePartialSolution(randomSolution, tempInDegree, tempVisited);
+    this->output.taskGroupExecutionOrder = randomSolution;
+    
+    // Calculate the actual overlap achieved by this random order
+    this->maxTotalOverlap = calculateTotalOverlap(randomSolution);
+    
+    // End timer
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+    double elapsedSeconds = duration.count() / 1000000.0;
+    
+    fprintf(stderr, "[FirstStepSolver] Bypass completed in %.6f seconds (%.3f ms)\n", 
+            elapsedSeconds, elapsedSeconds * 1000.0);
+    fprintf(stderr, "[FirstStepSolver] Generated random topological order for %d tasks\n", this->input.n);
+    
+    // Skip the rest of the function
+    this->printSolution();
+    return this->output;
+  }
+  
   // Select solver type based on configuration
   std::string solverType = ConfigurationManager::getConfig().optimization.firstStepSolverType;
+  
+  // Check if BYPASSING is selected as solver type (alternative to byPassingFirstStep flag)
+  if (solverType == "BYPASSING") {
+    fprintf(stderr, "[FirstStepSolver] BYPASSING solver type selected - using random topological order\n");
+    
+    // Start timer for bypass
+    auto startTime = std::chrono::high_resolution_clock::now();
+    
+    // Generate a random valid topological order
+    std::vector<TaskGroupId> randomSolution;
+    std::vector<int> tempInDegree = this->inDegree;
+    std::vector<bool> tempVisited = this->visited;
+    completePartialSolution(randomSolution, tempInDegree, tempVisited);
+    this->output.taskGroupExecutionOrder = randomSolution;
+    
+    // Calculate the actual overlap achieved by this random order
+    this->maxTotalOverlap = calculateTotalOverlap(randomSolution);
+    
+    // End timer
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+    double elapsedSeconds = duration.count() / 1000000.0;
+    
+    fprintf(stderr, "[FirstStepSolver] Bypass completed in %.6f seconds (%.3f ms)\n", 
+            elapsedSeconds, elapsedSeconds * 1000.0);
+    fprintf(stderr, "[FirstStepSolver] Generated random topological order for %d tasks\n", this->input.n);
+    fprintf(stderr, "[FirstStepSolver] Solution found with total overlap: %zu bytes (random order - not optimized)\n", this->maxTotalOverlap);
+    
+    // Skip the rest of the function
+    this->printSolution();
+    return this->output;
+  }
   
   // Print which solver is being used
   fprintf(stderr, "[FirstStepSolver] Using %s algorithm for task scheduling optimization (n=%d tasks)\n", 
@@ -800,6 +872,34 @@ void FirstStepSolver::hybridSearch() {
   // Log the decision for debugging
   LOG_TRACE_WITH_INFO("HybridSolver selected %s for n=%d, density=%.2f, avgBranching=%.1f", 
                      selectedSolver.c_str(), n, density, avgBranchingFactor);
+}
+
+/**
+ * Calculate total overlap for a given task execution order
+ * This evaluates the quality of any valid topological ordering
+ */
+size_t FirstStepSolver::calculateTotalOverlap(const std::vector<TaskGroupId>& taskOrder) {
+  size_t totalOverlap = 0;
+  
+  // For each consecutive pair of tasks, calculate their overlap
+  for (size_t i = 1; i < taskOrder.size(); i++) {
+    int currentTask = taskOrder[i];
+    int previousTask = taskOrder[i - 1];
+    
+    // Immediate overlap with previous task
+    size_t immediateOverlap = this->input.dataDependencyOverlapInBytes[previousTask][currentTask];
+    totalOverlap += immediateOverlap;
+    
+    // Gap overlap if enabled and applicable
+    if (ConfigurationManager::getConfig().optimization.enableGapOverlap && i >= 2) {
+      int secondPreviousTask = taskOrder[i - 2];
+      size_t gapOverlap = this->input.dataDependencyOverlapInBytes[secondPreviousTask][currentTask];
+      double decayFactor = ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor;
+      totalOverlap += static_cast<size_t>(gapOverlap * decayFactor);
+    }
+  }
+  
+  return totalOverlap;
 }
 
 /**
