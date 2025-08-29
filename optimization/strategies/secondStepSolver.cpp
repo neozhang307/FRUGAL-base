@@ -292,6 +292,16 @@ struct IntegerProgrammingSolver {
         // force the variable to be 1 by setting its lower bound -> lower bound is true means forcing true
         if (shouldAllocateWithoutPrefetch[std::make_pair(i, j)]) {
           p[i][j]->SetLB(1);  // This forces p[i][j] = 1 (must prefetch)
+        } else if (i > 0) {
+          // OPTIMIZATION: Check if previous task used this array
+          // If previous task used array j, it's already on device - no need to prefetch
+          bool previousTaskUsedArray = (input.taskGroupInputArrays[i-1].count(j) > 0) ||
+                                       (input.taskGroupOutputArrays[i-1].count(j) > 0);
+          
+          if (previousTaskUsedArray) {
+            // Array j is already on device from previous task execution
+            p[i][j]->SetUB(0);  // Force p[i][j] = 0 (no prefetching needed)
+          }
         }
       }
     }
