@@ -761,9 +761,11 @@ struct IntegerProgrammingSolver {
       }
     }
 
-    // Define a very large number to represent "infinitely late" for timing constraints
+    // Define a large number to represent "infinitely late" for timing constraints
     // This is used in the big-M method to conditionally enforce constraints
-    const float infinityForTime = 1000.0 * originalTotalRunningTime;
+    // Using 10x original time as a reasonable upper bound - any solution taking
+    // more than 10x longer would be practically useless for memory optimization
+    const float infinityForTime = 10.0 * originalTotalRunningTime;
 
     //---------- SECTION 2: Add Precedence Constraints ----------
     // For each vertex (except the first), add constraints that it cannot start
