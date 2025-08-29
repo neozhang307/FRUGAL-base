@@ -309,6 +309,16 @@ struct IntegerProgrammingSolver {
         bool taskUsesArray = (input.taskGroupInputArrays[i].count(j) > 0) ||
                              (input.taskGroupOutputArrays[i].count(j) > 0);
         
+        // Find the next task after i that uses array j
+        int nextTaskUsingArray = numberOfTaskGroups;  // Default: no future task uses it
+        for (int iPrime = i + 1; iPrime < numberOfTaskGroups; iPrime++) {
+          if ((input.taskGroupInputArrays[iPrime].count(j) > 0) ||
+              (input.taskGroupOutputArrays[iPrime].count(j) > 0)) {
+            nextTaskUsingArray = iPrime;
+            break;
+          }
+        }
+        
         // CRITICAL CONSTRAINT: For each array j at task i, we can perform at most
         // one memory operation - either prefetch it OR offload it to one destination
         // This creates a constraint: 0 <= p_ij + sum(o_ijk for all k) <= 1
@@ -340,6 +350,11 @@ struct IntegerProgrammingSolver {
             // OPTIMIZATION: If task i doesn't use array j, it cannot offload it
             // This significantly reduces the search space by eliminating impossible offloads
             o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (task doesn't use this array)
+          } else if (k > nextTaskUsingArray) {
+            // OPTIMIZATION: Cannot offload beyond the next task that uses this array
+            // If we offload to k > nextTaskUsingArray, the array won't be available
+            // when nextTaskUsingArray needs it
+            o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (would miss the next use)
           } else {
             // Cannot offload to a task that's earlier than or same as current task
             // (would create a causality violation)
