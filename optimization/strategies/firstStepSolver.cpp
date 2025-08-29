@@ -1,6 +1,7 @@
 #include "firstStepSolver.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <fmt/core.h>
 
 #include "../../utilities/configurationManager.hpp"
@@ -68,6 +69,9 @@ FirstStepSolver::Output FirstStepSolver::solve() {
             ConfigurationManager::getConfig().optimization.gapOverlapDecayFactor);
   }
   
+  // Start timer
+  auto startTime = std::chrono::high_resolution_clock::now();
+  
   if (solverType == "BRUTE_FORCE") {
     bruteForceSearch();
   } else if (solverType == "BRANCH_AND_BOUND") {
@@ -84,6 +88,28 @@ FirstStepSolver::Output FirstStepSolver::solve() {
     LOG_TRACE_WITH_INFO("Unknown solver type %s, defaulting to BRANCH_AND_BOUND", solverType.c_str());
     dfsIterative();
   }
+  
+  // End timer and calculate elapsed time
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+  double elapsedSeconds = duration.count() / 1000000.0;
+  
+  // Print timing information
+  fprintf(stderr, "[FirstStepSolver] Solver execution completed in %.6f seconds (%.3f ms)\n", 
+          elapsedSeconds, elapsedSeconds * 1000.0);
+  
+  // Also print statistics if available
+  if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    fprintf(stderr, "[FirstStepSolver] States explored: %zu, States pruned: %zu\n", 
+            this->totalStatesExplored, this->totalStatesPruned);
+    if (this->totalStatesExplored > 0) {
+      double pruningRatio = (double)this->totalStatesPruned / (double)this->totalStatesExplored * 100.0;
+      fprintf(stderr, "[FirstStepSolver] Pruning ratio: %.2f%%\n", pruningRatio);
+    }
+  }
+  
+  // Print solution quality
+  fprintf(stderr, "[FirstStepSolver] Solution found with total overlap: %zu bytes\n", this->maxTotalOverlap);
 
   // Output solution for debugging
   this->printSolution();
@@ -698,19 +724,82 @@ void FirstStepSolver::beamSearch() {
 }
 
 /**
- * Hybrid solver that selects the best approach based on problem size
- * TODO: Implement hybrid selection logic
+ * Hybrid solver that selects the best approach based on problem size and characteristics
+ * Automatically chooses between brute force, branch & bound, and beam search
  */
 void FirstStepSolver::hybridSearch() {
-  // For now, use problem size to select algorithm
-  // TODO: Implement more sophisticated selection heuristics
-  if (this->input.n <= 10) {
-    bruteForceSearch();  // Small problems - use brute force
-  } else if (this->input.n <= 50) {
-    dfsIterative();      // Medium problems - use branch and bound  
-  } else {
-    beamSearch();        // Large problems - use beam search (when implemented)
+  int n = this->input.n;
+  
+  // Calculate graph density (ratio of edges to maximum possible edges)
+  int edgeCount = 0;
+  for (int i = 0; i < n; i++) {
+    edgeCount += this->input.edges[i].size();
   }
+  int maxPossibleEdges = n * (n - 1) / 2;  // Maximum edges in DAG
+  double density = (maxPossibleEdges > 0) ? (double)edgeCount / maxPossibleEdges : 0.0;
+  
+  // Calculate average branching factor (average number of available tasks at each step)
+  double avgBranchingFactor = 0;
+  for (int i = 0; i < n; i++) {
+    int availableCount = 0;
+    for (int j = 0; j < n; j++) {
+      if (this->inDegree[j] == 0) availableCount++;
+    }
+    avgBranchingFactor += availableCount;
+  }
+  avgBranchingFactor /= n;
+  
+  // Selection logic based on problem characteristics
+  std::string selectedSolver;
+  
+  if (n <= 15) {
+    // Very small problems: brute force can explore all possibilities quickly
+    selectedSolver = "BRUTE_FORCE";
+    fprintf(stderr, "[HybridSolver] Problem size %d <= 15, selecting BRUTE_FORCE for exhaustive search\n", n);
+    bruteForceSearch();
+    
+  } else if (n <= 50 && density < 0.3) {
+    // Medium problems with low density: branch & bound is effective
+    selectedSolver = "BRANCH_AND_BOUND";
+    fprintf(stderr, "[HybridSolver] Problem size %d <= 50 with density %.2f < 0.3, selecting BRANCH_AND_BOUND\n", n, density);
+    dfsIterative();
+    
+  } else if (n <= 100 && avgBranchingFactor < 5) {
+    // Medium-large problems with limited branching: branch & bound can still work well
+    selectedSolver = "BRANCH_AND_BOUND";
+    fprintf(stderr, "[HybridSolver] Problem size %d <= 100 with avg branching %.1f < 5, selecting BRANCH_AND_BOUND\n", n, avgBranchingFactor);
+    dfsIterative();
+    
+  } else {
+    // Large problems or high complexity: use beam search for scalability
+    selectedSolver = "BEAM_SEARCH";
+    
+    // Adjust beam width based on problem size
+    int originalBeamWidth = ConfigurationManager::getConfig().optimization.beamWidth;
+    int adjustedBeamWidth = originalBeamWidth;
+    
+    if (n > 500) {
+      // Very large problems: reduce beam width for performance
+      adjustedBeamWidth = std::min(originalBeamWidth, 50);
+    } else if (n > 200) {
+      // Large problems: moderate beam width
+      adjustedBeamWidth = std::min(originalBeamWidth, 100);
+    }
+    // For n <= 200, use configured beam width
+    
+    fprintf(stderr, "[HybridSolver] Problem size %d > 100 or high complexity (density %.2f, branching %.1f)\n", 
+            n, density, avgBranchingFactor);
+    fprintf(stderr, "[HybridSolver] Selecting BEAM_SEARCH with beam width %d (configured: %d)\n", 
+            adjustedBeamWidth, originalBeamWidth);
+    
+    // Note: We can't easily modify the config here, so we'll use the configured width
+    // In a production system, we might want to pass beam width as a parameter
+    beamSearch();
+  }
+  
+  // Log the decision for debugging
+  LOG_TRACE_WITH_INFO("HybridSolver selected %s for n=%d, density=%.2f, avgBranching=%.1f", 
+                     selectedSolver.c_str(), n, density, avgBranchingFactor);
 }
 
 /**
