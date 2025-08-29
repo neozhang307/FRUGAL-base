@@ -305,6 +305,10 @@ struct IntegerProgrammingSolver {
       for (int j = 0; j < numberOfArraysManaged; j++) {
         o[i].push_back({});  // Create a new subrow for array j
         
+        // Check if task i actually uses array j (reads or writes it)
+        bool taskUsesArray = (input.taskGroupInputArrays[i].count(j) > 0) ||
+                             (input.taskGroupOutputArrays[i].count(j) > 0);
+        
         // CRITICAL CONSTRAINT: For each array j at task i, we can perform at most
         // one memory operation - either prefetch it OR offload it to one destination
         // This creates a constraint: 0 <= p_ij + sum(o_ijk for all k) <= 1
@@ -332,6 +336,10 @@ struct IntegerProgrammingSolver {
             } else {
               o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (cannot offload to other tasks)
             }
+          } else if (!taskUsesArray) {
+            // OPTIMIZATION: If task i doesn't use array j, it cannot offload it
+            // This significantly reduces the search space by eliminating impossible offloads
+            o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (task doesn't use this array)
           } else {
             // Cannot offload to a task that's earlier than or same as current task
             // (would create a causality violation)
