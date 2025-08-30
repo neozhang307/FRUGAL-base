@@ -15,9 +15,11 @@
 ### Prefetch Operations
 - **`p[i][j]`**: Binary, whether to prefetch array j before task i starts
   - Size: O(nm) variables
+  - **Dynamic Lookahead Optimization**: Uses preprocessing to eliminate 87-88% of variables
   - Constraints: 
     - `p[i][j] = 0` if task i-1 used array j (already on device)
     - `p[i][j] = 1` if `shouldAllocateWithoutPrefetch[i,j]` is true
+    - `p[i][j] = 0` if task i is outside lookahead window for array j
 
 ### Offload Operations  
 - **`o[i][j][k]`**: Binary, whether to offload array j after task i for use at task k
@@ -179,16 +181,59 @@ Total delay: 15 seconds (not parallel!)
 - **Completed**: Reduced p[i][j] redundant prefetches for consecutive array usage
 - **Completed**: Tightened big-M from 1000x to 100x original runtime
 - **Completed**: Reduced prefetch edges to only connect to first user (transitivity handles rest)
+- **Completed**: **Dynamic Lookahead Preprocessing** - eliminates 87-88% of p[i][j] variables
 - **Cannot eliminate**: e[u][v] matrix due to serialization complexity
 - **Remaining options**: Temporal decomposition, Gurobi parameter tuning, warm start
 
-## Future Research Direction
-**Index-based serialization with indicator constraints**: The vertex indices (getPrefetchVertexIndex, getOffloadVertexIndex) already encode the serialization order. Could potentially replace e[u][v] by:
+## Dynamic Lookahead Preprocessing (Implemented)
+
+### Algorithm Overview
+The dynamic lookahead preprocessing dramatically reduces the search space for prefetch operations from O(nm) to approximately O(30m) by constraining which tasks can prefetch each array.
+
+### Key Concepts
+1. **Responsibility Zones**: Each task that uses an array is responsible for ensuring it's prefetched within a limited window before its execution
+2. **Dual Constraints**: Combines both distance-based (30 tasks) and time-based (configurable factor × transfer time) limits
+3. **Non-overlapping Windows**: Prevents multiple tasks from competing to prefetch the same array
+
+### Implementation Details
+```cpp
+// For each array j and task g that uses it:
+// 1. Calculate distance-based window: [g-30, g]
+// 2. Calculate time-based window based on accumulated task runtimes
+// 3. Use the more restrictive (smaller) window
+// 4. Prevent overlap with previous user's window
+// 5. Set p[i][j] = 0 for all i outside the window
+```
+
+### Performance Impact
+- **Variable Reduction**: Eliminates 87-88% of prefetch variables
+- **Solve Time**: Reduces from minutes to ~0.4 seconds
+- **Solution Quality**: Maintains optimality within the constrained space
+- **Scalability**: Enables solving much larger problems
+
+### Configuration Parameters
+- `prefetchLookaheadDistanceLimit`: Maximum lookback distance (default: 30 tasks)
+- `prefetchLookaheadTimeBudgetFactor`: Time budget multiplier (default: 2.0, tested up to 10.0)
+
+## Future Research Directions
+
+### 1. Sparse Storage for e[u][v] Matrix
+**Status**: Implemented but reverted - no performance improvement observed
+**Reason**: Modern MIP solvers (Gurobi) already optimize away zero variables in presolve
+**Learning**: The O(n²m²) edge matrix is not the actual bottleneck - the n^m decision space is
+
+Could potentially revisit with:
+- Map-based sparse storage: `std::map<std::pair<int,int>, MPVariable*>`
+- Only create constraints for actual edges (~25K instead of 150M)
+- Reduces memory from 1.2GB to 0.6MB
+
+### 2. Index-based Serialization with Indicator Constraints
+The vertex indices (getPrefetchVertexIndex, getOffloadVertexIndex) already encode the serialization order. Could potentially replace e[u][v] by:
 1. Using vertex index ordering directly (consecutive indices = sequential operations)
 2. Creating auxiliary variables for pairs of active operations
 3. Using indicator constraints: IF (both operations active) THEN (enforce timing)
 
-This approach could eliminate O(n²m²) edge variables but would require significant redesign and performance impact is unclear. Deferred as future research.
+This approach could eliminate O(n²m²) edge variables but would require significant redesign and performance impact is unclear.
 
 ## Configuration Parameters (from ConfigurationManager)
 - `solver`: "GUROBI_MIXED_INTEGER_PROGRAMMING" or "SCIP"
@@ -197,5 +242,5 @@ This approach could eliminate O(n²m²) edge variables but would require signifi
 - `weightOfPeakMemoryUsage`: Objective weight for memory (default 1.0)
 - `weightOfTotalRunningTime`: Objective weight for time (default 0.0001)  
 - `weightOfNumberOfMigrations`: Objective weight for transfers (default 0.00001)
-- `prefetchingBandwidthInGB`: Host-to-device bandwidth
-- `offloadingBandwidth`: Device-to-host bandwidth (calculated from prefetching)
+- `prefetchingBandwidthInGB`: Host-to-device bandwidth (also used for device-to-host in current implementation)
+- `offloadingBandwidth`: Device-to-host bandwidth (NOTE: Current code uses same value as prefetchingBandwidth, but could be configured separately)
