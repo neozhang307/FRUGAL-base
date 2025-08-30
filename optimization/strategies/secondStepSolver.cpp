@@ -655,16 +655,18 @@ struct IntegerProgrammingSolver {
         // The edge exists only if we decide to prefetch array j at task i
         e[getTaskGroupStartVertexIndex(i)][getPrefetchVertexIndex(i, j)] = p[i][j];
         
-        // Connect prefetch operations to all task executions that need this array
-        // This ensures prefetching completes before the array is used by any task
+        // OPTIMIZATION: Connect prefetch only to the FIRST task that needs this array
+        // Since tasks execute sequentially, if the first task has the array,
+        // all subsequent tasks will also have it available (transitivity)
         for (int k = i; k < numberOfTaskGroups; k++) {
           // Check if task group k reads or writes to array j
           // If only write part of the array still need to prefetch all data
           if (input.taskGroupInputArrays[k].count(j) != 0 || input.taskGroupOutputArrays[k].count(j) != 0) {
           // if (input.taskGroupInputArrays[k].count(j) != 0 ) {
             // This creates the edge: <Prefetch[i][j]> -> TaskEnd[k]
-            // Meaning any task that uses array j must wait for its prefetch to complete
+            // Only connect to the FIRST task that uses array j
             e[getPrefetchVertexIndex(i, j)][getTaskGroupVertexIndex(k)] = oneConstant;
+            break;  // Stop after connecting to first user - reduces edges significantly
           }
         }
       }
