@@ -281,6 +281,97 @@ struct IntegerProgrammingSolver {
 
     //---------- SECTION 2: Prefetching Variables ----------
     // Define binary variables p_ij that determine if array j is prefetched at task group i
+    
+    // PREPROCESSING: Compute valid prefetch ranges using dynamic lookahead strategy
+    // For each array j, determine which tasks i are allowed to prefetch it
+    const int PREFETCH_LOOKAHEAD_LIMIT = ConfigurationManager::getConfig().optimization.prefetchLookaheadDistanceLimit;
+    const double TIME_BUDGET_FACTOR = ConfigurationManager::getConfig().optimization.prefetchLookaheadTimeBudgetFactor;
+    std::vector<std::vector<bool>> allowPrefetch(numberOfTaskGroups, std::vector<bool>(numberOfArraysManaged, false));
+    
+    // Calculate prefetch time for each array (size / bandwidth)
+    std::vector<float> arrayPrefetchTimes(numberOfArraysManaged);
+    for (int j = 0; j < numberOfArraysManaged; j++) {
+        arrayPrefetchTimes[j] = static_cast<float>(input.arraySizes[j]) / input.prefetchingBandwidth;
+    }
+    
+    for (int j = 0; j < numberOfArraysManaged; j++) {
+      // Find all tasks that use array j
+      std::vector<int> tasksUsingArray;
+      for (int g = 0; g < numberOfTaskGroups; g++) {
+        bool taskUsesArray = (input.taskGroupInputArrays[g].count(j) > 0) ||
+                             (input.taskGroupOutputArrays[g].count(j) > 0);
+        if (taskUsesArray) {
+          tasksUsingArray.push_back(g);
+        }
+      }
+      
+      // For each task g that uses array j, determine its prefetch responsibility range
+      for (int taskIdx = 0; taskIdx < tasksUsingArray.size(); taskIdx++) {
+        int g = tasksUsingArray[taskIdx];
+        
+        // Calculate total prefetch time for all arrays needed by task g
+        float totalPrefetchTimeForTaskG = 0;
+        for (auto arrayId : input.taskGroupInputArrays[g]) {
+          totalPrefetchTimeForTaskG += arrayPrefetchTimes[arrayId];
+        }
+        for (auto arrayId : input.taskGroupOutputArrays[g]) {
+          totalPrefetchTimeForTaskG += arrayPrefetchTimes[arrayId];
+        }
+        
+        // Time budget: configurable factor × total prefetch time for this task
+        float timeBudget = TIME_BUDGET_FACTOR * totalPrefetchTimeForTaskG;
+        
+        // Distance-based lookback: g to g-30 (or 0 if g < 30) - include task g itself
+        int distanceLookbackStart = std::max(0, g - PREFETCH_LOOKAHEAD_LIMIT);
+        
+        // Time-based lookback: accumulate task runtimes until budget exceeded
+        int timeLookbackStart = g;
+        float accumulatedTime = 0;
+        for (int i = g - 1; i >= 0; i--) {
+          accumulatedTime += input.taskGroupRunningTimes[i];
+          if (accumulatedTime > timeBudget) {
+            timeLookbackStart = i + 1;  // Stop at the task after the one that exceeded budget
+            break;
+          }
+          timeLookbackStart = i;  // Continue if still within budget
+        }
+        
+        // Use whichever limit is more restrictive (closer to g)
+        int lookbackStart = std::max(distanceLookbackStart, timeLookbackStart);
+        int lookbackEnd = g;
+        
+        // If there's a previous task g' that uses the same array, stop at g'+1
+        if (taskIdx > 0) {
+          int previousUser = tasksUsingArray[taskIdx - 1];
+          lookbackStart = std::max(lookbackStart, previousUser + 1);
+        }
+        
+        // Mark all tasks in [lookbackStart, lookbackEnd] as allowed to prefetch array j for task g
+        for (int i = lookbackStart; i <= lookbackEnd; i++) {
+          allowPrefetch[i][j] = true;
+        }
+        
+        // Debug output for first few arrays to verify logic
+        if (j < 3) {
+          LOG_TRACE_WITH_INFO(fmt::format("Array {} Task {} range: [{}, {}] (distance: {}, time: {}, budget: {:.3f}s)", 
+                              j, g, lookbackStart, lookbackEnd, distanceLookbackStart, timeLookbackStart, timeBudget).c_str());
+        }
+      }
+    }
+    
+    // Count total prefetch variables eliminated by lookahead optimization
+    int totalPrefetchVars = numberOfTaskGroups * numberOfArraysManaged;
+    int eliminatedVars = 0;
+    for (int i = 0; i < numberOfTaskGroups; i++) {
+      for (int j = 0; j < numberOfArraysManaged; j++) {
+        if (!allowPrefetch[i][j]) {
+          eliminatedVars++;
+        }
+      }
+    }
+    LOG_TRACE_WITH_INFO(fmt::format("Lookahead optimization: eliminated {}/{} ({:.1f}%) prefetch variables", 
+                        eliminatedVars, totalPrefetchVars, 100.0 * eliminatedVars / totalPrefetchVars).c_str());
+    
     p.clear();
     for (int i = 0; i < numberOfTaskGroups; i++) {
       p.push_back({});  // Create a new row for task group i
@@ -292,6 +383,9 @@ struct IntegerProgrammingSolver {
         // force the variable to be 1 by setting its lower bound -> lower bound is true means forcing true
         if (shouldAllocateWithoutPrefetch[std::make_pair(i, j)]) {
           p[i][j]->SetLB(1);  // This forces p[i][j] = 1 (must prefetch)
+        } else if (!allowPrefetch[i][j]) {
+          // LOOKAHEAD OPTIMIZATION: Task i is outside the responsible range for array j
+          p[i][j]->SetUB(0);  // Force p[i][j] = 0 (outside lookahead window)
         } else if (i > 0) {
           // OPTIMIZATION: Check if previous task used this array
           // If previous task used array j, it's already on device - no need to prefetch
