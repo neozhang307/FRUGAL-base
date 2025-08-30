@@ -172,7 +172,7 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
           srcAddress = memManager.getStoragePtr(d_tiles[i + j * T]);
           if(srcAddress==nullptr)
           {
-            printf("no storage and device=srcddress\n");
+            // printf("no storage and device=srcddress\n");
             srcAddress=d_tiles[i + j * T];
           }
         }

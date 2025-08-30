@@ -1,7 +1,7 @@
 {
   "generic": {
     "optimize": true,
-    "verify": true,
+    "verify": false,
     "repeat": 1,
     "useUM": false,
     "availableMemoryForUMInMiB": 4096
@@ -10,24 +10,16 @@
     "loadExistingPlan": false,
     "planPath": "luOptimizationPlan.json",
     "mergeConcurrentCudaGraphNodes": false,
-    "maxTaskGroupAmount": 500,
-    "byPassingFirstStep": false,
-    "enableGapOverlap": true,
-    "gapOverlapDecayFactor": 0.5,
-    "firstStepSolverType": "BYPASSING",
-    "enableEarlyTermination": true,
-    "maxSolverIterations": 1000000,
-    "beamWidth": 100,
+    "maxTaskGroupAmount": 20,
+    "byPassingFirstStep": true,
     "prefetchingBandwidthInGB": 380,
     "acceptableRunningTimeFactor": 0.0,
     "minManagedArraySize": 0,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
     "maxPeakMemoryUsageInMiB": 0,
     "weightOfPeakMemoryUsage": 1,
-    "weightOfTotalRunningTime": 0.0001,
-    "weightOfNumberOfMigrations": 0.00001,
-    "prefetchLookbackDistanceLimit": 30,
-    "prefetchLookbackTimeBudgetFactor": 10.0
+    "weightOfTotalRunningTime": 1e-4,
+    "weightOfNumberOfMigrations": 0.00001
   },
   "execution": {
     "useNvlink": false,

@@ -282,10 +282,10 @@ struct IntegerProgrammingSolver {
     //---------- SECTION 2: Prefetching Variables ----------
     // Define binary variables p_ij that determine if array j is prefetched at task group i
     
-    // PREPROCESSING: Compute valid prefetch ranges using dynamic lookahead strategy
+    // PREPROCESSING: Compute valid prefetch ranges using dynamic lookback strategy
     // For each array j, determine which tasks i are allowed to prefetch it
-    const int PREFETCH_LOOKAHEAD_LIMIT = ConfigurationManager::getConfig().optimization.prefetchLookaheadDistanceLimit;
-    const double TIME_BUDGET_FACTOR = ConfigurationManager::getConfig().optimization.prefetchLookaheadTimeBudgetFactor;
+    const int PREFETCH_LOOKBACK_LIMIT = ConfigurationManager::getConfig().optimization.prefetchLookbackDistanceLimit;
+    const double TIME_BUDGET_FACTOR = ConfigurationManager::getConfig().optimization.prefetchLookbackTimeBudgetFactor;
     std::vector<std::vector<bool>> allowPrefetch(numberOfTaskGroups, std::vector<bool>(numberOfArraysManaged, false));
     
     // Calculate prefetch time for each array (size / bandwidth)
@@ -322,7 +322,7 @@ struct IntegerProgrammingSolver {
         float timeBudget = TIME_BUDGET_FACTOR * totalPrefetchTimeForTaskG;
         
         // Distance-based lookback: g to g-30 (or 0 if g < 30) - include task g itself
-        int distanceLookbackStart = std::max(0, g - PREFETCH_LOOKAHEAD_LIMIT);
+        int distanceLookbackStart = std::max(0, g - PREFETCH_LOOKBACK_LIMIT);
         
         // Time-based lookback: accumulate task runtimes until budget exceeded
         int timeLookbackStart = g;
@@ -369,7 +369,7 @@ struct IntegerProgrammingSolver {
         }
       }
     }
-    LOG_TRACE_WITH_INFO(fmt::format("Lookahead optimization: eliminated {}/{} ({:.1f}%) prefetch variables", 
+    LOG_TRACE_WITH_INFO(fmt::format("Lookback optimization: eliminated {}/{} ({:.1f}%) prefetch variables", 
                         eliminatedVars, totalPrefetchVars, 100.0 * eliminatedVars / totalPrefetchVars).c_str());
     
     p.clear();
@@ -384,8 +384,8 @@ struct IntegerProgrammingSolver {
         if (shouldAllocateWithoutPrefetch[std::make_pair(i, j)]) {
           p[i][j]->SetLB(1);  // This forces p[i][j] = 1 (must prefetch)
         } else if (!allowPrefetch[i][j]) {
-          // LOOKAHEAD OPTIMIZATION: Task i is outside the responsible range for array j
-          p[i][j]->SetUB(0);  // Force p[i][j] = 0 (outside lookahead window)
+          // LOOKBACK OPTIMIZATION: Task i is outside the responsible range for array j
+          p[i][j]->SetUB(0);  // Force p[i][j] = 0 (outside lookback window)
         } else if (i > 0) {
           // OPTIMIZATION: Check if previous task used this array
           // If previous task used array j, it's already on device - no need to prefetch

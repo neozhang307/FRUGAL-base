@@ -48,8 +48,8 @@ struct Configuration {
     bool enableEarlyTermination = false;
     int maxSolverIterations = 1000000;
     int beamWidth = 100;
-    int prefetchLookaheadDistanceLimit = 30;
-    double prefetchLookaheadTimeBudgetFactor = 2.0;
+    int prefetchLookbackDistanceLimit = 30;
+    double prefetchLookbackTimeBudgetFactor = 2.0;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -72,8 +72,8 @@ struct Configuration {
       enableEarlyTermination,
       maxSolverIterations,
       beamWidth,
-      prefetchLookaheadDistanceLimit,
-      prefetchLookaheadTimeBudgetFactor
+      prefetchLookbackDistanceLimit,
+      prefetchLookbackTimeBudgetFactor
     );
   } optimization;
 

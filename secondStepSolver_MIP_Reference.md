@@ -15,11 +15,11 @@
 ### Prefetch Operations
 - **`p[i][j]`**: Binary, whether to prefetch array j before task i starts
   - Size: O(nm) variables
-  - **Dynamic Lookahead Optimization**: Uses preprocessing to eliminate 87-88% of variables
+  - **Dynamic Lookback Optimization**: Uses preprocessing to eliminate 87-88% of variables
   - Constraints: 
     - `p[i][j] = 0` if task i-1 used array j (already on device)
     - `p[i][j] = 1` if `shouldAllocateWithoutPrefetch[i,j]` is true
-    - `p[i][j] = 0` if task i is outside lookahead window for array j
+    - `p[i][j] = 0` if task i is outside lookback window for array j
 
 ### Offload Operations  
 - **`o[i][j][k]`**: Binary, whether to offload array j after task i for use at task k
@@ -181,14 +181,14 @@ Total delay: 15 seconds (not parallel!)
 - **Completed**: Reduced p[i][j] redundant prefetches for consecutive array usage
 - **Completed**: Tightened big-M from 1000x to 100x original runtime
 - **Completed**: Reduced prefetch edges to only connect to first user (transitivity handles rest)
-- **Completed**: **Dynamic Lookahead Preprocessing** - eliminates 87-88% of p[i][j] variables
+- **Completed**: **Dynamic Lookback Preprocessing** - eliminates 87-88% of p[i][j] variables
 - **Cannot eliminate**: e[u][v] matrix due to serialization complexity
 - **Remaining options**: Temporal decomposition, Gurobi parameter tuning, warm start
 
-## Dynamic Lookahead Preprocessing (Implemented)
+## Dynamic Lookback Preprocessing (Implemented)
 
 ### Algorithm Overview
-The dynamic lookahead preprocessing dramatically reduces the search space for prefetch operations from O(nm) to approximately O(30m) by constraining which tasks can prefetch each array.
+The dynamic lookback preprocessing dramatically reduces the search space for prefetch operations from O(nm) to approximately O(30m) by constraining which tasks can prefetch each array.
 
 ### Key Concepts
 1. **Responsibility Zones**: Each task that uses an array is responsible for ensuring it's prefetched within a limited window before its execution
@@ -212,8 +212,8 @@ The dynamic lookahead preprocessing dramatically reduces the search space for pr
 - **Scalability**: Enables solving much larger problems
 
 ### Configuration Parameters
-- `prefetchLookaheadDistanceLimit`: Maximum lookback distance (default: 30 tasks)
-- `prefetchLookaheadTimeBudgetFactor`: Time budget multiplier (default: 2.0, tested up to 10.0)
+- `prefetchLookbackDistanceLimit`: Maximum lookback distance (default: 30 tasks)
+- `prefetchLookbackTimeBudgetFactor`: Time budget multiplier (default: 2.0, tested up to 10.0)
 
 ## Future Research Directions
 
@@ -244,3 +244,5 @@ This approach could eliminate O(n²m²) edge variables but would require signifi
 - `weightOfNumberOfMigrations`: Objective weight for transfers (default 0.00001)
 - `prefetchingBandwidthInGB`: Host-to-device bandwidth (also used for device-to-host in current implementation)
 - `offloadingBandwidth`: Device-to-host bandwidth (NOTE: Current code uses same value as prefetchingBandwidth, but could be configured separately)
+- `prefetchLookbackDistanceLimit`: Max tasks to look back for prefetch responsibility (default 30)
+- `prefetchLookbackTimeBudgetFactor`: Factor × total prefetch time for time budget (default 2.0)
