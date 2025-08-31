@@ -403,6 +403,15 @@ struct IntegerProgrammingSolver {
     //---------- SECTION 3: Offloading Variables ----------
     // Define binary variables o_ijk that determine if array j is offloaded at task i
     // and needed again at task k
+    
+    // PREPROCESSING: Simple offload lookahead limit (30 tasks)
+    // Task i can only offload to destinations within 30 tasks ahead
+    const int OFFLOAD_LOOKAHEAD_LIMIT = 30;
+    
+    // Track statistics for offload variable elimination
+    int totalOffloadVars = numberOfTaskGroups * numberOfArraysManaged * numberOfTaskGroups;
+    int eliminatedOffloadVars = 0;
+    
     o.clear();
     for (int i = 0; i < numberOfTaskGroups; i++) {
       o.push_back({});  // Create a new row for task group i
@@ -441,6 +450,9 @@ struct IntegerProgrammingSolver {
           // This builds the sum: p[i][j] + o[i][j][0] + o[i][j][1] + ... + o[i][j][k] <= 1
           sumLessThanOneConstraint->SetCoefficient(o[i][j][k], 1);
           
+          // Track whether this variable will be eliminated
+          bool willEliminate = false;
+          
           // Apply logical constraints based on deallocation requirements
           if (shouldDeallocateWithoutOffloading[std::make_pair(i, j)]) {
             // If this array must be deallocated at this task,
@@ -449,26 +461,44 @@ struct IntegerProgrammingSolver {
               o[i][j][k]->SetLB(1);  // Force o[i][j][k] = 1 (must offload to next task)
             } else {
               o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (cannot offload to other tasks)
+              willEliminate = true;
             }
           } else if (!taskUsesArray) {
             // OPTIMIZATION: If task i doesn't use array j, it cannot offload it
             // This significantly reduces the search space by eliminating impossible offloads
             o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (task doesn't use this array)
+            willEliminate = true;
           } else if (k > nextTaskUsingArray) {
             // OPTIMIZATION: Cannot offload beyond the next task that uses this array
             // If we offload to k > nextTaskUsingArray, the array won't be available
             // when nextTaskUsingArray needs it
             o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (would miss the next use)
+            willEliminate = true;
+          } else if (k > i + OFFLOAD_LOOKAHEAD_LIMIT) {
+            // LOOKAHEAD OPTIMIZATION: Cannot offload beyond lookahead window
+            // Task i can only look ahead OFFLOAD_LOOKAHEAD_LIMIT tasks for offload destinations
+            o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (outside lookahead window)
+            willEliminate = true;
           } else {
             // Cannot offload to a task that's earlier than or same as current task
             // (would create a causality violation)
             if (k <= i) {
               o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (impossible offload)
+              willEliminate = true;
             }
+          }
+          
+          if (willEliminate) {
+            eliminatedOffloadVars++;
           }
         }
       }
     }
+    
+    // Log statistics about offload variable elimination
+    LOG_TRACE_WITH_INFO(fmt::format("Offload lookahead optimization: eliminated {}/{} ({:.1f}%) offload variables", 
+                        eliminatedOffloadVars, totalOffloadVars, 
+                        100.0 * eliminatedOffloadVars / totalOffloadVars).c_str());
   }
 
   /**
