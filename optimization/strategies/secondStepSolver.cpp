@@ -310,11 +310,16 @@ struct IntegerProgrammingSolver {
         int g = tasksUsingArray[taskIdx];
         
         // Calculate total prefetch time for all arrays needed by task g
+        // Use set union to avoid double-counting arrays that are both input AND output
+        std::set<int> allArraysUsedByTaskG;
+        std::set_union(
+          input.taskGroupInputArrays[g].begin(), input.taskGroupInputArrays[g].end(),
+          input.taskGroupOutputArrays[g].begin(), input.taskGroupOutputArrays[g].end(),
+          std::inserter(allArraysUsedByTaskG, allArraysUsedByTaskG.begin())
+        );
+        
         float totalPrefetchTimeForTaskG = 0;
-        for (auto arrayId : input.taskGroupInputArrays[g]) {
-          totalPrefetchTimeForTaskG += arrayPrefetchTimes[arrayId];
-        }
-        for (auto arrayId : input.taskGroupOutputArrays[g]) {
+        for (auto arrayId : allArraysUsedByTaskG) {
           totalPrefetchTimeForTaskG += arrayPrefetchTimes[arrayId];
         }
         
@@ -438,6 +443,20 @@ struct IntegerProgrammingSolver {
           }
         }
         
+        // Calculate total offload time for all arrays that task i produces/touches
+        // Use set union to avoid double-counting arrays that are both input AND output
+        std::set<int> allArraysUsedByTaskI;
+        std::set_union(
+          input.taskGroupInputArrays[i].begin(), input.taskGroupInputArrays[i].end(),
+          input.taskGroupOutputArrays[i].begin(), input.taskGroupOutputArrays[i].end(),
+          std::inserter(allArraysUsedByTaskI, allArraysUsedByTaskI.begin())
+        );
+        
+        float totalOffloadTimeForTaskI = 0;
+        for (auto arrayId : allArraysUsedByTaskI) {
+          totalOffloadTimeForTaskI += arrayOffloadTimes[arrayId];
+        }
+
         // CRITICAL CONSTRAINT: For each array j at task i, we can perform at most
         // one memory operation - either prefetch it OR offload it to one destination
         // This creates a constraint: 0 <= p_ij + sum(o_ijk for all k) <= 1
@@ -483,7 +502,7 @@ struct IntegerProgrammingSolver {
           } else {
             // DYNAMIC LOOKAHEAD OPTIMIZATION: Check if k is within dynamic window
             // Compute time-based limit: accumulate task runtimes until budget exceeded
-            float timeBudget = OFFLOAD_COMPUTE_TIME_FACTOR * arrayOffloadTimes[j];
+            float timeBudget = OFFLOAD_COMPUTE_TIME_FACTOR * totalOffloadTimeForTaskI;
             float accumulatedTime = 0;
             int timeLookaheadEnd = i;
             for (int kPrime = i + 1; kPrime <= k && kPrime < numberOfTaskGroups; kPrime++) {
