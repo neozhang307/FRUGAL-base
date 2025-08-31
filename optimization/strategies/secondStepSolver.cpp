@@ -1421,28 +1421,49 @@ struct IntegerProgrammingSolver {
     // Define constraints and variables for tracking total data movements
     defineNumberOfDataMovements();
 
-    // Configure the objective function based on user weights
+    // Configure the objective function with unified normalization
     auto objective = solver->MutableObjective();
     
-    // Add weighted components to the objective function
+    // All components are normalized to similar scales for balanced optimization:
+    // - Memory: normalized by original peak memory (range ~[0.2, 1.0])
+    // - Runtime: normalized by original runtime × acceptable factor (range ~[0.8, 2.0])
+    // - Migrations: normalized by theoretical maximum (range ~[0.0, 0.1])
+    
+    LOG_TRACE_WITH_INFO("Objective function normalization factors:");
+    LOG_TRACE_WITH_INFO("  Original peak memory: %.2f MiB", originalPeakMemoryUsage);
+    LOG_TRACE_WITH_INFO("  Original runtime: %.2f seconds", originalTotalRunningTime);
+    LOG_TRACE_WITH_INFO("  Max possible migrations: %d", numberOfArraysManaged * numberOfTaskGroups);
+    
     if (ConfigurationManager::getConfig().optimization.weightOfPeakMemoryUsage > std::numeric_limits<double>::epsilon()) {
-      // Minimize peak memory usage (primary goal)
+      // Minimize peak memory usage normalized by original peak memory
+      // Normalization: memory_usage / original_peak_memory_usage
+      // This gives us a percentage of original memory usage
+      double memoryNormalizationFactor = 1.0 / originalPeakMemoryUsage;
       objective->SetCoefficient(peakMemoryUsage, 
+                               memoryNormalizationFactor * 
                                ConfigurationManager::getConfig().optimization.weightOfPeakMemoryUsage);
     }
     
     if (ConfigurationManager::getConfig().optimization.weightOfNumberOfMigrations > std::numeric_limits<double>::epsilon()) {
-      // Minimize number of data transfers (reduce overhead)
+      // Minimize number of data transfers normalized by theoretical maximum
+      // Normalization: migrations / (num_arrays × num_tasks)
+      // This gives us the migration density as a fraction
+      double maxPossibleMigrations = numberOfArraysManaged * numberOfTaskGroups;
+      double migrationNormalizationFactor = 1.0 / maxPossibleMigrations;
       objective->SetCoefficient(numberOfDataMovements, 
+                               migrationNormalizationFactor *
                                ConfigurationManager::getConfig().optimization.weightOfNumberOfMigrations);
     }
     
     if (ConfigurationManager::getConfig().optimization.weightOfTotalRunningTime > std::numeric_limits<double>::epsilon()) {
-      // Minimize total execution time (maintain performance)
-      // Time is scaled by memory/time ratio for balanced optimization
+      // Minimize total execution time normalized by acceptable runtime
+      // Normalization: runtime / (original_runtime × acceptable_factor)
+      // Values around 1.0 mean hitting the acceptable slowdown target
+      double acceptableFactor = 1.0 + ConfigurationManager::getConfig().optimization.acceptableRunningTimeFactor;
+      double runtimeNormalizationFactor = 1.0 / (originalTotalRunningTime * acceptableFactor);
       objective->SetCoefficient(
         z[getTaskGroupVertexIndex(numberOfTaskGroups - 1)],
-        originalPeakMemoryUsageToTotalRunningTimeRatio * 
+        runtimeNormalizationFactor *
         ConfigurationManager::getConfig().optimization.weightOfTotalRunningTime
       );
     }
