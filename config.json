@@ -26,8 +26,10 @@
     "weightOfPeakMemoryUsage": 1,
     "weightOfTotalRunningTime": 0.0001,
     "weightOfNumberOfMigrations": 0.00001,
-    "prefetchLookbackDistanceLimit": 30,
-    "prefetchLookbackTimeBudgetFactor": 10.0
+    "prefetchLookbackDistanceLimit": 20,
+    "prefetchLookbackTimeBudgetFactor": 10.0,
+    "offloadLookaheadDistanceLimit": 20,
+    "offloadLookaheadComputeTimeFactor": 100.0
   },
   "execution": {
     "useNvlink": false,

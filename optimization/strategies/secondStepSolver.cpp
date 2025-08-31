@@ -404,9 +404,15 @@ struct IntegerProgrammingSolver {
     // Define binary variables o_ijk that determine if array j is offloaded at task i
     // and needed again at task k
     
-    // PREPROCESSING: Simple offload lookahead limit (30 tasks)
-    // Task i can only offload to destinations within 30 tasks ahead
-    const int OFFLOAD_LOOKAHEAD_LIMIT = 30;
+    // PREPROCESSING: Dynamic offload lookahead using compute time budget
+    const int OFFLOAD_LOOKAHEAD_LIMIT = ConfigurationManager::getConfig().optimization.offloadLookaheadDistanceLimit;
+    const double OFFLOAD_COMPUTE_TIME_FACTOR = ConfigurationManager::getConfig().optimization.offloadLookaheadComputeTimeFactor;
+    
+    // Calculate offload time for each array (size / bandwidth)
+    std::vector<float> arrayOffloadTimes(numberOfArraysManaged);
+    for (int j = 0; j < numberOfArraysManaged; j++) {
+        arrayOffloadTimes[j] = static_cast<float>(input.arraySizes[j]) / input.prefetchingBandwidth;
+    }
     
     // Track statistics for offload variable elimination
     int totalOffloadVars = numberOfTaskGroups * numberOfArraysManaged * numberOfTaskGroups;
@@ -474,15 +480,34 @@ struct IntegerProgrammingSolver {
             // when nextTaskUsingArray needs it
             o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (would miss the next use)
             willEliminate = true;
-          } else if (k > i + OFFLOAD_LOOKAHEAD_LIMIT) {
-            // LOOKAHEAD OPTIMIZATION: Cannot offload beyond lookahead window
-            // Task i can only look ahead OFFLOAD_LOOKAHEAD_LIMIT tasks for offload destinations
-            o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (outside lookahead window)
-            willEliminate = true;
           } else {
-            // Cannot offload to a task that's earlier than or same as current task
-            // (would create a causality violation)
-            if (k <= i) {
+            // DYNAMIC LOOKAHEAD OPTIMIZATION: Check if k is within dynamic window
+            // Compute time-based limit: accumulate task runtimes until budget exceeded
+            float timeBudget = OFFLOAD_COMPUTE_TIME_FACTOR * arrayOffloadTimes[j];
+            float accumulatedTime = 0;
+            int timeLookaheadEnd = i;
+            for (int kPrime = i + 1; kPrime <= k && kPrime < numberOfTaskGroups; kPrime++) {
+              accumulatedTime += input.taskGroupRunningTimes[kPrime];
+              if (accumulatedTime > timeBudget) {
+                timeLookaheadEnd = kPrime - 1;
+                break;
+              }
+              timeLookaheadEnd = kPrime;
+            }
+            
+            // Distance-based limit
+            int distanceLookaheadEnd = i + OFFLOAD_LOOKAHEAD_LIMIT;
+            
+            // Use whichever limit is more restrictive
+            int effectiveLookaheadEnd = std::min(distanceLookaheadEnd, timeLookaheadEnd);
+            
+            if (k > effectiveLookaheadEnd) {
+              // LOOKAHEAD OPTIMIZATION: Cannot offload beyond dynamic window
+              o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (outside dynamic window)
+              willEliminate = true;
+            } else if (k <= i) {
+              // Cannot offload to a task that's earlier than or same as current task
+              // (would create a causality violation)
               o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (impossible offload)
               willEliminate = true;
             }

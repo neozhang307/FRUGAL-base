@@ -50,6 +50,8 @@ struct Configuration {
     int beamWidth = 100;
     int prefetchLookbackDistanceLimit = 30;
     double prefetchLookbackTimeBudgetFactor = 2.0;
+    int offloadLookaheadDistanceLimit = 30;
+    double offloadLookaheadComputeTimeFactor = 10.0;  // Factor of average task compute time
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -73,7 +75,9 @@ struct Configuration {
       maxSolverIterations,
       beamWidth,
       prefetchLookbackDistanceLimit,
-      prefetchLookbackTimeBudgetFactor
+      prefetchLookbackTimeBudgetFactor,
+      offloadLookaheadDistanceLimit,
+      offloadLookaheadComputeTimeFactor
     );
   } optimization;
 
