@@ -52,6 +52,12 @@ struct Configuration {
     double prefetchLookbackTimeBudgetFactor = 2.0;
     int offloadLookaheadDistanceLimit = 30;
     double offloadLookaheadComputeTimeFactor = 10.0;  // Factor of average task compute time
+    
+    // Gurobi solver configuration
+    int gurobiTimeLimitSeconds = 300;  // 5 minutes default instead of 30 minutes
+    double gurobiMipGap = 0.01;       // 1% optimality gap tolerance 
+    int gurobiThreads = 0;            // 0 = use all available threads
+    bool gurobiEnableHeuristics = true;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -77,7 +83,11 @@ struct Configuration {
       prefetchLookbackDistanceLimit,
       prefetchLookbackTimeBudgetFactor,
       offloadLookaheadDistanceLimit,
-      offloadLookaheadComputeTimeFactor
+      offloadLookaheadComputeTimeFactor,
+      gurobiTimeLimitSeconds,
+      gurobiMipGap,
+      gurobiThreads,
+      gurobiEnableHeuristics
     );
   } optimization;
 

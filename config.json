@@ -29,7 +29,11 @@
     "prefetchLookbackDistanceLimit": 30,
     "prefetchLookbackTimeBudgetFactor": 50.0,
     "offloadLookaheadDistanceLimit": 30,
-    "offloadLookaheadComputeTimeFactor": 50.0
+    "offloadLookaheadComputeTimeFactor": 50.0,
+    "gurobiTimeLimitSeconds": 60,
+    "gurobiMipGap": 0.10,
+    "gurobiThreads": 0,
+    "gurobiEnableHeuristics": true
   },
   "execution": {
     "useNvlink": false,
@@ -41,7 +45,7 @@
   },
   "tiledCholesky": {
     "n": 102400,
-    "t": 4,
+    "t": 6,
     "mode": 0
   },
   "lulesh": {

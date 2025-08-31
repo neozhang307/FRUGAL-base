@@ -1290,6 +1290,53 @@ struct IntegerProgrammingSolver {
   }
 
   /**
+   * @brief Configure Gurobi environment variables for advanced optimization
+   * 
+   * Sets Gurobi-specific parameters via environment variables to optimize solver
+   * performance for large-scale mixed integer programming problems.
+   */
+  void configureGurobiEnvironment() {
+    auto& config = ConfigurationManager::getConfig().optimization;
+    
+    // Set MIP focus: 1 = feasibility, 2 = optimality, 3 = bound
+    // For large problems, focus on finding feasible solutions quickly
+    setenv("GRB_MIPFOCUS", "1", 1);
+    
+    // Enable aggressive heuristics (0.05 = 5% of solve time on heuristics)
+    if (config.gurobiEnableHeuristics) {
+      setenv("GRB_HEURISTICS", "0.1", 1);  // 10% of time on heuristics
+    } else {
+      setenv("GRB_HEURISTICS", "0.0", 1);  // Disable heuristics
+    }
+    
+    // Set thread count (0 = automatic, use all available cores)
+    char threadStr[32];
+    snprintf(threadStr, sizeof(threadStr), "%d", config.gurobiThreads);
+    setenv("GRB_THREADS", threadStr, 1);
+    
+    // Enable aggressive presolve (2 = aggressive, 1 = conservative, 0 = off)
+    setenv("GRB_PRESOLVE", "2", 1);
+    
+    // Enable all cutting planes aggressively (2 = aggressive, 1 = moderate)
+    setenv("GRB_CUTS", "2", 1);
+    
+    // Enable symmetry detection to reduce problem size
+    setenv("GRB_SYMMETRY", "2", 1);
+    
+    // Use dual simplex for root relaxation (generally faster for MIPs)
+    setenv("GRB_METHOD", "1", 1);
+    
+    // Log level for debugging (0 = no output, 1 = minimal, 2 = detailed)
+    setenv("GRB_OUTPUTFLAG", "1", 1);
+    
+    // Set node limit to prevent excessive memory usage in B&B tree
+    setenv("GRB_NODELIMIT", "100000", 1);
+    
+    LOG_TRACE_WITH_INFO("Configured Gurobi environment: MIPFocus=1, Heuristics=%s, Threads=%d", 
+                       config.gurobiEnableHeuristics ? "0.1" : "0.0", config.gurobiThreads);
+  }
+
+  /**
    * @brief Main solver method for the memory optimization problem
    * @param input Input parameters for the optimization
    * @param verbose Whether to print detailed debugging information
@@ -1301,6 +1348,9 @@ struct IntegerProgrammingSolver {
   SecondStepSolver::Output solve(SecondStepSolver::Input &&input, bool verbose = false) {
     // Take ownership of the input parameters
     this->input = std::move(input);
+
+    // Configure Gurobi environment variables for advanced optimization
+    configureGurobiEnvironment();
 
     // Initialize the OR-Tools solver
     initialize();
@@ -1400,15 +1450,34 @@ struct IntegerProgrammingSolver {
     // Set the problem type to minimization
     objective->SetMinimization();
 
-    // Set a 30-minute time limit for the solver
-    solver->set_time_limit(1000 * 60 * 30);
-
-    // Configure solver parameters (commented out advanced settings)
+    // Configure solver time limit from configuration (in seconds)
+    int timeLimitMs = ConfigurationManager::getConfig().optimization.gurobiTimeLimitSeconds * 1000;
+    solver->set_time_limit(timeLimitMs);
+    
+    // Configure advanced Gurobi parameters
     MPSolverParameters solverParam;
-    // solverParam.SetIntegerParam(
-    //   MPSolverParameters::IntegerParam::LP_ALGORITHM,
-    //   MPSolverParameters::LpAlgorithmValues::PRIMAL
-    // );
+    
+    // Set MIP gap tolerance (how close to optimal solution is acceptable)
+    double mipGap = ConfigurationManager::getConfig().optimization.gurobiMipGap;
+    solverParam.SetDoubleParam(MPSolverParameters::RELATIVE_MIP_GAP, mipGap);
+    
+    // Set number of threads (0 = auto, use all available)
+    int threads = ConfigurationManager::getConfig().optimization.gurobiThreads;
+    if (threads > 0) {
+      // Note: Thread parameter might need to be set via Gurobi-specific interface
+      // For now, document this limitation
+    }
+    
+    // Enable/disable heuristics for faster feasible solution finding
+    if (ConfigurationManager::getConfig().optimization.gurobiEnableHeuristics) {
+      // Enable aggressive heuristics for faster feasible solution finding
+      // Note: These require Gurobi-specific API access beyond OR-Tools
+      // For now, rely on the MIP gap tolerance to accept suboptimal solutions
+      
+      // Alternative: Set solver focus to finding feasible solutions quickly
+      // This is a Gurobi-specific parameter that might not be available in OR-Tools
+      // solverParam.SetIntegerParam(MPSolverParameters::MIP_STRATEGY, 1); // Focus on feasibility
+    }
 
     // Measure solver execution time
     SystemWallClock clock;
