@@ -1,5 +1,12 @@
 # CUDA Memory Optimization Project Guidelines
 
+## Git Usage Rules (IMPORTANT - ALWAYS FOLLOW)
+- **NEVER use `git add -A` or `git add .`** - Only add specific files that were modified
+- **NEVER commit unrelated files** - Only commit files directly related to the current task
+- **ALWAYS use `git add <specific-file>`** for each file you want to stage
+- **NEVER commit TODO.md, configs/, or other temporary/generated files**
+- **ALWAYS check `git status` before committing** to ensure only intended files are staged
+
 ## Build Commands
 - Build: `make config && make build`
 - Debug build: `make clean && make config-debug && make build`
