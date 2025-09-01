@@ -942,4 +942,53 @@ bool MemoryManager::claimNecessaryMemory(size_t sizeInGB) {
   return true;
 }
 
+// Domain enlargement implementation
+bool MemoryManager::reregisterManagedArrayWithLargerCPUData(void* originalAddress, void* newLargerCpuPtr, size_t newSize) {
+  // Find the ArrayId for the original address
+  ArrayId arrayId = getArrayId(originalAddress);
+  if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+    return false; // Address not found
+  }
+  
+  // Update the MemoryArrayInfo with larger CPU data
+  memoryArrayInfos[arrayId].managedMemoryAddress = originalAddress;  // Keep same original address
+  memoryArrayInfos[arrayId].storageAddress = newLargerCpuPtr;        // Point storage to new larger CPU data
+  memoryArrayInfos[arrayId].deviceAddress = nullptr;                // Not on device initially
+  memoryArrayInfos[arrayId].size = newSize;                         // Update to larger size
+  
+  // Update address mappings - keep same original address in vectors/maps
+  // managedMemoryAddresses[arrayId] already contains originalAddress
+  // managedMemoryAddressToIndexMap[originalAddress] already maps to arrayId
+  
+  // Only print debug information if verbose output is enabled
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[DOMAIN-ENLARGE] Re-registered array %d: originalAddr=%p, newCpuPtr=%p, newSize=%zu bytes\n", 
+            arrayId, originalAddress, newLargerCpuPtr, newSize);
+  }
+  
+  return true;
+}
+
+int MemoryManager::reregisterMultipleArraysWithLargerCPUData(const std::map<void*, ArrayReplacement>& replacements) {
+  int successCount = 0;
+  
+  for (const auto& [originalAddress, replacement] : replacements) {
+    if (reregisterManagedArrayWithLargerCPUData(originalAddress, replacement.cpuPtr, replacement.size)) {
+      successCount++;
+    } else {
+      // Only print debug information if verbose output is enabled
+      if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+        fprintf(stderr, "[DOMAIN-ENLARGE] Failed to re-register array at address %p\n", originalAddress);
+      }
+    }
+  }
+  
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    fprintf(stderr, "[DOMAIN-ENLARGE] Successfully re-registered %d out of %zu arrays\n", 
+            successCount, replacements.size());
+  }
+  
+  return successCount;
+}
+
 } // namespace memopt

@@ -47,3 +47,9 @@ target_link_libraries(
   memopt
   CUDA::cublas
 )
+
+add_executable(domainEnlargementTest domainEnlargementTest.cu)
+target_link_libraries(
+  domainEnlargementTest
+  memopt
+)

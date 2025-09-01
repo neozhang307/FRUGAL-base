@@ -377,6 +377,35 @@ public:
   // Array ID utility methods
   void* getPointerByArrayId(int arrayId) const;
   size_t getSizeByArrayId(int arrayId) const;
+  
+  // Domain enlargement methods
+  /**
+   * @brief Re-registers a managed array with larger CPU-allocated data
+   * 
+   * Replaces an existing managed array with a new, larger CPU array while preserving
+   * the original pointer address for user code compatibility. The optimization plan
+   * remains valid since ArrayIds are preserved.
+   * 
+   * @param originalAddress Original managed memory address to replace
+   * @param newLargerCpuPtr Pointer to new larger CPU-allocated array
+   * @param newSize Size of the new larger array in bytes
+   * @return True if re-registration succeeded, false if address not found
+   */
+  bool reregisterManagedArrayWithLargerCPUData(void* originalAddress, void* newLargerCpuPtr, size_t newSize);
+  
+  /**
+   * @brief Re-registers multiple arrays with larger CPU data
+   * 
+   * Batch operation to replace multiple managed arrays with larger versions.
+   * 
+   * @param replacements Map of originalAddress -> {newCpuPtr, newSize}
+   * @return Number of successful re-registrations
+   */
+  struct ArrayReplacement {
+    void* cpuPtr;
+    size_t size;
+  };
+  int reregisterMultipleArraysWithLargerCPUData(const std::map<void*, ArrayReplacement>& replacements);
   std::vector<ArrayId> getArrayIds() const;
   
   /**
