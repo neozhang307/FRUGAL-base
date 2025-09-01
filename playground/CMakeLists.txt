@@ -53,3 +53,9 @@ target_link_libraries(
   domainEnlargementTest
   memopt
 )
+
+add_executable(coldStartTest coldStartTest.cu)
+target_link_libraries(
+  coldStartTest
+  memopt
+)

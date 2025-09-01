@@ -429,6 +429,44 @@ class Executor {
     float &runningTime
   );
 
+  /**
+   * @brief Executes an optimized computation graph with cold start pattern (CPU→GPU→CPU)
+   * 
+   * This method implements a cold start execution pattern where:
+   * 1. All managed arrays start in CPU/storage (cold state)
+   * 2. Data is transferred to GPU as needed during optimized execution
+   * 3. Final results are transferred back to CPU/storage (return to cold state)
+   * 
+   * This pattern is useful for batch processing where GPU resources are shared
+   * and data should not remain on GPU between executions.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTask Callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   * @param memManager Reference to the MemoryManager instance to use
+   */
+  void executeOptimizedGraphColdStart(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    float &runningTime,
+    MemoryManager &memManager
+  );
+
+  /**
+   * @brief Executes an optimized computation graph with cold start pattern using singleton MemoryManager
+   * 
+   * This version uses the singleton MemoryManager instance for cold start execution.
+   * 
+   * @param optimizedGraph The optimized computation graph to execute
+   * @param executeRandomTask Callback function to execute specific tasks
+   * @param runningTime Output parameter for recording execution time
+   */
+  void executeOptimizedGraphColdStart(
+    OptimizationOutput &optimizedGraph,
+    ExecuteRandomTask executeRandomTask,
+    float &runningTime
+  );
+
  protected:
   /**
    * @brief Helper method for initializing data distribution

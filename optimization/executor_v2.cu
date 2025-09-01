@@ -431,6 +431,119 @@ void Executor::executeOptimizedGraph(
 }
 
 /**
+ * @brief Cold start execution - asserts data starts in CPU, guarantees data ends in CPU
+ * 
+ * This method executes the optimized graph with strict CPU→GPU→CPU guarantees:
+ * 1. ASSERTS all data starts in CPU/storage (deviceAddress == nullptr)
+ * 2. Runs normal optimized execution (handles GPU transfers internally)
+ * 3. GUARANTEES all data ends in CPU/storage (explicit final offload + assertion)
+ *
+ * @param optimizedGraph The optimization plan
+ * @param executeRandomTask Callback to execute tasks
+ * @param runningTime Output parameter for execution time
+ * @param memManager Reference to memory manager
+ */
+void Executor::executeOptimizedGraphColdStart(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime,
+  MemoryManager &memManager
+) {
+  LOG_TRACE_WITH_INFO("Initialize Cold Start Execution (CPU→GPU→CPU)");
+  
+  // ASSERTION: Verify all managed arrays start in CPU/storage
+  LOG_TRACE_WITH_INFO("Asserting all data starts in CPU/storage");
+  const auto& managedAddresses = memManager.getManagedAddresses();
+  for (const auto& address : managedAddresses) {
+    ArrayId arrayId = memManager.getArrayId(address);
+    if (arrayId >= 0) {
+      const auto& arrayInfo = memManager.getMemoryArrayInfo(arrayId);
+      if (arrayInfo.deviceAddress != nullptr) {
+        LOG_TRACE_WITH_INFO("ASSERTION FAILED: Array at %p (arrayId=%d) has deviceAddress=%p, expected nullptr", 
+                           address, arrayId, arrayInfo.deviceAddress);
+        fprintf(stderr, "ERROR: Cold start assertion failed - array %p is on GPU, expected in CPU/storage\n", address);
+        exit(-1);
+      }
+      if (arrayInfo.storageAddress == nullptr) {
+        LOG_TRACE_WITH_INFO("ASSERTION FAILED: Array at %p (arrayId=%d) has no storageAddress", 
+                           address, arrayId);
+        fprintf(stderr, "ERROR: Cold start assertion failed - array %p has no storage location\n", address);
+        exit(-1);
+      }
+    }
+  }
+  LOG_TRACE_WITH_INFO("✅ Assertion passed: All %zu managed arrays start in CPU/storage", managedAddresses.size());
+  
+  // Create CUDA stream
+  cudaStream_t stream;
+  checkCudaErrors(cudaStreamCreate(&stream));
+  
+  // Configure storage settings
+  memManager.configureStorage(
+    ConfigurationManager::getConfig().execution.mainDeviceId,
+    ConfigurationManager::getConfig().execution.storageDeviceId,
+    ConfigurationManager::getConfig().execution.useNvlink
+  );
+  
+  // Execute normal optimized graph (handles GPU transfers internally)
+  cudaGraphExec_t initialDataGraphExec = initializeMemory(
+    optimizedGraph, memManager, stream);
+  
+  LOG_TRACE_WITH_INFO("Building and executing optimized graph");
+  cudaGraph_t graph = buildOptimizedGraph(
+    optimizedGraph, executeRandomTask, memManager, stream);
+  executeGraph(graph, stream, runningTime);
+  
+  // GUARANTEE: Force all data back to CPU/storage
+  LOG_TRACE_WITH_INFO("Forcing all data back to CPU/storage");
+  memManager.offloadRemainedManagedMemoryToStorage();
+  
+  // ASSERTION: Verify all managed arrays end in CPU/storage
+  LOG_TRACE_WITH_INFO("Asserting all data ends in CPU/storage");
+  for (const auto& address : managedAddresses) {
+    ArrayId arrayId = memManager.getArrayId(address);
+    if (arrayId >= 0) {
+      const auto& arrayInfo = memManager.getMemoryArrayInfo(arrayId);
+      if (arrayInfo.deviceAddress != nullptr) {
+        LOG_TRACE_WITH_INFO("ASSERTION FAILED: Array at %p (arrayId=%d) still has deviceAddress=%p after offload", 
+                           address, arrayId, arrayInfo.deviceAddress);
+        fprintf(stderr, "ERROR: Cold start final assertion failed - array %p still on GPU after offload\n", address);
+        exit(-1);
+      }
+    }
+  }
+  LOG_TRACE_WITH_INFO("✅ Final assertion passed: All %zu managed arrays end in CPU/storage", managedAddresses.size());
+  
+  // Clean up resources
+  LOG_TRACE_WITH_INFO("Cold start execution cleanup");
+  checkCudaErrors(cudaGraphExecDestroy(initialDataGraphExec));
+  checkCudaErrors(cudaGraphDestroy(graph));
+  checkCudaErrors(cudaStreamDestroy(stream));
+  
+  // Reset storage configuration
+  memManager.ResetStorageConfig();
+  
+  LOG_TRACE_WITH_INFO("Cold start execution completed successfully");
+}
+
+/**
+ * @brief Cold start execution using singleton MemoryManager
+ * 
+ * This version uses the singleton MemoryManager instance for cold start execution.
+ *
+ * @param optimizedGraph The optimization plan
+ * @param executeRandomTask Callback to execute tasks
+ * @param runningTime Output parameter for execution time
+ */
+void Executor::executeOptimizedGraphColdStart(
+  OptimizationOutput &optimizedGraph,
+  ExecuteRandomTask executeRandomTask,
+  float &runningTime
+) {
+  executeOptimizedGraphColdStart(optimizedGraph, executeRandomTask, runningTime, MemoryManager::getInstance());
+}
+
+/**
  * @brief Builds the execution graph for repeated execution
  * 
  * This builds a graph similar to buildOptimizedGraph but includes
@@ -815,7 +928,7 @@ void Executor::executeOptimizedGraphForEvaluation(
     
     // Execute and time the graph
     cudaEventClock.start();
-     checkCudaErrors(cudaGraphLaunch(initialDataGraphExec, stream));
+    checkCudaErrors(cudaGraphLaunch(initialDataGraphExec, stream));
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
     cudaEventClock.end();
     checkCudaErrors(cudaDeviceSynchronize());
