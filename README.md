@@ -94,3 +94,61 @@ To run tiledCholesky with a custom configuration:
 ```bash
 ./build/userApplications/tiledCholesky --configFile=myConfig.json
 ```
+
+## CUDA Graph Dependency System
+
+The project includes a sophisticated dependency tracking system for CUDA graph construction that ensures proper synchronization between memory operations.
+
+### PointerDependencyCudaGraphConstructor
+
+The `PointerDependencyCudaGraphConstructor` class provides automatic dependency management based on memory pointer analysis. It supports all three types of data dependencies:
+
+#### Supported Dependency Types
+
+1. **Read-After-Write (RAW)** - True dependency
+   - Ensures operations wait for previous writes to complete before reading
+   - Prevents reading stale or uninitialized data
+
+2. **Write-After-Write (WAW)** - Output dependency  
+   - Ensures operations wait for previous writes to complete before writing
+   - Prevents write ordering conflicts
+
+3. **Write-After-Read (WAR)** - Anti-dependency
+   - Ensures operations wait for all reads to complete before overwriting
+   - Prevents premature destruction of data being read
+
+#### Usage Example
+
+```cpp
+// Create dependency tracker
+auto graphConstructor = std::make_unique<PointerDependencyCudaGraphConstructor>(stream, graph);
+
+// Define memory dependencies for an operation
+std::vector<void*> inputs = {inputPtr1, inputPtr2};    // Memory locations to read
+std::vector<void*> outputs = {outputPtr};             // Memory locations to write
+
+// Begin operation with automatic dependency resolution
+graphConstructor->beginCaptureOperation(inputs, outputs);
+
+// Execute your CUDA operations here
+// (kernel launches, cuBLAS/cuSOLVER calls, etc.)
+
+// End capture and update dependency tracking
+graphConstructor->endCaptureOperation();
+```
+
+#### Key Features
+
+- **Automatic dependency detection**: Analyzes input/output memory patterns
+- **Read-modify-write support**: Properly handles operations that both read and write to the same location
+- **Efficient tracking**: Uses maps to track last readers and writers for each memory location
+- **Race condition prevention**: Ensures proper synchronization for complex computation graphs
+
+#### Implementation Details
+
+- **Reader tracking**: Maintains `lastReadByMap` to track current readers of each memory location
+- **Writer tracking**: Maintains `lastModifiedByMap` to track the last writer of each memory location
+- **Dependency resolution**: Automatically establishes edges in the CUDA graph based on memory access patterns
+- **Cleanup optimization**: Clears reader lists when establishing WAR dependencies to prevent memory buildup
+
+This system is particularly useful for complex applications like tiled matrix decompositions where operations frequently perform in-place updates on shared memory blocks.

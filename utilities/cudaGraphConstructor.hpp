@@ -157,7 +157,8 @@ public:
         // Calculate dependencies based on memory addresses
         auto dependencies = getDependencies(inputs, outputs);
         
-        // Store outputs for later tracking
+        // Store inputs and outputs for later tracking
+        currentInputs = inputs;
         currentOutputs = outputs;
         lastDependencies = dependencies;
         
@@ -181,14 +182,22 @@ public:
         // Find the newly added leaf nodes
         auto leafNodes = getNewLeafNodesAddedByLastCapture();
         
-        // Update tracking: each output now depends on these leaf nodes
-        for (auto& output : currentOutputs) {
-            for (auto node : leafNodes) {
-                lastModifiedByMap[output] = node;
+        if (!leafNodes.empty()) {
+            // Update readers: ALL inputs are readers
+            for (auto& input : currentInputs) {
+                for (auto& node : leafNodes) {
+                    lastReadByMap[input].push_back(node);
+                }
+            }
+            
+            // Update writers: outputs update last writer
+            for (auto& output : currentOutputs) {
+                lastModifiedByMap[output] = leafNodes[0];
             }
         }
         
-        // Clear current outputs
+        // Clear current inputs and outputs
+        currentInputs.clear();
         currentOutputs.clear();
         
         return leafNodes;
@@ -196,6 +205,8 @@ public:
     
 private:
     std::map<void*, cudaGraphNode_t> lastModifiedByMap;  ///< Maps memory addresses to last modifying node
+    std::map<void*, std::vector<cudaGraphNode_t>> lastReadByMap;  ///< Maps memory addresses to last reading nodes
+    std::vector<void*> currentInputs;                    ///< Current inputs being read
     std::vector<void*> currentOutputs;                   ///< Current outputs being modified
     std::vector<cudaGraphNode_t> lastDependencies;       ///< Dependencies of the current operation
     
@@ -220,11 +231,23 @@ private:
             }
         }
         
-        // Add dependencies for outputs (write-after-write)
+        // Add dependencies for outputs (write-after-write and write-after-read)
         for (auto& output : outputs) {
+            // Write-after-write dependency
             auto it = lastModifiedByMap.find(output);
             if (it != lastModifiedByMap.end()) {
                 dependencies.push_back(it->second);
+            }
+            
+            // Write-after-read dependencies (WAR)
+            auto readers_it = lastReadByMap.find(output);
+            if (readers_it != lastReadByMap.end()) {
+                // Add all readers as dependencies (must wait for all reads to complete)
+                for (auto& reader : readers_it->second) {
+                    dependencies.push_back(reader);
+                }
+                // Clear readers - they become irrelevant after this write
+                readers_it->second.clear();
             }
         }
         
