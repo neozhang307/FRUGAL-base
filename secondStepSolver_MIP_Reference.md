@@ -235,6 +235,33 @@ The vertex indices (getPrefetchVertexIndex, getOffloadVertexIndex) already encod
 
 This approach could eliminate O(n²m²) edge variables but would require significant redesign and performance impact is unclear.
 
+### 3. Deallocation Support (TODO)
+Currently, the MIP formulation assumes arrays stay in memory once prefetched until explicitly offloaded. 
+We could add deallocation capability where arrays can be freed immediately after their last use:
+
+```cpp
+// Additional binary variables
+d[i][j] = 1 if array j is deallocated after task i (without offloading)
+
+// Modified allocation state constraint
+x[i][j] = initiallyAllocatedOnDevice[j] 
+          + sum(p[u][j] for u <= i)     // prefetches
+          - sum(o[u][j][v] for u < i, v <= i)  // offloads
+          - sum(d[u][j] for u < i)      // deallocations
+
+// Constraint: Can only deallocate if array is on device
+d[i][j] <= x[i][j]
+
+// Constraint: Cannot deallocate if array is needed by future tasks
+for each task k > i that uses array j:
+    d[i][j] = 0  // Force no deallocation
+
+// Benefit: Reduces memory without offload overhead
+// Cost: More binary variables, increased complexity
+```
+
+This would allow freeing memory without the cost of offloading, particularly useful for arrays that won't be needed again.
+
 ## Configuration Parameters (from ConfigurationManager)
 - `solver`: "GUROBI_MIXED_INTEGER_PROGRAMMING" or "SCIP"
 - `maxPeakMemoryUsageInMiB`: Hard limit on memory usage (if > 0)
@@ -246,3 +273,9 @@ This approach could eliminate O(n²m²) edge variables but would require signifi
 - `offloadingBandwidth`: Device-to-host bandwidth (NOTE: Current code uses same value as prefetchingBandwidth, but could be configured separately)
 - `prefetchLookbackDistanceLimit`: Max tasks to look back for prefetch responsibility (default 30)
 - `prefetchLookbackTimeBudgetFactor`: Factor × total prefetch time for time budget (default 2.0)
+- `offloadLookaheadDistanceLimit`: Max tasks to look ahead for offload destinations (default 30)
+- `offloadLookaheadComputeTimeFactor`: Factor × compute time for offload time budget (default 50.0)
+- `gurobiTimeLimitSeconds`: Time limit for Gurobi solver (default 60)
+- `gurobiMipGap`: MIP gap tolerance (default 0.10)
+- `gurobiThreads`: Number of threads (0 = auto)
+- `gurobiEnableHeuristics`: Enable aggressive heuristics
