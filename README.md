@@ -95,6 +95,57 @@ To run tiledCholesky with a custom configuration:
 ./build/userApplications/tiledCholesky --configFile=myConfig.json
 ```
 
+## Domain Enlargement
+
+The project includes **domain enlargement** functionality that enables optimizing with small data sizes while executing with larger data sizes. This allows reusing optimization plans across different problem scales without re-optimization.
+
+### Concept
+
+Domain enlargement works by:
+1. **Optimization Phase**: Use small domain (e.g., 1024×1024 matrix) that fits in GPU memory
+2. **Enlargement Phase**: Re-register arrays with larger CPU-allocated data (e.g., 4096×4096 matrix)  
+3. **Execution Phase**: Execute with enlarged domain using the same optimization plan
+4. **Memory Management**: Automatically handle data transfers between CPU and GPU as needed
+
+### Implementation: tiledCholeskyDomainEnlarge
+
+The `tiledCholeskyDomainEnlarge` application demonstrates domain enlargement on tiled Cholesky decomposition:
+
+```bash
+# Basic usage: small_domain large_domain tile_count
+./build/userApplications/tiledCholeskyDomainEnlarge 1024 4096 4
+
+# Arguments:
+# - small_domain: Matrix size for optimization (e.g., 1024 = 1024×1024)
+# - large_domain: Matrix size for execution (e.g., 4096 = 4096×4096) 
+# - tile_count: Number of tiles per dimension (same for both domains)
+```
+
+### Key Features
+
+- **Execution-Oblivious Design**: No changes required to executor logic
+- **Global Pointer Mechanism**: Dynamic block size switching during execution
+- **Workspace Reallocation**: Automatic cuSOLVER workspace resizing for different block sizes
+- **GPU Memory Profiling**: Continuous monitoring with `PeakMemoryUsageProfiler`
+- **Cold Start Pattern**: CPU→GPU→CPU execution with proper assertions
+- **Verification**: Compare tiled vs cuSOLVER direct Cholesky for validation
+
+### Output
+
+The application provides comprehensive reporting:
+- Memory optimization results (peak usage reduction)
+- Domain enlargement metrics (block size switching)
+- GPU memory profiling (peak usage during execution)
+- Verification results (tiled vs direct Cholesky comparison)
+
+```
+Original peak memory usage (MiB): 5.00
+Optimized peak memory usage (MiB): 2.00
+🔄 Switched kernel block size from 256 to 1024
+📊 Peak GPU memory usage during execution: 960.00 MB
+✅ SUCCESS: Tiled and Direct Cholesky produce IDENTICAL results
+```
+
 ## CUDA Graph Dependency System
 
 The project includes a sophisticated dependency tracking system for CUDA graph construction that ensures proper synchronization between memory operations.
