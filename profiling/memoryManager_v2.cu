@@ -146,10 +146,35 @@ void MemoryManager::freeStorage(void* storageAddress) {
     return;
   }
   
+  // Try both deallocation methods to handle allocation method mismatches
   if (storageConfig.useNvlink) {
-    checkCudaErrors(cudaFree(storageAddress));
+    // Try cudaFree first for device allocations
+    cudaError_t err = cudaFree(storageAddress);
+    if (err != cudaSuccess) {
+      // Fallback: try cudaFreeHost in case it was allocated with cudaMallocHost
+      cudaError_t fallbackErr = cudaFreeHost(storageAddress);
+      if (fallbackErr != cudaSuccess) {
+        // Only print debug information if verbose output is enabled
+        if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+          fprintf(stderr, "[DEBUG-STORAGE] Failed to free storage address %p - cudaFree: %s, cudaFreeHost: %s\n",
+                  storageAddress, cudaGetErrorString(err), cudaGetErrorString(fallbackErr));
+        }
+      }
+    }
   } else {
-    checkCudaErrors(cudaFreeHost(storageAddress));
+    // Try cudaFreeHost first for host allocations
+    cudaError_t err = cudaFreeHost(storageAddress);
+    if (err != cudaSuccess) {
+      // Fallback: try cudaFree in case it was allocated with cudaMalloc
+      cudaError_t fallbackErr = cudaFree(storageAddress);
+      if (fallbackErr != cudaSuccess) {
+        // Only print debug information if verbose output is enabled
+        if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+          fprintf(stderr, "[DEBUG-STORAGE] Failed to free storage address %p - cudaFreeHost: %s, cudaFree: %s\n",
+                  storageAddress, cudaGetErrorString(err), cudaGetErrorString(fallbackErr));
+        }
+      }
+    }
   }
 }
 

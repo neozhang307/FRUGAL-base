@@ -367,7 +367,8 @@ void tiledCholeskyDomainEnlargement() {
   size_t tileSize_large = B_large * B_large * sizeof(double);
   
   for (int i = 0; i < T * T; i++) {
-    double *h_tile = (double*)malloc(tileSize_large);
+    double *h_tile;
+    checkCudaErrors(cudaMallocHost(&h_tile, tileSize_large));
     h_tiles_large.push_back(h_tile);
   }
   
@@ -471,7 +472,7 @@ void tiledCholeskyDomainEnlargement() {
   checkCudaErrors(cudaFree(d_info));
   
   for (auto h_tile : h_tiles_large) {
-    free(h_tile);
+    checkCudaErrors(cudaFreeHost(h_tile));
   }
   
   for (auto d_tile : d_tiles) {
