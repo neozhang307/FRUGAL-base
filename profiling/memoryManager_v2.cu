@@ -991,4 +991,42 @@ int MemoryManager::reregisterMultipleArraysWithLargerCPUData(const std::map<void
   return successCount;
 }
 
+bool MemoryManager::copyManagedArrayToHost(void* managedMemoryAddress, void* hostBuffer, size_t size) {
+  
+  // Find the array ID for this managed address
+  ArrayId arrayId = getArrayId(managedMemoryAddress);
+  if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+    fprintf(stderr, "ERROR: Invalid array ID %d for address %p in copyManagedArrayToHost\n", 
+            arrayId, managedMemoryAddress);
+    return false;
+  }
+  
+  const auto& arrayInfo = memoryArrayInfos[arrayId];
+  
+  // Check if data is currently on device or in storage
+  if (arrayInfo.deviceAddress != nullptr) {
+    // Data is on device - use CUDA device-to-host copy
+    cudaError_t err = cudaMemcpy(hostBuffer, arrayInfo.deviceAddress, size, cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+      fprintf(stderr, "ERROR: cudaMemcpy DeviceToHost failed for address %p: %s\n", 
+              managedMemoryAddress, cudaGetErrorString(err));
+      return false;
+    }
+  } else if (arrayInfo.storageAddress != nullptr) {
+    // Data is in storage/host - use standard memcpy
+    memcpy(hostBuffer, arrayInfo.storageAddress, size);
+  } else {
+    // Fallback: try the managed memory address directly
+    // This handles cases where data might still be accessible via unified memory
+    cudaError_t err = cudaMemcpy(hostBuffer, managedMemoryAddress, size, cudaMemcpyDefault);
+    if (err != cudaSuccess) {
+      fprintf(stderr, "ERROR: Fallback cudaMemcpy failed for address %p: %s\n", 
+              managedMemoryAddress, cudaGetErrorString(err));
+      return false;
+    }
+  }
+  
+  return true;
+}
+
 } // namespace memopt

@@ -319,6 +319,20 @@ public:
   void copyMemoryDeviceToStorage(void* managedMemoryAddress, void* storageAddress, cudaMemcpyKind memcpyKind, cudaStream_t stream=0);
   
   /**
+   * @brief Smart copy from managed array to host buffer - location agnostic
+   * 
+   * This function automatically determines if the managed array is currently on device
+   * or in storage and uses the appropriate copy method. Applications remain oblivious
+   * to the actual memory location.
+   * 
+   * @param managedMemoryAddress Original managed memory address
+   * @param hostBuffer Host buffer to copy data to
+   * @param size Size in bytes to copy
+   * @return true if copy succeeded, false otherwise
+   */
+  bool copyManagedArrayToHost(void* managedMemoryAddress, void* hostBuffer, size_t size);
+  
+  /**
    * @brief Frees memory in storage (host or secondary GPU)
    * 
    * This function determines whether to use cudaFree or cudaFreeHost based on 

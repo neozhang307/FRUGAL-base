@@ -310,9 +310,11 @@ void MemoryManager::offloadAllManagedMemoryToStorage(
   // Configure storage with the provided parameters
   configureStorage(mainDeviceId, storageDeviceId, useNvlink);
   
-  // Call the simpler version that uses the configured parameters and internal map
-  offloadAllManagedMemoryToStorage();
+  // Call the version with map parameter, using internal map
+  std::map<void*, void*> storageMap;
+  offloadAllManagedMemoryToStorage(storageMap);
 }
+
 
 // Asynchronous operations
 void MemoryManager::offloadDataAsync(

@@ -8,7 +8,10 @@
 - **ALWAYS check `git status` before committing** to ensure only intended files are staged
 
 ## Build Commands
-- Build: `make config && make build`
+- **Environment Setup**: 
+  - Conda activation: `source ~/miniconda3/bin/activate && conda activate frugal`
+  - Alternative (if available): `enable miniconda3 frugal` (x64) or `enable miniconda3_x86 frugal` (x86)
+- Build: `source ~/miniconda3/bin/activate && conda activate frugal && make config && make build`
 - Debug build: `make clean && make config-debug && make build`
 - Quick build: `make build-sequential`
 - Verbose build: `make build-verbose`
