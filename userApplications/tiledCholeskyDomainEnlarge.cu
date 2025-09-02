@@ -32,6 +32,10 @@ size_t T;       // Number of tiles (SAME for both)
 size_t B_small; // Block size for small domain
 size_t B_large; // Block size for large domain
 
+// Global variable to control which block size kernels should use
+// During optimization: use B_small, during execution: use B_large
+size_t* current_block_size = &B_small;
+
 const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 
 // Kernels from original
@@ -109,42 +113,47 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
-// Verification function (simplified)
+// Simplified structural verification: just check diagonal positivity
 bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_tiles, const size_t n, const size_t b) {
-  fmt::print("Verifying Cholesky decomposition...\n");
-  
-  // Simple verification: check if diagonal elements are positive
   auto& memManager = MemoryManager::getInstance();
-  bool allPositive = true;
+  const size_t t = n / b;  // number of tiles per dimension
+  const size_t matrix_size_mb = (n * n * sizeof(double)) / (1024 * 1024);
   
-  for (int i = 0; i < T; i++) {
-    double* h_tile = (double*)malloc(b * b * sizeof(double));
+  fmt::print("Performing structural verification (checking diagonal positivity, matrix size: {}MB)...\n", matrix_size_mb);
+  
+  bool validation_passed = true;
+  
+  // Check diagonal positivity (quick structural check)
+  for (int i = 0; i < t; i++) {
+    double* h_tile;
+    checkCudaErrors(cudaMallocHost(&h_tile, b * b * sizeof(double)));
     
-    // Use smart copy that handles device/storage location transparently
-    bool copySuccess = memManager.copyManagedArrayToHost(
-      d_tiles[i + i * T],  // Original managed address
-      h_tile,              // Host buffer
-      b * b * sizeof(double) // Size
-    );
-    
-    if (copySuccess) {
-      // Check diagonal elements of this tile
-      for (int k = 0; k < b; k++) {
-        if (h_tile[k * b + k] <= 0.0) {
-          allPositive = false;
-          fmt::print("Non-positive diagonal element found at tile [{},{}], position [{},{}]: {:.6f}\n", 
-                     i, i, k, k, h_tile[k * b + k]);
-        }
-      }
-    } else {
-      fmt::print("ERROR: Failed to copy tile [{},{}] data to host for verification\n", i, i);
-      allPositive = false;
+    bool copySuccess = memManager.copyManagedArrayToHost(d_tiles[i + i * t], h_tile, b * b * sizeof(double));
+    if (!copySuccess) {
+      fmt::print("ERROR: Failed to copy diagonal tile [{},{}]\n", i, i);
+      checkCudaErrors(cudaFreeHost(h_tile));
+      return false;
     }
     
-    free(h_tile);
+    // Check diagonal elements are positive
+    for (int k = 0; k < b; k++) {
+      if (h_tile[k * b + k] <= 0.0) {
+        fmt::print("❌ DIAGONAL CHECK FAILED: Non-positive element at tile [{},{}], position [{},{}]: {:.6f}\n", 
+                   i, i, k, k, h_tile[k * b + k]);
+        validation_passed = false;
+      }
+    }
+    
+    checkCudaErrors(cudaFreeHost(h_tile));
   }
   
-  return allPositive;
+  if (validation_passed) {
+    fmt::print("✅ STRUCTURAL VERIFICATION PASSED: All diagonal elements are positive\n");
+    return true;
+  } else {
+    fmt::print("❌ STRUCTURAL VERIFICATION FAILED: Issues found in diagonal elements\n");
+    return false;
+  }
 }
 
 void tiledCholeskyDomainEnlargement() {
@@ -244,8 +253,8 @@ void tiledCholeskyDomainEnlargement() {
       [cusolverDnHandle, cusolverDnParams, workspaceInBytesOnHost](cudaStream_t stream, double* matrixblock_k_k, void* d_workspace, size_t workspaceInBytesOnDevice, int* d_info) {
         checkCudaErrors(cusolverDnSetStream(cusolverDnHandle, stream));
         checkCudaErrors(cusolverDnXpotrf(
-          cusolverDnHandle, cusolverDnParams, CUBLAS_FILL_MODE_LOWER, B_small,
-          CUDA_R_64F, matrixblock_k_k, B_small, CUDA_R_64F,
+          cusolverDnHandle, cusolverDnParams, CUBLAS_FILL_MODE_LOWER, *current_block_size,
+          CUDA_R_64F, matrixblock_k_k, *current_block_size, CUDA_R_64F,
           d_workspace, workspaceInBytesOnDevice, nullptr, workspaceInBytesOnHost, d_info
         ));
       },
@@ -269,8 +278,8 @@ void tiledCholeskyDomainEnlargement() {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
           checkCudaErrors(cublasDtrsm(
             cublasHandle, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_LOWER,
-            CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, B_small, B_small, one,
-            matrixblock_k_k, B_small, matrixblock_i_k, B_small
+            CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, *current_block_size, *current_block_size, one,
+            matrixblock_k_k, *current_block_size, matrixblock_i_k, *current_block_size
           ));
         },
         inputs, outputs,
@@ -293,8 +302,8 @@ void tiledCholeskyDomainEnlargement() {
         [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_i_k, double* matrixblock_i_i) {
           checkCudaErrors(cublasSetStream(cublasHandle, stream));
           checkCudaErrors(cublasDsyrk(
-            cublasHandle, CUBLAS_FILL_MODE_LOWER, CUBLAS_OP_N, B_small, B_small,
-            minusOne, matrixblock_i_k, B_small, one, matrixblock_i_i, B_small
+            cublasHandle, CUBLAS_FILL_MODE_LOWER, CUBLAS_OP_N, *current_block_size, *current_block_size,
+            minusOne, matrixblock_i_k, *current_block_size, one, matrixblock_i_i, *current_block_size
           ));
         },
         inputs, outputs,
@@ -320,10 +329,10 @@ void tiledCholeskyDomainEnlargement() {
           [cublasHandle, minusOne, one](cudaStream_t stream, double* matrixblock_j_k, double* matrixblock_i_k, double* matrixblock_j_i) {
             checkCudaErrors(cublasSetStream(cublasHandle, stream));
             checkCudaErrors(cublasGemmEx(
-              cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T, B_small, B_small, B_small,
-              minusOne, matrixblock_j_k, CUDA_R_64F, B_small,
-              matrixblock_i_k, CUDA_R_64F, B_small, one,
-              matrixblock_j_i, CUDA_R_64F, B_small,
+              cublasHandle, CUBLAS_OP_N, CUBLAS_OP_T, *current_block_size, *current_block_size, *current_block_size,
+              minusOne, matrixblock_j_k, CUDA_R_64F, *current_block_size,
+              matrixblock_i_k, CUDA_R_64F, *current_block_size, one,
+              matrixblock_j_i, CUDA_R_64F, *current_block_size,
               CUBLAS_COMPUTE_64F, CUBLAS_GEMM_DEFAULT
             ));
           },
@@ -409,6 +418,31 @@ void tiledCholeskyDomainEnlargement() {
   
   fmt::print("✅ Re-registration complete - optimization plan preserved\n");
   
+  // Switch kernels to use large block size for execution
+  size_t old_block_size = *current_block_size;
+  *current_block_size = B_large;
+  fmt::print("🔄 Switched kernel block size from {} to {}\n", old_block_size, *current_block_size);
+  
+  // Reallocate cuSOLVER workspace for the new block size
+  size_t new_workspaceInBytesOnDevice, new_workspaceInBytesOnHost;
+  checkCudaErrors(cusolverDnXpotrf_bufferSize(
+    cusolverDnHandle, cusolverDnParams, CUBLAS_FILL_MODE_LOWER, B_large,
+    CUDA_R_64F, d_tiles[0], B_large, CUDA_R_64F,
+    &new_workspaceInBytesOnDevice, &new_workspaceInBytesOnHost
+  ));
+  
+  // Free old workspace
+  checkCudaErrors(cudaFree(d_workspace));
+  checkCudaErrors(cudaFreeHost(h_workspace));
+  
+  // Allocate new workspace with correct size
+  checkCudaErrors(cudaMallocHost(&h_workspace, new_workspaceInBytesOnHost));
+  checkCudaErrors(cudaMalloc(&d_workspace, new_workspaceInBytesOnDevice));
+  
+  fmt::print("📝 Reallocated cuSOLVER workspace: {:.1f} MB device, {:.1f} MB host\n",
+             (double)new_workspaceInBytesOnDevice / (1024.0 * 1024.0),
+             (double)new_workspaceInBytesOnHost / (1024.0 * 1024.0));
+  
   // =========================================================================
   // PHASE 3: EXECUTION WITH ENLARGED DOMAIN
   // =========================================================================
@@ -429,6 +463,11 @@ void tiledCholeskyDomainEnlargement() {
     fmt::print("⚠️  Large domain still fits in GPU memory - increase size for true out-of-memory test\n");
   }
   
+  // Start peak memory monitoring
+  fmt::print("🔍 Starting continuous GPU memory monitoring during execution...\n");
+  PeakMemoryUsageProfiler peakProfiler(10); // Sample every 10ms for high resolution
+  peakProfiler.start();
+  
   float runningTime;
   Executor* executor = Executor::getInstance();
   tmanager_v2.setExecutionMode(TaskManager_v2::ExecutionMode::Production);
@@ -442,8 +481,19 @@ void tiledCholeskyDomainEnlargement() {
     memManager
   );
   
+  // Get peak memory usage
+  size_t peakMemoryBytes = peakProfiler.end();
+  double peakMemoryMB = (double)peakMemoryBytes / (1024.0 * 1024.0);
+  
   fmt::print("✅ Cold start execution completed!\n");
   fmt::print("Execution time with enlarged domain: {:.3f} ms\n", runningTime * 1000.0f);
+  fmt::print("📊 Peak GPU memory usage during execution: {:.2f} MB\n", peakMemoryMB);
+  
+  // Compare with static measurements
+  size_t current_free, current_total;
+  checkCudaErrors(cudaMemGetInfo(&current_free, &current_total));
+  double currentUsedMB = (double)(current_total - current_free) / (1024.0 * 1024.0);
+  fmt::print("📊 Current GPU memory usage: {:.2f} MB\n", currentUsedMB);
 
   // =========================================================================
   // PHASE 4: VERIFICATION
@@ -457,6 +507,132 @@ void tiledCholeskyDomainEnlargement() {
   } else {
     fmt::print("❌ Verification FAILED\n");
   }
+
+  // =========================================================================
+  // PHASE 4.5: COMPARISON WITH DIRECT CHOLESKY
+  // =========================================================================
+  fmt::print("\n--- PHASE 4.5: Comparison with cuSOLVER Direct Cholesky ---\n");
+  
+  // Allocate memory for direct Cholesky
+  double* d_A_direct;
+  checkCudaErrors(cudaMalloc(&d_A_direct, N_large * N_large * sizeof(double)));
+  checkCudaErrors(cudaMemcpy(d_A_direct, h_largeMatrix, N_large * N_large * sizeof(double), cudaMemcpyHostToDevice));
+  
+  // Create new cuSOLVER handle for direct computation
+  cusolverDnHandle_t directSolverHandle;
+  checkCudaErrors(cusolverDnCreate(&directSolverHandle));
+  
+  // Query workspace size for direct Cholesky
+  int directWorkspaceSize = 0;
+  checkCudaErrors(cusolverDnDpotrf_bufferSize(
+    directSolverHandle, CUBLAS_FILL_MODE_LOWER, N_large, d_A_direct, N_large, &directWorkspaceSize));
+  
+  double* d_directWorkspace;
+  checkCudaErrors(cudaMalloc(&d_directWorkspace, directWorkspaceSize * sizeof(double)));
+  
+  int* d_directInfo;
+  checkCudaErrors(cudaMalloc(&d_directInfo, sizeof(int)));
+  
+  // Perform direct Cholesky decomposition
+  fmt::print("Running cuSOLVER direct Cholesky on {}x{} matrix...\n", N_large, N_large);
+  checkCudaErrors(cusolverDnDpotrf(
+    directSolverHandle, CUBLAS_FILL_MODE_LOWER, N_large, d_A_direct, N_large, 
+    d_directWorkspace, directWorkspaceSize, d_directInfo));
+  
+  // Check if direct decomposition succeeded
+  int h_directInfo;
+  checkCudaErrors(cudaMemcpy(&h_directInfo, d_directInfo, sizeof(int), cudaMemcpyDeviceToHost));
+  
+  if (h_directInfo != 0) {
+    fmt::print("ERROR: Direct Cholesky failed with info = {}\n", h_directInfo);
+  } else {
+    fmt::print("✅ Direct Cholesky succeeded\n");
+    
+    // Copy direct result to host
+    double* h_L_direct;
+    checkCudaErrors(cudaMallocHost(&h_L_direct, N_large * N_large * sizeof(double)));
+    checkCudaErrors(cudaMemcpy(h_L_direct, d_A_direct, N_large * N_large * sizeof(double), cudaMemcpyDeviceToHost));
+    
+    // Copy tiled result to contiguous memory for comparison
+    double* h_L_tiled;
+    checkCudaErrors(cudaMallocHost(&h_L_tiled, N_large * N_large * sizeof(double)));
+    
+    // Reconstruct tiled result into contiguous array
+    for (size_t i = 0; i < T; i++) {
+      for (size_t j = 0; j <= i; j++) {
+        size_t tile_idx = i * T + j;
+        double* h_tile_data;
+        checkCudaErrors(cudaMallocHost(&h_tile_data, B_large * B_large * sizeof(double)));
+        
+        // Copy tile data using smart copy
+        memManager.copyManagedArrayToHost(d_tiles[tile_idx], h_tile_data, B_large * B_large * sizeof(double));
+        
+        // Copy to contiguous array
+        for (size_t bi = 0; bi < B_large; bi++) {
+          for (size_t bj = 0; bj < B_large; bj++) {
+            size_t global_i = i * B_large + bi;
+            size_t global_j = j * B_large + bj;
+            if (global_i >= global_j && global_i < N_large && global_j < N_large) {
+              h_L_tiled[global_i * N_large + global_j] = h_tile_data[bi * B_large + bj];
+            }
+          }
+        }
+        checkCudaErrors(cudaFreeHost(h_tile_data));
+      }
+    }
+    
+    // Compare the two results
+    fmt::print("\nComparing tiled vs direct Cholesky results...\n");
+    double max_diff = 0.0;
+    int diff_count = 0;
+    const double tolerance = 1e-6;
+    
+    for (size_t i = 0; i < N_large; i++) {
+      for (size_t j = 0; j <= i && j < N_large; j++) {
+        double tiled_val = h_L_tiled[i * N_large + j];
+        double direct_val = h_L_direct[i * N_large + j];
+        double diff = std::abs(tiled_val - direct_val);
+        
+        if (diff > tolerance) {
+          if (diff_count < 10) {  // Print first 10 differences
+            fmt::print("  Diff at [{},{}]: tiled={:.6f}, direct={:.6f}, diff={:.2e}\n",
+                      i, j, tiled_val, direct_val, diff);
+          }
+          diff_count++;
+          max_diff = std::max(max_diff, diff);
+        }
+      }
+    }
+    
+    if (diff_count == 0) {
+      fmt::print("✅ Tiled and direct Cholesky results MATCH perfectly!\n");
+    } else {
+      fmt::print("❌ Tiled and direct Cholesky DIFFER: {} differences, max diff = {:.2e}\n", 
+                diff_count, max_diff);
+    }
+    
+    // Simple verification: just compare tiled vs direct results
+    size_t matrix_size_mb = (N_large * N_large * sizeof(double)) / (1024 * 1024);
+    
+    fmt::print("\n=== VERIFICATION RESULTS (Matrix: {}MB) ===\n", matrix_size_mb);
+    
+    if (diff_count == 0) {
+      fmt::print("✅ SUCCESS: Tiled and Direct Cholesky produce IDENTICAL results\n");
+      fmt::print("   Domain enlargement is working correctly!\n");
+    } else {
+      fmt::print("❌ FAILURE: Tiled and Direct Cholesky results DIFFER\n");
+      fmt::print("   {} differences found, max difference = {:.2e}\n", diff_count, max_diff);
+    }
+    
+    checkCudaErrors(cudaFreeHost(h_L_direct));
+    checkCudaErrors(cudaFreeHost(h_L_tiled));
+  }
+  
+  // Cleanup direct Cholesky resources
+  checkCudaErrors(cudaFree(d_A_direct));
+  checkCudaErrors(cudaFree(d_directWorkspace));
+  checkCudaErrors(cudaFree(d_directInfo));
+  checkCudaErrors(cusolverDnDestroy(directSolverHandle));
 
   // =========================================================================
   // PHASE 5: CLEANUP
@@ -496,6 +672,9 @@ int main(int argc, char **argv) {
   // Calculate block sizes
   B_small = N_small / T;
   B_large = N_large / T;
+  
+  // Initialize kernel block size to small for optimization phase
+  *current_block_size = B_small;
   
   // Validation
   if (N_small % T != 0 || N_large % T != 0) {
