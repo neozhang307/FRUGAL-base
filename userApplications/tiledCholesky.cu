@@ -85,16 +85,161 @@ void generateRandomSymmetricPositiveDefiniteMatrix(double *h_A, const size_t n) 
   checkCudaErrors(cudaFree(d_A));
 }
 
-// Only verify the last row of L * L^T = A
+// Comprehensive verification function that switches between direct comparison and partial verification
 bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_tiles, const size_t n, const size_t b) {
   const size_t t = n / b;
-
+  const size_t matrix_size_mb = (n * n * sizeof(double)) / (1024 * 1024);
+  
+  fmt::print("Starting verification (matrix size: {}MB)...\n", matrix_size_mb);
+  
+  // If matrix is small (< 4096), use direct cuSOLVER comparison for accuracy
+  if (n < 4096) {
+    fmt::print("Using direct cuSOLVER comparison for verification...\n");
+    
+    // Allocate memory for direct Cholesky
+    double* d_A_direct;
+    checkCudaErrors(cudaMalloc(&d_A_direct, n * n * sizeof(double)));
+    checkCudaErrors(cudaMemcpy(d_A_direct, A, n * n * sizeof(double), cudaMemcpyHostToDevice));
+    
+    // Create cuSOLVER handle for direct computation
+    cusolverDnHandle_t directSolverHandle;
+    checkCudaErrors(cusolverDnCreate(&directSolverHandle));
+    
+    // Query workspace size for direct Cholesky
+    int directWorkspaceSize = 0;
+    checkCudaErrors(cusolverDnDpotrf_bufferSize(
+      directSolverHandle, CUBLAS_FILL_MODE_LOWER, n, d_A_direct, n, &directWorkspaceSize));
+    
+    double* d_directWorkspace;
+    checkCudaErrors(cudaMalloc(&d_directWorkspace, directWorkspaceSize * sizeof(double)));
+    
+    int* d_directInfo;
+    checkCudaErrors(cudaMalloc(&d_directInfo, sizeof(int)));
+    
+    // Perform direct Cholesky decomposition
+    checkCudaErrors(cusolverDnDpotrf(
+      directSolverHandle, CUBLAS_FILL_MODE_LOWER, n, d_A_direct, n, 
+      d_directWorkspace, directWorkspaceSize, d_directInfo));
+    
+    // Check if direct decomposition succeeded
+    int h_directInfo;
+    checkCudaErrors(cudaMemcpy(&h_directInfo, d_directInfo, sizeof(int), cudaMemcpyDeviceToHost));
+    
+    bool verification_passed = false;
+    
+    if (h_directInfo != 0) {
+      fmt::print("❌ Direct Cholesky failed with info = {}\n", h_directInfo);
+      verification_passed = false;
+    } else {
+      fmt::print("✅ Direct Cholesky succeeded\n");
+      
+      // Copy direct result to host
+      double* h_L_direct;
+      checkCudaErrors(cudaMallocHost(&h_L_direct, n * n * sizeof(double)));
+      checkCudaErrors(cudaMemcpy(h_L_direct, d_A_direct, n * n * sizeof(double), cudaMemcpyDeviceToHost));
+      
+      // Copy tiled result to contiguous memory for comparison
+      double* h_L_tiled;
+      checkCudaErrors(cudaMallocHost(&h_L_tiled, n * n * sizeof(double)));
+      
+      // Initialize with zeros (for upper triangular part)
+      memset(h_L_tiled, 0, n * n * sizeof(double));
+      
+      // Reconstruct tiled result into contiguous array
+      auto& memManager = MemoryManager::getInstance();
+      for (size_t i = 0; i < t; i++) {
+        for (size_t j = 0; j <= i; j++) { // Only lower triangular tiles
+          size_t tile_idx = i * t + j;
+          double* h_tile_data;
+          checkCudaErrors(cudaMallocHost(&h_tile_data, b * b * sizeof(double)));
+          
+          // Get tile data using memory manager's smart copy
+          bool copySuccess = memManager.copyManagedArrayToHost(d_tiles[tile_idx], h_tile_data, b * b * sizeof(double));
+          if (!copySuccess) {
+            fmt::print("ERROR: Failed to copy tile [{},{}] for verification\n", i, j);
+            checkCudaErrors(cudaFreeHost(h_tile_data));
+            checkCudaErrors(cudaFreeHost(h_L_direct));
+            checkCudaErrors(cudaFreeHost(h_L_tiled));
+            return false;
+          }
+          
+          // Copy to contiguous array
+          for (size_t bi = 0; bi < b; bi++) {
+            for (size_t bj = 0; bj < b; bj++) {
+              size_t global_i = i * b + bi;
+              size_t global_j = j * b + bj;
+              if (global_i >= global_j && global_i < n && global_j < n) {
+                h_L_tiled[global_i * n + global_j] = h_tile_data[bi * b + bj];
+              }
+            }
+          }
+          checkCudaErrors(cudaFreeHost(h_tile_data));
+        }
+      }
+      
+      // Compare the two results
+      fmt::print("Comparing tiled vs direct Cholesky results...\n");
+      double max_diff = 0.0;
+      int diff_count = 0;
+      const double tolerance = 1e-6;
+      
+      for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j <= i && j < n; j++) {
+          double tiled_val = h_L_tiled[i * n + j];
+          double direct_val = h_L_direct[i * n + j];
+          double diff = std::abs(tiled_val - direct_val);
+          
+          if (diff > tolerance) {
+            if (diff_count < 5) {  // Print first 5 differences
+              fmt::print("  Diff at [{},{}]: tiled={:.6f}, direct={:.6f}, diff={:.2e}\n",
+                        i, j, tiled_val, direct_val, diff);
+            }
+            diff_count++;
+            max_diff = std::max(max_diff, diff);
+          }
+        }
+      }
+      
+      if (diff_count == 0) {
+        fmt::print("✅ VERIFICATION PASSED: Tiled and direct results match perfectly\n");
+        verification_passed = true;
+      } else {
+        fmt::print("❌ VERIFICATION FAILED: {} differences, max diff = {:.2e}\n", 
+                  diff_count, max_diff);
+        verification_passed = false;
+      }
+      
+      checkCudaErrors(cudaFreeHost(h_L_direct));
+      checkCudaErrors(cudaFreeHost(h_L_tiled));
+    }
+    
+    // Cleanup direct Cholesky resources
+    checkCudaErrors(cudaFree(d_A_direct));
+    checkCudaErrors(cudaFree(d_directWorkspace));
+    checkCudaErrors(cudaFree(d_directInfo));
+    checkCudaErrors(cusolverDnDestroy(directSolverHandle));
+    
+    return verification_passed;
+  }
+  
+  // For large matrices (>= 4096), use the traditional last row verification
+  fmt::print("Using traditional verification for large matrix...\n");
+  
   // Use pinned memory for h_tiles for faster data transfer
   std::vector<double*> h_tiles(t * t, nullptr);
+  auto& memManager = MemoryManager::getInstance();
   for (int i = 0; i < t * t; i++) {
     checkCudaErrors(cudaMallocHost(&h_tiles[i], b * b * sizeof(double)));
-    checkCudaErrors(cudaMemcpy(h_tiles[i], MemoryManager::getInstance().getAddress(d_tiles[i]), B * B * sizeof(double), cudaMemcpyDefault));
-    checkCudaErrors(cudaDeviceSynchronize());
+    // Use memory manager's safe copy method after optimization
+    bool copySuccess = memManager.copyManagedArrayToHost(d_tiles[i], h_tiles[i], b * b * sizeof(double));
+    if (!copySuccess) {
+      fmt::print("ERROR: Failed to copy tile {} for verification\n", i);
+      // Clean up allocated memory
+      for (int j = 0; j <= i; j++) {
+        checkCudaErrors(cudaFreeHost(h_tiles[j]));
+      }
+      return false;
+    }
   }
 
   auto getAEntry = [&](size_t row, size_t col) {
@@ -115,7 +260,6 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
 
   // Only check the last row;
   const size_t rowIndex = n - 1;
-
   const size_t rowLength = min((size_t)1024, n);
 
   // Use pinned memory for firstRow as well
@@ -134,7 +278,7 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
     error += fabs(getAEntry(rowIndex, j) - firstRow[j]);
   }
 
-  fmt::print("error = {:.6f}\n", error);
+  fmt::print("Traditional verification error = {:.6f}\n", error);
   
   // Free pinned memory for h_tiles and firstRow
   for (int i = 0; i < t * t; i++) {
@@ -142,7 +286,13 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
   }
   checkCudaErrors(cudaFreeHost(firstRow));
 
-  return error <= 1e-6;
+  if (error <= 1e-6) {
+    fmt::print("✅ TRADITIONAL VERIFICATION PASSED\n");
+    return true;
+  } else {
+    fmt::print("❌ TRADITIONAL VERIFICATION FAILED\n"); 
+    return false;
+  }
 }
 
 // Define a matrix tile as a pair of coordinates (i,j)

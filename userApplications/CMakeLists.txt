@@ -18,25 +18,6 @@ target_link_libraries(
   fmt::fmt
 )
 
-add_executable(tiledCholeskyEnlarge tiledCholeskyEnlarge.cu)
-target_link_libraries(
-  tiledCholeskyEnlarge
-  memopt
-  CUDA::cublas
-  CUDA::cusolver
-  CUDA::curand
-  fmt::fmt
-)
-
-add_executable(tiledCholeskyColdStart tiledCholeskyColdStart.cu)
-target_link_libraries(
-  tiledCholeskyColdStart
-  memopt
-  CUDA::cublas
-  CUDA::cusolver
-  CUDA::curand
-  fmt::fmt
-)
 
 add_executable(tiledCholeskyDomainEnlarge tiledCholeskyDomainEnlarge.cu)
 target_link_libraries(
