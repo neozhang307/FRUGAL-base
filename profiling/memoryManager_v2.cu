@@ -1,4 +1,5 @@
 #include "memoryManager.hpp"
+#include <cuda_fp16.h>
 
 namespace memopt {
 
@@ -813,6 +814,7 @@ template void MemoryManager::registerManagedMemoryAddress<int>(int*, size_t);
 template void MemoryManager::registerManagedMemoryAddress<char>(char*, size_t);
 template void MemoryManager::registerManagedMemoryAddress<unsigned int>(unsigned int*, size_t);
 template void MemoryManager::registerManagedMemoryAddress<void>(void*, size_t);
+template void MemoryManager::registerManagedMemoryAddress<__half>(__half*, size_t);
 
 // Explicit template instantiation for registerApplicationInput
 template void MemoryManager::registerApplicationInput<float>(float*);
@@ -821,6 +823,7 @@ template void MemoryManager::registerApplicationInput<int>(int*);
 template void MemoryManager::registerApplicationInput<char>(char*);
 template void MemoryManager::registerApplicationInput<unsigned int>(unsigned int*);
 template void MemoryManager::registerApplicationInput<void>(void*);
+template void MemoryManager::registerApplicationInput<__half>(__half*);
 
 // Explicit template instantiation for registerApplicationOutput
 template void MemoryManager::registerApplicationOutput<float>(float*);
@@ -829,6 +832,7 @@ template void MemoryManager::registerApplicationOutput<int>(int*);
 template void MemoryManager::registerApplicationOutput<char>(char*);
 template void MemoryManager::registerApplicationOutput<unsigned int>(unsigned int*);
 template void MemoryManager::registerApplicationOutput<void>(void*);
+template void MemoryManager::registerApplicationOutput<__half>(__half*);
 
 // GB-based memory management functions
 bool MemoryManager::consumeGPUMemory(size_t sizeInGB) {
