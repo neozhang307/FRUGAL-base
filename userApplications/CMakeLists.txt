@@ -8,9 +8,10 @@ target_link_libraries(
   fmt::fmt
 )
 
-add_executable(tiledCholesky_with_pointer_deps tiledCholesky_with_pointer_deps.cu)
+
+add_executable(tiledCholeskyDomainEnlarge tiledCholeskyDomainEnlarge.cu)
 target_link_libraries(
-  tiledCholesky_with_pointer_deps
+  tiledCholeskyDomainEnlarge
   memopt
   CUDA::cublas
   CUDA::cusolver
@@ -18,10 +19,9 @@ target_link_libraries(
   fmt::fmt
 )
 
-
-add_executable(tiledCholeskyDomainEnlarge tiledCholeskyDomainEnlarge.cu)
+add_executable(tiledCholeskyMemoryOptimized tiledCholeskyMemoryOptimized.cu)
 target_link_libraries(
-  tiledCholeskyDomainEnlarge
+  tiledCholeskyMemoryOptimized
   memopt
   CUDA::cublas
   CUDA::cusolver
