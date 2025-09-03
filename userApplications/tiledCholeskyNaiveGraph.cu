@@ -86,8 +86,19 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
   for (int i = 0; i < T; i++) {
     for (int j = 0; j < T; j++) {
       for (int k = 0; k < B; k++) {
+        auto& memManager = MemoryManager::getInstance();
+        void* srcAddress = memManager.getAddress(d_tiles[i + j * T]);
+        
+        // Handle memory manager address resolution properly
+        if (srcAddress == d_tiles[i + j * T]) {
+          srcAddress = memManager.getStoragePtr(d_tiles[i + j * T]);
+          if (srcAddress == nullptr) {
+            srcAddress = d_tiles[i + j * T];
+          }
+        }
+
         checkCudaErrors(cudaMemcpy(
-          (char*)d_tiles[i + j * T] + B * k * sizeof(double),
+          (char*)srcAddress + B * k * sizeof(double),
           h_originalMatrix + N * (j * B + k) + B * i,
           B * sizeof(double),
           cudaMemcpyDefault
@@ -100,6 +111,7 @@ void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_til
 
 // Simplified structural verification
 bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_tiles) {
+  auto& memManager = MemoryManager::getInstance();
   const size_t t = T;
   const size_t matrix_size_mb = (N * N * sizeof(double)) / (1024 * 1024);
   
@@ -112,7 +124,12 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
     double* h_tile;
     checkCudaErrors(cudaMallocHost(&h_tile, B * B * sizeof(double)));
     
-    checkCudaErrors(cudaMemcpy(h_tile, d_tiles[i + i * t], B * B * sizeof(double), cudaMemcpyDefault));
+    bool copySuccess = memManager.copyManagedArrayToHost(d_tiles[i + i * t], h_tile, B * B * sizeof(double));
+    if (!copySuccess) {
+      fmt::print("ERROR: Failed to copy diagonal tile [{},{}]\n", i, i);
+      checkCudaErrors(cudaFreeHost(h_tile));
+      return false;
+    }
     
     // Check diagonal elements are positive
     for (int k = 0; k < B; k++) {
@@ -155,8 +172,9 @@ void tiledCholeskyNaiveGraph() {
   checkCudaErrors(cudaMallocHost(&h_matrix, N * N * sizeof(double)));
   generateRandomSymmetricPositiveDefiniteMatrix(h_matrix, N);
   
-  // Allocate GPU tiles with simple cudaMalloc (no memory management)
+  // Allocate GPU tiles with memory management
   std::vector<double*> d_tiles;
+  auto& memManager = MemoryManager::getInstance();
   
   auto getMatrixBlock = [&d_tiles](int i, int j) -> double* {
     return d_tiles[i + j * T];
@@ -166,9 +184,11 @@ void tiledCholeskyNaiveGraph() {
     double *d_tile;
     checkCudaErrors(cudaMalloc(&d_tile, tileSize));
     d_tiles.push_back(d_tile);
+    memManager.registerManagedMemoryAddress(d_tile, tileSize);
   }
   
-  fmt::print("Total allocated memory: {:.2f} MB\n", (T * T * tileSize) / (1024.0 * 1024.0));
+  double totalManagedMemoryMB = memManager.GetMemoryManagedSizeInMB();
+  fmt::print("Total managed memory: {:.2f} MB\n", totalManagedMemoryMB);
 
   // Initialize data
   initializeDeviceData(h_matrix, d_tiles);
@@ -318,11 +338,37 @@ void tiledCholeskyNaiveGraph() {
   fmt::print("📊 Generated graph contains {} nodes\n", numNodes);
 
   // =========================================================================
-  // PHASE 3: EXECUTE THE NAIVE CUDA GRAPH
+  // PHASE 3: OPTIMIZE MEMORY ALLOCATION WITH NAIVE GRAPH
   // =========================================================================
-  fmt::print("\n--- PHASE 3: Execute Naive CUDA Graph ---\n");
+  fmt::print("\n--- PHASE 3: Memory Optimization with Naive Graph ---\n");
   
-  // Reinitialize data for fresh execution
+  double initialPeakMemory = memManager.GetMemoryManagedSizeInMB();
+  fmt::print("Initial peak memory: {:.2f} MB\n", initialPeakMemory);
+  
+  // Initialize data before optimization 
+  initializeDeviceData(h_matrix, d_tiles);
+  
+  // Profile and optimize the naive graph
+  fmt::print("Profiling and optimizing naive CUDA graph...\n");
+  auto optimizedGraph = profileAndOptimize(graph);
+  
+  fmt::print("Original peak memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
+  fmt::print("Optimized peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
+  fmt::print("Memory reduction: {:.2f} MiB ({:.1f}%)\n", 
+             optimizedGraph.originalMemoryUsage - optimizedGraph.anticipatedPeakMemoryUsage,
+             ((optimizedGraph.originalMemoryUsage - optimizedGraph.anticipatedPeakMemoryUsage) / optimizedGraph.originalMemoryUsage) * 100);
+
+  // Move all data to storage before execution (required for optimized execution)
+  fmt::print("Moving all data to storage for optimized execution...\n");
+  memManager.offloadAllManagedMemoryToStorage();
+  fmt::print("✅ All data moved to CPU/storage\n");
+  
+  // =========================================================================
+  // PHASE 4: EXECUTE WITH OPTIMIZED NAIVE GRAPH
+  // =========================================================================
+  fmt::print("\n--- PHASE 4: Execute with Optimized Naive Graph ---\n");
+  
+  // Reinitialize data after optimization
   initializeDeviceData(h_matrix, d_tiles);
   
   // Get current GPU memory info
@@ -336,47 +382,152 @@ void tiledCholeskyNaiveGraph() {
   PeakMemoryUsageProfiler peakProfiler(10); // Sample every 10ms
   peakProfiler.start();
   
-  // Instantiate and execute the graph
-  cudaGraphExec_t graphExec;
-  checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
-  
-  // Measure execution time
-  cudaEvent_t start, stop;
-  checkCudaErrors(cudaEventCreate(&start));
-  checkCudaErrors(cudaEventCreate(&stop));
-  
-  checkCudaErrors(cudaEventRecord(start, s));
-  checkCudaErrors(cudaGraphLaunch(graphExec, s));
-  checkCudaErrors(cudaEventRecord(stop, s));
-  checkCudaErrors(cudaStreamSynchronize(s));
-  
+  // Run the optimized naive graph
   float runningTime;
-  checkCudaErrors(cudaEventElapsedTime(&runningTime, start, stop));
+  executeOptimizedGraph(
+    optimizedGraph,
+    [&tmanager_v2](int taskId, std::map<void*, void*> addressMapping, cudaStream_t stream) {
+      tmanager_v2.execute(taskId, stream);
+    },
+    runningTime,
+    memManager
+  );
   
   // Get peak memory usage
   size_t peakMemoryBytes = peakProfiler.end();
   double peakMemoryMB = (double)peakMemoryBytes / (1024.0 * 1024.0);
   
-  fmt::print("✅ Naive graph execution completed!\n");
-  fmt::print("Execution time: {:.3f} ms\n", runningTime);
+  fmt::print("✅ Optimized naive graph execution completed!\n");
+  fmt::print("Execution time: {:.3f} ms\n", runningTime * 1000.0f);
   fmt::print("📊 Peak GPU memory usage during execution: {:.2f} MB\n", peakMemoryMB);
   
   // =========================================================================
-  // PHASE 4: VERIFY RESULTS
+  // PHASE 5: VERIFY RESULTS
   // =========================================================================
-  fmt::print("\n--- PHASE 4: Verify Results ---\n");
+  fmt::print("\n--- PHASE 5: Verify Results ---\n");
   
-  // Verify results
-  bool result = verifyCholeskyDecompositionPartially(h_matrix, d_tiles);
+  // Always do partial verification first
+  bool partialResult = verifyCholeskyDecompositionPartially(h_matrix, d_tiles);
+  
+  bool fullResult = true;
+  const size_t matrix_size_mb = (N * N * sizeof(double)) / (1024 * 1024);
+  
+  // For smaller matrices, also do full cuSOLVER comparison
+  if (matrix_size_mb < 1024) { // Less than 1GB
+    fmt::print("\n--- PHASE 5.1: Comparison with cuSOLVER Direct Cholesky ---\n");
+    
+    // Allocate memory for direct Cholesky
+    double* d_A_direct;
+    checkCudaErrors(cudaMalloc(&d_A_direct, N * N * sizeof(double)));
+    checkCudaErrors(cudaMemcpy(d_A_direct, h_matrix, N * N * sizeof(double), cudaMemcpyHostToDevice));
+    
+    // Create new cuSOLVER handle for direct computation
+    cusolverDnHandle_t directSolverHandle;
+    checkCudaErrors(cusolverDnCreate(&directSolverHandle));
+    
+    // Query workspace size for direct Cholesky
+    int directWorkspaceSize = 0;
+    checkCudaErrors(cusolverDnDpotrf_bufferSize(
+      directSolverHandle, CUBLAS_FILL_MODE_LOWER, N, d_A_direct, N, &directWorkspaceSize));
+    
+    double* d_directWorkspace;
+    checkCudaErrors(cudaMalloc(&d_directWorkspace, directWorkspaceSize * sizeof(double)));
+    
+    int* d_directInfo;
+    checkCudaErrors(cudaMalloc(&d_directInfo, sizeof(int)));
+    
+    // Perform direct Cholesky decomposition
+    fmt::print("Running cuSOLVER direct Cholesky on {}x{} matrix ({:.1f}MB)...\n", N, N, (double)matrix_size_mb);
+    checkCudaErrors(cusolverDnDpotrf(
+      directSolverHandle, CUBLAS_FILL_MODE_LOWER, N, d_A_direct, N, 
+      d_directWorkspace, directWorkspaceSize, d_directInfo));
+    
+    // Check if direct decomposition succeeded
+    int h_directInfo;
+    checkCudaErrors(cudaMemcpy(&h_directInfo, d_directInfo, sizeof(int), cudaMemcpyDeviceToHost));
+    
+    if (h_directInfo != 0) {
+      fmt::print("ERROR: Direct Cholesky failed with info = {}\n", h_directInfo);
+      fullResult = false;
+    } else {
+      fmt::print("✅ Direct Cholesky succeeded\n");
+      
+      // Copy direct result to host
+      double* h_L_direct;
+      checkCudaErrors(cudaMallocHost(&h_L_direct, N * N * sizeof(double)));
+      checkCudaErrors(cudaMemcpy(h_L_direct, d_A_direct, N * N * sizeof(double), cudaMemcpyDeviceToHost));
+      
+      // Copy tiled result to contiguous memory for comparison
+      double* h_L_tiled;
+      checkCudaErrors(cudaMallocHost(&h_L_tiled, N * N * sizeof(double)));
+      
+      // Reconstruct tiled result into contiguous array
+      for (size_t i = 0; i < T; i++) {
+        for (size_t j = 0; j <= i; j++) {
+          size_t tile_idx = i * T + j;
+          double* h_tile_data;
+          checkCudaErrors(cudaMallocHost(&h_tile_data, B * B * sizeof(double)));
+          
+          // Copy tile data using memory manager
+          memManager.copyManagedArrayToHost(d_tiles[tile_idx], h_tile_data, B * B * sizeof(double));
+          
+          // Copy to contiguous array
+          for (size_t bi = 0; bi < B; bi++) {
+            for (size_t bj = 0; bj < B; bj++) {
+              size_t global_i = i * B + bi;
+              size_t global_j = j * B + bj;
+              if (global_i >= global_j && global_i < N && global_j < N) {
+                h_L_tiled[global_i * N + global_j] = h_tile_data[bi * B + bj];
+              }
+            }
+          }
+          checkCudaErrors(cudaFreeHost(h_tile_data));
+        }
+      }
+      
+      // Compare results
+      const double TOLERANCE = 1e-10;
+      size_t diff_count = 0;
+      double max_diff = 0.0;
+      
+      for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j <= i; j++) {
+          double diff = std::abs(h_L_tiled[i * N + j] - h_L_direct[i * N + j]);
+          if (diff > TOLERANCE) {
+            diff_count++;
+            max_diff = std::max(max_diff, diff);
+          }
+        }
+      }
+      
+      if (diff_count == 0) {
+        fmt::print("✅ Tiled and direct Cholesky results MATCH perfectly!\n");
+      } else {
+        fmt::print("❌ Tiled and direct Cholesky DIFFER: {} differences, max diff = {:.2e}\n", 
+                   diff_count, max_diff);
+        fullResult = false;
+      }
+      
+      checkCudaErrors(cudaFreeHost(h_L_direct));
+      checkCudaErrors(cudaFreeHost(h_L_tiled));
+    }
+    
+    // Cleanup direct Cholesky resources
+    checkCudaErrors(cudaFree(d_A_direct));
+    checkCudaErrors(cudaFree(d_directWorkspace));
+    checkCudaErrors(cudaFree(d_directInfo));
+    checkCudaErrors(cusolverDnDestroy(directSolverHandle));
+  } else {
+    fmt::print("Matrix too large ({:.1f}MB) for full cuSOLVER comparison, using partial validation only\n", (double)matrix_size_mb);
+  }
+  
+  bool result = partialResult && fullResult;
   
   // =========================================================================
-  // PHASE 5: CLEANUP
+  // PHASE 6: CLEANUP
   // =========================================================================
-  fmt::print("\n--- PHASE 5: Cleanup ---\n");
+  fmt::print("\n--- PHASE 6: Cleanup ---\n");
   
-  checkCudaErrors(cudaEventDestroy(start));
-  checkCudaErrors(cudaEventDestroy(stop));
-  checkCudaErrors(cudaGraphExecDestroy(graphExec));
   checkCudaErrors(cudaGraphDestroy(graph));
   checkCudaErrors(cudaStreamDestroy(s));
   checkCudaErrors(cusolverDnDestroyParams(cusolverDnParams));
@@ -389,9 +540,9 @@ void tiledCholeskyNaiveGraph() {
   checkCudaErrors(cudaFree(d_info));
   checkCudaErrors(cudaFreeHost(h_workspace));
   
-  // Free device tiles
+  // Free managed memory properly using MemoryManager
   for (auto d_tile : d_tiles) {
-    checkCudaErrors(cudaFree(d_tile));
+    memManager.freeManagedMemory(d_tile);
   }
   checkCudaErrors(cudaFreeHost(h_matrix));
   
