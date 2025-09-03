@@ -18,6 +18,7 @@
 #include "../profiling/memoryManager.hpp"
 #include "../utilities/configurationManager.hpp"
 #include "../utilities/types.hpp"
+#include "../utilities/cudaGraphConstructor.hpp"
 
 namespace memopt {
 
@@ -139,6 +140,16 @@ private:
     
     // Store all task info by task ID
     std::unordered_map<TaskId, TaskInfo> tasks;
+    
+    // Task registration order for dependency tracking
+    std::vector<TaskId> taskRegistrationOrder;
+    
+    // Task annotation for explicit dependencies (optional)
+    struct TaskAnnotation {
+        std::vector<TaskId> explicitDependencies;
+        int stage = -1; // For stage-based execution, -1 means auto-detect
+    };
+    std::unordered_map<TaskId, TaskAnnotation> taskAnnotations;
     
     // Reference to memory manager
     MemoryManager& memoryManager;
@@ -292,6 +303,9 @@ public:
         // Store the task
         tasks[taskId] = std::move(taskInfo);
         
+        // Track registration order for naive graph generation
+        taskRegistrationOrder.push_back(taskId);
+        
         return taskId;
     }
     
@@ -360,6 +374,9 @@ public:
         
         // Store the task
         tasks[taskId] = std::move(taskInfo);
+        
+        // Track registration order for naive graph generation
+        taskRegistrationOrder.push_back(taskId);
         
         return taskId;
     }
@@ -564,6 +581,7 @@ public:
     void clearTasks() {
         tasks.clear();
         usedTaskIds.clear();
+        taskRegistrationOrder.clear();
         if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "Cleared all tasks" << std::endl;
         }
@@ -631,6 +649,75 @@ public:
     template <typename... Args>
     static TaskFunctionArgs<Args...> makeArgs(Args... args) {
         return TaskFunctionArgs<Args...>(std::forward<Args>(args)...);
+    }
+    
+    /**
+     * @brief Generate a naive CUDA graph from registered tasks in registration order
+     * 
+     * This method creates a CUDA graph by executing all registered tasks in the order
+     * they were registered, capturing each execution to build the graph incrementally.
+     * 
+     * @param stream CUDA stream to use for graph capture
+     * @return Generated CUDA graph
+     */
+    cudaGraph_t generateNaiveGraph(cudaStream_t stream) {
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+            std::cout << "=== Generating Naive CUDA Graph ===" << std::endl;
+            std::cout << "Total registered tasks: " << taskRegistrationOrder.size() << std::endl;
+        }
+        
+        // Create empty CUDA graph
+        cudaGraph_t graph;
+        checkCudaErrors(cudaGraphCreate(&graph, 0));
+        
+        // Create graph constructor for dependency tracking
+        auto graphConstructor = std::make_unique<PointerDependencyCudaGraphConstructor>(stream, graph);
+        
+        // Execute tasks in registration order, capturing each into the graph
+        for (size_t i = 0; i < taskRegistrationOrder.size(); i++) {
+            TaskId taskId = taskRegistrationOrder[i];
+            auto taskIt = tasks.find(taskId);
+            if (taskIt == tasks.end()) {
+                if (debugMode) {
+                    std::cout << "Warning: Task ID " << taskId << " not found during graph generation" << std::endl;
+                }
+                continue;
+            }
+            
+            auto& taskInfo = taskIt->second;
+            
+            if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+                std::cout << "Capturing task " << (i+1) << "/" << taskRegistrationOrder.size() 
+                         << " (ID: " << taskId << ", " << taskInfo.taskName << ")" << std::endl;
+            }
+            
+            // Begin capture operation with dependency detection
+            graphConstructor->beginCaptureOperation(taskInfo.inputs, taskInfo.outputs);
+            
+            // Execute the task (this will be captured into the graph)
+            execute(taskId, stream);
+            
+            // End capture and update dependency tracking
+            auto newLeafNodes = graphConstructor->endCaptureOperation();
+            
+            if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+                std::cout << "  - Captured " << newLeafNodes.size() << " new graph nodes" << std::endl;
+            }
+        }
+        
+        // Synchronize to ensure all captures are complete
+        checkCudaErrors(cudaStreamSynchronize(stream));
+        
+        // Get final graph statistics
+        size_t numNodes;
+        checkCudaErrors(cudaGraphGetNodes(graph, nullptr, &numNodes));
+        
+        if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+            std::cout << "=== Naive Graph Generation Complete ===" << std::endl;
+            std::cout << "Final graph contains " << numNodes << " nodes" << std::endl;
+        }
+        
+        return graph;
     }
 };
 

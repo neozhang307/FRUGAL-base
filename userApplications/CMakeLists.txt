@@ -29,6 +29,16 @@ target_link_libraries(
   fmt::fmt
 )
 
+add_executable(tiledCholeskyNaiveGraph tiledCholeskyNaiveGraph.cu)
+target_link_libraries(
+  tiledCholeskyNaiveGraph
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+)
+
 add_executable(lu_def lu_def.cu)
 target_link_libraries(
   lu_def
