@@ -719,8 +719,10 @@ void Executor::executeGraphRepeatedly(
   while (shouldContinue()) {
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
     numIterations++;
-    checkCudaErrors(cudaDeviceSynchronize());
   }
+  
+  // Synchronize only once after all iterations are launched
+  checkCudaErrors(cudaStreamSynchronize(stream));
   
   cudaEventClock.end();
   checkCudaErrors(cudaDeviceSynchronize());
