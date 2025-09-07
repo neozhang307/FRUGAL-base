@@ -33,7 +33,9 @@
     "gurobiTimeLimitSeconds": 60,
     "gurobiMipGap": 0.10,
     "gurobiThreads": 0,
-    "gurobiEnableHeuristics": true
+    "gurobiEnableHeuristics": true,
+    "disableLookahead": false,
+    "disableLookback": false
   },
   "execution": {
     "useNvlink": false,
