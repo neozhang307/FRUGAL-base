@@ -58,6 +58,10 @@ struct Configuration {
     double gurobiMipGap = 0.01;       // 1% optimality gap tolerance 
     int gurobiThreads = 0;            // 0 = use all available threads
     bool gurobiEnableHeuristics = true;
+    
+    // Debug flags for 30-31 qubit optimization issues
+    bool disableLookahead = false;    // Disable offload lookahead constraints
+    bool disableLookback = false;     // Disable prefetch lookback constraints
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
@@ -87,7 +91,9 @@ struct Configuration {
       gurobiTimeLimitSeconds,
       gurobiMipGap,
       gurobiThreads,
-      gurobiEnableHeuristics
+      gurobiEnableHeuristics,
+      disableLookahead,
+      disableLookback
     );
   } optimization;
 
