@@ -28,13 +28,20 @@ find_package(ortools REQUIRED)
 
 # Find cuDNN
 find_library(CUDNN_LIBRARY cudnn
-    HINTS ${CUDA_TOOLKIT_ROOT_DIR}
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR} $ENV{CONDA_PREFIX}
     PATH_SUFFIXES lib64 lib)
-if(CUDNN_LIBRARY)
+    
+find_path(CUDNN_INCLUDE_DIR cudnn.h
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR} $ENV{CONDA_PREFIX}
+    PATH_SUFFIXES include)
+    
+if(CUDNN_LIBRARY AND CUDNN_INCLUDE_DIR)
     message(STATUS "Found cuDNN: ${CUDNN_LIBRARY}")
+    message(STATUS "Found cuDNN headers: ${CUDNN_INCLUDE_DIR}")
     add_library(CUDA::cudnn UNKNOWN IMPORTED)
     set_target_properties(CUDA::cudnn PROPERTIES
-        IMPORTED_LOCATION ${CUDNN_LIBRARY})
+        IMPORTED_LOCATION ${CUDNN_LIBRARY}
+        INTERFACE_INCLUDE_DIRECTORIES ${CUDNN_INCLUDE_DIR})
 else()
     message(WARNING "cuDNN not found - ResNet application may not build properly")
 endif()

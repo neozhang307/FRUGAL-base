@@ -9,9 +9,9 @@
 
 ## Build Commands
 - **Environment Setup**: 
-  - Conda activation: `source ~/miniconda3/bin/activate && conda activate frugal`
-  - Alternative (if available): `enable miniconda3 frugal` (x64) or `enable miniconda3_x86 frugal` (x86)
-- Build: `source ~/miniconda3/bin/activate && conda activate frugal && make config && make build`
+  - x86 Conda activation (preferred): `source ~/miniconda3_x86/bin/activate && conda activate frugal`
+  - x64 Conda activation: `source ~/miniconda3/bin/activate && conda activate frugal`
+- Build: `source ~/miniconda3_x86/bin/activate && conda activate frugal && make config && make build`
 - Debug build: `make clean && make config-debug && make build`
 - Quick build: `make build-sequential`
 - Verbose build: `make build-verbose`

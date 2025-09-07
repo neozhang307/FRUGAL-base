@@ -57,8 +57,25 @@ target_link_libraries(
   CUDA::cublas
   CUDA::cusolver
   CUDA::curand
-  CUDA::cudnn
   fmt::fmt
 )
+
+add_executable(resnet_simple resnet_simple.cu)
+target_link_libraries(
+  resnet_simple
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+)
+
+# Link cuDNN if available
+if(TARGET CUDA::cudnn)
+  target_link_libraries(resnet CUDA::cudnn)
+  target_link_libraries(resnet_simple CUDA::cudnn)
+else()
+  message(WARNING "cuDNN not found - ResNet may not function correctly without cuDNN library")
+endif()
 
 #add_subdirectory(lulesh)
