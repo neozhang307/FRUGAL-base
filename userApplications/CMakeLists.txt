@@ -50,4 +50,15 @@ target_link_libraries(
   OpenMP::OpenMP_CXX
 )
 
+add_executable(resnet resnet.cu)
+target_link_libraries(
+  resnet
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  CUDA::cudnn
+  fmt::fmt
+)
+
 #add_subdirectory(lulesh)

@@ -26,6 +26,19 @@ find_package(CUDAToolkit REQUIRED)
 find_package(fmt REQUIRED)
 find_package(ortools REQUIRED)
 
+# Find cuDNN
+find_library(CUDNN_LIBRARY cudnn
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR}
+    PATH_SUFFIXES lib64 lib)
+if(CUDNN_LIBRARY)
+    message(STATUS "Found cuDNN: ${CUDNN_LIBRARY}")
+    add_library(CUDA::cudnn UNKNOWN IMPORTED)
+    set_target_properties(CUDA::cudnn PROPERTIES
+        IMPORTED_LOCATION ${CUDNN_LIBRARY})
+else()
+    message(WARNING "cuDNN not found - ResNet application may not build properly")
+endif()
+
 add_subdirectory(utilities)
 add_subdirectory(profiling)
 add_subdirectory(optimization)
