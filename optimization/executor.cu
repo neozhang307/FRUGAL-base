@@ -241,10 +241,18 @@ void Executor::executeOptimizedGraph(
       
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
-      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
-      if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+      // Handle special case: arrayId == -1 means offload all remaining data to storage
+      if (dataMovement.arrayId == -1) {
+        // This is an "offload everything" node created for inter-stage memory management
+        // It moves all currently resident GPU data to CPU/storage to free up memory
+        memManager.offloadRemainedManagedMemoryToStorageAsync(stream);
+      } else {
+        // Normal data movement for specific array
+        auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+        auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
+        
+        if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
         void *devicePtr;
         checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
@@ -268,6 +276,7 @@ void Executor::executeOptimizedGraph(
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
         memManager.removeCurrentMapping(dataMovementAddress);
+        }
       }
       
       checkCudaErrors(cudaPeekAtLastError());
@@ -532,10 +541,18 @@ void Executor::executeOptimizedGraphRepeatedly(
       // Handle data movement nodes (prefetch or offload)
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
-      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
-      if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+      // Handle special case: arrayId == -1 means offload all remaining data to storage
+      if (dataMovement.arrayId == -1) {
+        // This is an "offload everything" node created for inter-stage memory management
+        // It moves all currently resident GPU data to CPU/storage to free up memory
+        memManager.offloadRemainedManagedMemoryToStorageAsync(stream);
+      } else {
+        // Normal data movement for specific array
+        auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+        auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
+        
+        if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
         void *devicePtr;
         checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
@@ -559,10 +576,13 @@ void Executor::executeOptimizedGraphRepeatedly(
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
         memManager.removeCurrentMapping(dataMovementAddress);
+        }
       }
+      
       checkCudaErrors(cudaPeekAtLastError());
       newLeafNodes = optimizedCudaGraphCreator->endCaptureOperation();
       checkCudaErrors(cudaPeekAtLastError());
+      
     } else if (nodeType == OptimizationOutput::NodeType::task) {
       // Handle computation task nodes
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
@@ -841,10 +861,18 @@ void Executor::executeOptimizedGraph(
       
       optimizedCudaGraphCreator->beginCaptureOperation(nodeToDependentNodesMap[u]);
       auto &dataMovement = optimizedGraph.nodeIdToDataMovementMap[u];
-      auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
-      auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
       
-      if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+      // Handle special case: arrayId == -1 means offload all remaining data to storage
+      if (dataMovement.arrayId == -1) {
+        // This is an "offload everything" node created for inter-stage memory management
+        // It moves all currently resident GPU data to CPU/storage to free up memory
+        memManager.offloadRemainedManagedMemoryToStorageAsync(stream);
+      } else {
+        // Normal data movement for specific array
+        auto dataMovementAddress = memManager.getPointerByArrayId(dataMovement.arrayId);
+        auto dataMovementSize = memManager.getSizeByArrayId(dataMovement.arrayId);
+        
+        if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
         // PREFETCH: Move data from storage to device
         void *devicePtr;
         checkCudaErrors(cudaMallocAsync(&devicePtr, dataMovementSize, stream));
@@ -868,6 +896,7 @@ void Executor::executeOptimizedGraph(
         ));
         checkCudaErrors(cudaFreeAsync(devicePtr, stream));
         memManager.removeCurrentMapping(dataMovementAddress);
+        }
       }
       
       checkCudaErrors(cudaPeekAtLastError());
