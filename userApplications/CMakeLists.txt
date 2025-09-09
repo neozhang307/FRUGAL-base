@@ -50,4 +50,46 @@ target_link_libraries(
   OpenMP::OpenMP_CXX
 )
 
+add_executable(tiledCholeskyIncrementalProfile tiledCholeskyIncrementalProfile.cu)
+target_link_libraries(
+  tiledCholeskyIncrementalProfile
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+  OpenMP::OpenMP_CXX
+)
+
+add_executable(tiledCholeskyIncrementalProfileFixed tiledCholeskyIncrementalProfileFixed.cu)
+target_link_libraries(
+  tiledCholeskyIncrementalProfileFixed
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+  OpenMP::OpenMP_CXX
+)
+
+add_executable(tiledCholeskyGPUInit tiledCholeskyGPUInit.cu)
+target_link_libraries(
+  tiledCholeskyGPUInit
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+)
+
+add_executable(tiledCholeskyStaged tiledCholeskyStaged.cu)
+target_link_libraries(
+  tiledCholeskyStaged
+  memopt
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::curand
+  fmt::fmt
+)
+
 #add_subdirectory(lulesh)

@@ -2,11 +2,43 @@
 
 #include "executor.hpp"
 #include "taskManager.hpp"
+#include "taskManager_v2.hpp"
 #include "optimizationOutput.hpp"
 
 namespace memopt {
 
 OptimizationOutput profileAndOptimize(cudaGraph_t originalGraph);
+
+/// @brief Profile and optimize tasks stage-by-stage to handle memory constraints
+/// @param taskManager The task manager containing all registered tasks
+/// @param stageTaskIds Vector of vectors where each inner vector contains TaskIds for one stage
+/// @param stream Optional CUDA stream to use (will create one if not provided)
+/// @return Optimized graph with all stages merged
+/// @details This function constructs subgraphs for each stage by capturing task execution,
+///          profiles each stage individually to avoid memory issues, optimizes all stages
+///          in batch (enabling future CPU/GPU pipelining), and merges the results.
+OptimizationOutput profileAndOptimizeStaged(
+  TaskManager_v2& taskManager,
+  const std::vector<std::vector<TaskId>>& stageTaskIds,
+  cudaStream_t stream = nullptr
+);
+
+/// @brief Profile and optimize pre-constructed stage subgraphs
+/// @param stageGraphs Vector of CUDA graphs, one per stage
+/// @param enablePipelining Reserved for future use - enables GPU/CPU pipelining
+/// @return Optimized graph with all stages merged
+/// @details This overload accepts pre-constructed subgraphs for cases where the user
+///          has already built the stage graphs. Each graph is profiled and optimized
+///          separately, then merged into a single optimization output.
+OptimizationOutput profileAndOptimizeStaged(
+  const std::vector<cudaGraph_t>& stageGraphs,
+  bool enablePipelining = false
+);
+
+/// @brief Merges multiple optimization outputs from different stages into one
+/// @param optimizationOutputs Vector of optimization outputs from each stage
+/// @return Merged optimization output with stages connected sequentially
+OptimizationOutput mergeOptimizationOutputs(std::vector<OptimizationOutput> &optimizationOutputs);
 
 /// @brief
 /// @param optimizedGraph

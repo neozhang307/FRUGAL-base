@@ -906,7 +906,7 @@ std::vector<OptimizationInput> constructOptimizationInputsForStages(
   return optimizationInputs;
 }
 
-OptimizationOutput mergeOptimizationOutputs(std::vector<OptimizationOutput> &optimizationOutputs) {
+OptimizationOutput Optimizer::mergeOptimizationOutputs(std::vector<OptimizationOutput> &optimizationOutputs) {
   auto getRootNodeIndex = [](OptimizationOutput &output) {
     std::map<int, bool> hasIncomingEdge;
     for (auto u : output.nodes) {
@@ -1253,6 +1253,187 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     writeOptimizationOutputToFile(mergedOptimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
     return mergedOptimizationOutput;
   }
+}
+
+// Helper function to estimate memory requirement for a stage
+size_t Optimizer::estimateStageMemoryRequirement(
+  TaskManager_v2& taskManager,
+  const std::vector<TaskId>& stageTasks) {
+  
+  // TODO: Implement proper memory estimation once TaskManager_v2 API is available
+  // For now, return a conservative estimate based on stage size
+  size_t estimatedMemoryPerTask = 100 * 1024 * 1024; // 100 MB per task (conservative)
+  return stageTasks.size() * estimatedMemoryPerTask;
+}
+
+// Helper function to check if memory capacity is sufficient
+bool Optimizer::checkMemoryCapacity(size_t requiredMemory, bool hasUM) {
+  size_t freeMem, totalMem;
+  checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+  
+  const double SAFETY_FACTOR = 0.9;
+  
+  // Only check against available GPU memory
+  return requiredMemory <= freeMem * SAFETY_FACTOR;
+}
+
+// Removed: hasUnifiedMemory - no longer supporting Unified Memory
+// Removed: prefetchStageData - replaced by MemoryManager stage APIs
+
+OptimizationOutput Optimizer::profileAndOptimizeStaged(
+  TaskManager_v2& taskManager,
+  const std::vector<std::vector<TaskId>>& stageTaskIds,
+  cudaStream_t stream) {
+  
+  LOG_TRACE();
+  
+  // Create stream if not provided
+  cudaStream_t workStream = stream;
+  bool createdStream = false;
+  if (workStream == nullptr) {
+    checkCudaErrors(cudaStreamCreate(&workStream));
+    createdStream = true;
+  }
+  
+  // Phase 0: Pre-check memory requirements for all stages
+  LOG_TRACE_WITH_INFO("Pre-checking memory requirements for %zu stages", stageTaskIds.size());
+  auto& memManager = MemoryManager::getInstance();
+  
+  for (size_t i = 0; i < stageTaskIds.size(); i++) {
+    size_t stageMemReq = estimateStageMemoryRequirement(taskManager, stageTaskIds[i]);
+    LOG_TRACE_WITH_INFO("Stage %zu requires %.2f MB", i, stageMemReq / (1024.0 * 1024.0));
+    
+    if (!checkMemoryCapacity(stageMemReq, false)) {
+      size_t freeMem, totalMem;
+      checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+      
+      LOG_TRACE_WITH_INFO("ERROR: Stage %zu requires %.2f GB but only %.2f GB available", 
+                i, stageMemReq/1e9, (freeMem * 0.9)/1e9);
+      
+      if (createdStream) {
+        cudaStreamDestroy(workStream);
+      }
+      
+      throw std::runtime_error(
+        "Stage " + std::to_string(i) + " exceeds GPU memory capacity. " +
+        "Required: " + std::to_string(stageMemReq/1e9) + " GB, " +
+        "Available: " + std::to_string((freeMem * 0.9)/1e9) + " GB. " +
+        "Consider adding more stage separators to reduce per-stage memory."
+      );
+    }
+  }
+  
+  // Phase 1: Construct and profile all stages
+  std::vector<cudaGraph_t> stageGraphs;
+  std::vector<OptimizationOutput> stageOptimizations;
+  
+  LOG_TRACE_WITH_INFO("Starting stage-based profiling for %zu stages", stageTaskIds.size());
+  
+  for (size_t stageIdx = 0; stageIdx < stageTaskIds.size(); stageIdx++) {
+    const auto& stageTasks = stageTaskIds[stageIdx];
+    LOG_TRACE_WITH_INFO("Processing stage %zu with %zu tasks", stageIdx, stageTasks.size());
+    
+    // Construct subgraph for this stage
+    cudaGraph_t stageGraph;
+    checkCudaErrors(cudaGraphCreate(&stageGraph, 0));
+    
+    // Begin capture
+    checkCudaErrors(cudaStreamBeginCapture(workStream, cudaStreamCaptureModeGlobal));
+    
+    // Execute all tasks in this stage to capture them
+    for (TaskId taskId : stageTasks) {
+      taskManager.execute(taskId, workStream);
+    }
+    
+    // End capture
+    checkCudaErrors(cudaStreamEndCapture(workStream, &stageGraph));
+    
+    // TODO: Call memManager.prepareStage() to fetch required data to GPU
+    // TODO: Call memManager.finalizeStage() after stage execution to offload data
+    
+    // Profile and optimize this stage
+    LOG_TRACE_WITH_INFO("Profiling and optimizing stage %zu", stageIdx);
+    auto stageOptimization = profileAndOptimize(stageGraph);
+    stageOptimizations.push_back(stageOptimization);
+    
+    LOG_TRACE_WITH_INFO("Stage %zu - Original: %.2f MB, Optimized: %.2f MB, Reduction: %.1f%%",
+      stageIdx,
+      stageOptimization.originalMemoryUsage,
+      stageOptimization.anticipatedPeakMemoryUsage,
+      stageOptimization.originalMemoryUsage > 0 ? 
+        ((stageOptimization.originalMemoryUsage - stageOptimization.anticipatedPeakMemoryUsage) / 
+         stageOptimization.originalMemoryUsage) * 100 : 0);
+    
+    // Store graph for potential future use
+    stageGraphs.push_back(stageGraph);
+  }
+  
+  // Clean up graphs
+  for (auto& graph : stageGraphs) {
+    checkCudaErrors(cudaGraphDestroy(graph));
+  }
+  
+  // Clean up stream if we created it
+  if (createdStream) {
+    checkCudaErrors(cudaStreamDestroy(workStream));
+  }
+  
+  // Phase 2: Merge results
+  LOG_TRACE_WITH_INFO("Merging %zu stage optimization results", stageOptimizations.size());
+  auto mergedOutput = mergeOptimizationOutputs(stageOptimizations);
+  
+  LOG_TRACE_WITH_INFO("Overall - Original: %.2f MB, Optimized: %.2f MB, Reduction: %.1f%%",
+    mergedOutput.originalMemoryUsage,
+    mergedOutput.anticipatedPeakMemoryUsage,
+    mergedOutput.originalMemoryUsage > 0 ?
+      ((mergedOutput.originalMemoryUsage - mergedOutput.anticipatedPeakMemoryUsage) / 
+       mergedOutput.originalMemoryUsage) * 100 : 0);
+  
+  return mergedOutput;
+}
+
+OptimizationOutput Optimizer::profileAndOptimizeStaged(
+  const std::vector<cudaGraph_t>& stageGraphs,
+  bool enablePipelining) {
+  
+  LOG_TRACE();
+  
+  // For pre-constructed graphs, we skip the construction phase
+  std::vector<OptimizationOutput> stageOptimizations;
+  
+  LOG_TRACE_WITH_INFO("Starting stage-based profiling for %zu pre-constructed stage graphs", stageGraphs.size());
+  
+  // TODO: If enablePipelining is true in the future, we could implement
+  // concurrent profiling/optimization using async operations
+  
+  for (size_t stageIdx = 0; stageIdx < stageGraphs.size(); stageIdx++) {
+    LOG_TRACE_WITH_INFO("Profiling and optimizing stage %zu", stageIdx);
+    
+    // Profile and optimize this stage
+    auto stageOptimization = profileAndOptimize(stageGraphs[stageIdx]);
+    stageOptimizations.push_back(stageOptimization);
+    
+    LOG_TRACE_WITH_INFO("Stage %zu - Original: %.2f MB, Optimized: %.2f MB, Reduction: %.1f%%",
+      stageIdx,
+      stageOptimization.originalMemoryUsage,
+      stageOptimization.anticipatedPeakMemoryUsage,
+      stageOptimization.originalMemoryUsage > 0 ?
+        ((stageOptimization.originalMemoryUsage - stageOptimization.anticipatedPeakMemoryUsage) / 
+         stageOptimization.originalMemoryUsage) * 100 : 0);
+  }
+  
+  // Merge results
+  LOG_TRACE_WITH_INFO("Merging %zu stage optimization results", stageOptimizations.size());
+  auto mergedOutput = mergeOptimizationOutputs(stageOptimizations);
+  
+  LOG_TRACE_WITH_INFO("Overall - Original: %.2f MB, Optimized: %.2f MB, Reduction: %.1f%%",
+    mergedOutput.originalMemoryUsage,
+    mergedOutput.anticipatedPeakMemoryUsage,
+    mergedOutput.originalMemoryUsage > 0 ?
+      ((mergedOutput.originalMemoryUsage - mergedOutput.anticipatedPeakMemoryUsage) / 
+       mergedOutput.originalMemoryUsage) * 100 : 0);
+  
+  return mergedOutput;
 }
 
 }  // namespace memopt

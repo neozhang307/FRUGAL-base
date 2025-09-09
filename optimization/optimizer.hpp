@@ -6,6 +6,7 @@
 
 #include "optimizationInput.hpp"
 #include "optimizationOutput.hpp"
+#include "taskManager_v2.hpp"
 
 namespace memopt {
 
@@ -31,6 +32,22 @@ class Optimizer {
 
   // Warning: the graph is executed once during profiling.
   OptimizationOutput profileAndOptimize(cudaGraph_t originalGraph);
+  
+  // Profile and optimize stage-by-stage with task execution order
+  OptimizationOutput profileAndOptimizeStaged(
+    TaskManager_v2& taskManager,
+    const std::vector<std::vector<TaskId>>& stageTaskIds,
+    cudaStream_t stream = nullptr
+  );
+  
+  // Profile and optimize pre-constructed stage graphs
+  OptimizationOutput profileAndOptimizeStaged(
+    const std::vector<cudaGraph_t>& stageGraphs,
+    bool enablePipelining = false
+  );
+  
+  // Merges multiple optimization outputs from different stages
+  OptimizationOutput mergeOptimizationOutputs(std::vector<OptimizationOutput> &optimizationOutputs);
 
  protected:
   Optimizer() = default;
@@ -42,6 +59,13 @@ class Optimizer {
     Strategy strategyInstance;
     return strategyInstance.run(optimizationInput);
   }
+  
+  // Helper functions for stage-based profiling
+  size_t estimateStageMemoryRequirement(
+    TaskManager_v2& taskManager,
+    const std::vector<TaskId>& stageTasks);
+  
+  bool checkMemoryCapacity(size_t requiredMemory, bool hasUM = false);
 };
 
 }  // namespace memopt

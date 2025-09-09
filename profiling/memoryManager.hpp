@@ -448,6 +448,48 @@ public:
   const std::vector<MemoryArrayInfo>& getMemoryArrayInfos() const;
   size_t getMemoryArrayInfosSize() const;
   
+  // Stage management APIs for incremental profiling
+  /**
+   * @brief Prepare a stage by fetching required data from CPU to GPU
+   * 
+   * This function is called before profiling/executing a stage to ensure
+   * all required data is available on GPU. It moves data from CPU/storage
+   * to GPU memory for the arrays needed by this stage.
+   * 
+   * @param stageId The stage identifier
+   * @param requiredArrays Set of array pointers needed for this stage
+   * @param stream CUDA stream for async operations
+   * @return True if preparation succeeded, false otherwise
+   */
+  bool prepareStage(size_t stageId, const std::set<void*>& requiredArrays, cudaStream_t stream = 0);
+  
+  /**
+   * @brief Finalize a stage by offloading data from GPU to CPU
+   * 
+   * This function is called after profiling/executing a stage to free up
+   * GPU memory. It moves modified data back to CPU/storage and optionally
+   * frees GPU memory for arrays that won't be needed in future stages.
+   * 
+   * @param stageId The stage identifier
+   * @param modifiedArrays Set of array pointers that were modified
+   * @param arraysToKeep Set of arrays to keep on GPU for next stage (optional)
+   * @param stream CUDA stream for async operations
+   * @return True if finalization succeeded, false otherwise
+   */
+  bool finalizeStage(size_t stageId, const std::set<void*>& modifiedArrays, 
+                     const std::set<void*>& arraysToKeep = {}, cudaStream_t stream = 0);
+  
+  /**
+   * @brief Check if a stage's memory requirements fit in GPU
+   * 
+   * This function estimates whether the arrays required for a stage
+   * will fit in available GPU memory.
+   * 
+   * @param requiredArrays Set of array pointers needed for the stage
+   * @return True if stage fits in GPU memory, false otherwise
+   */
+  bool checkStageMemoryRequirement(const std::set<void*>& requiredArrays) const;
+  
   /**
    * @brief Find array ID for a given memory address using the memoryArrayInfos structure
    * 

@@ -12,6 +12,28 @@ OptimizationOutput profileAndOptimize(cudaGraph_t originalGraph) {
   return Optimizer::getInstance()->profileAndOptimize(originalGraph);
 }
 
+OptimizationOutput profileAndOptimizeStaged(
+  TaskManager_v2& taskManager,
+  const std::vector<std::vector<TaskId>>& stageTaskIds,
+  cudaStream_t stream
+) {
+  LOG_TRACE();
+  return Optimizer::getInstance()->profileAndOptimizeStaged(taskManager, stageTaskIds, stream);
+}
+
+OptimizationOutput profileAndOptimizeStaged(
+  const std::vector<cudaGraph_t>& stageGraphs,
+  bool enablePipelining
+) {
+  LOG_TRACE();
+  return Optimizer::getInstance()->profileAndOptimizeStaged(stageGraphs, enablePipelining);
+}
+
+OptimizationOutput mergeOptimizationOutputs(std::vector<OptimizationOutput> &optimizationOutputs) {
+  LOG_TRACE();
+  return Optimizer::getInstance()->mergeOptimizationOutputs(optimizationOutputs);
+}
+
 void executeOptimizedGraph(
   OptimizationOutput &optimizedGraph,
   ExecuteRandomTask executeRandomTask,

@@ -1,4 +1,5 @@
 #include "memoryManager.hpp"
+#include "../utilities/logger.hpp"
 
 namespace memopt {
 
@@ -409,5 +410,116 @@ void updateManagedMemoryAddress(const std::map<void *, void *> oldAddressToNewAd
 // getConsumedGPUMemory
 // releaseDummyMemory
 // claimNecessaryMemory
+
+// Stage management APIs for incremental profiling
+bool MemoryManager::prepareStage(size_t stageId, const std::set<void*>& requiredArrays, cudaStream_t stream) {
+  LOG_TRACE_WITH_INFO("Preparing stage %zu with %zu required arrays", stageId, requiredArrays.size());
+  
+  // For each required array, fetch from storage to GPU if needed
+  for (void* addr : requiredArrays) {
+    ArrayId arrayId = getArrayId(addr);
+    if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+      LOG_TRACE_WITH_INFO("Warning: Array %p not found in registry", addr);
+      continue;
+    }
+    
+    auto& arrayInfo = memoryArrayInfos[arrayId];
+    
+    // If data is in storage, fetch it to GPU
+    if (arrayInfo.storageAddress != nullptr && arrayInfo.deviceAddress == nullptr) {
+      // Allocate GPU memory if not already allocated
+      if (arrayInfo.deviceAddress == nullptr) {
+        checkCudaErrors(cudaMalloc(&arrayInfo.deviceAddress, arrayInfo.size));
+      }
+      
+      // Copy from storage to device
+      checkCudaErrors(cudaMemcpyAsync(arrayInfo.deviceAddress, arrayInfo.storageAddress, 
+                                       arrayInfo.size, storageConfig.prefetchMemcpyKind, stream));
+      
+      LOG_TRACE_WITH_INFO("Fetched array %p (%.2f MB) from storage to GPU", 
+                          addr, arrayInfo.size / (1024.0 * 1024.0));
+    }
+  }
+  
+  if (stream) {
+    checkCudaErrors(cudaStreamSynchronize(stream));
+  }
+  
+  return true;
+}
+
+bool MemoryManager::finalizeStage(size_t stageId, const std::set<void*>& modifiedArrays, 
+                                  const std::set<void*>& arraysToKeep, cudaStream_t stream) {
+  LOG_TRACE_WITH_INFO("Finalizing stage %zu with %zu modified arrays", stageId, modifiedArrays.size());
+  
+  // For each modified array, offload from GPU to storage
+  for (void* addr : modifiedArrays) {
+    // Skip if we need to keep this array for next stage
+    if (arraysToKeep.count(addr) > 0) {
+      continue;
+    }
+    
+    ArrayId arrayId = getArrayId(addr);
+    if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+      continue;
+    }
+    
+    auto& arrayInfo = memoryArrayInfos[arrayId];
+    
+    // If data is on GPU, offload it to storage
+    if (arrayInfo.deviceAddress != nullptr) {
+      // Allocate storage if not already allocated
+      if (arrayInfo.storageAddress == nullptr) {
+        arrayInfo.storageAddress = allocateInStorage(addr, storageConfig.storageDeviceId, 
+                                                     storageConfig.useNvlink);
+      }
+      
+      // Copy from device to storage
+      if (arrayInfo.storageAddress != nullptr) {
+        checkCudaErrors(cudaMemcpyAsync(arrayInfo.storageAddress, arrayInfo.deviceAddress,
+                                         arrayInfo.size, storageConfig.offloadMemcpyKind, stream));
+        
+        LOG_TRACE_WITH_INFO("Offloaded array %p (%.2f MB) from GPU to storage", 
+                            addr, arrayInfo.size / (1024.0 * 1024.0));
+      }
+      
+      // Free GPU memory to save space
+      if (arraysToKeep.count(addr) == 0) {
+        checkCudaErrors(cudaFree(arrayInfo.deviceAddress));
+        arrayInfo.deviceAddress = nullptr;
+      }
+    }
+  }
+  
+  if (stream) {
+    checkCudaErrors(cudaStreamSynchronize(stream));
+  }
+  
+  return true;
+}
+
+bool MemoryManager::checkStageMemoryRequirement(const std::set<void*>& requiredArrays) const {
+  size_t totalRequired = 0;
+  
+  for (void* addr : requiredArrays) {
+    ArrayId arrayId = getArrayId(addr);
+    if (arrayId >= 0 && arrayId < memoryArrayInfos.size()) {
+      totalRequired += memoryArrayInfos[arrayId].size;
+    }
+  }
+  
+  size_t freeMem, totalMem;
+  checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+  
+  const double SAFETY_FACTOR = 0.9;
+  bool fits = totalRequired <= (freeMem * SAFETY_FACTOR);
+  
+  LOG_TRACE_WITH_INFO("Stage requires %.2f MB, GPU has %.2f MB free - %s",
+                      totalRequired / (1024.0 * 1024.0),
+                      freeMem / (1024.0 * 1024.0),
+                      fits ? "FITS" : "DOES NOT FIT");
+  
+  return fits;
+}
 
 } // namespace memopt
