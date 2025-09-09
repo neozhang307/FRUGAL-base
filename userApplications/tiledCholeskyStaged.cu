@@ -4,11 +4,13 @@
 #include <curand.h>
 #include <cusolverDn.h>
 #include <fmt/core.h>
+#include <omp.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
@@ -57,56 +59,104 @@ __global__ void addIdenticalMatrix(double *d_matrix, size_t n) {
 }
 
 void generateRandomSymmetricPositiveDefiniteMatrix(double *h_A, const size_t n) {
-  double *d_A;
-  checkCudaErrors(cudaMalloc(&d_A, n * n * sizeof(double)));
+  size_t matrixSize = n * n * sizeof(double);
+  size_t freeMem, totalMem;
+  checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+  
+  // Check if matrix fits in GPU memory with safety margin
+  const double SAFETY_FACTOR = 0.8;
+  bool useGPU = (matrixSize < freeMem * SAFETY_FACTOR);
+  
+  if (useGPU) {
+    // Original GPU implementation for small matrices
+    fmt::print("Generating {}x{} matrix on GPU (%.2f MB)\n", n, n, matrixSize / (1024.0 * 1024.0));
+    double *d_A;
+    checkCudaErrors(cudaMalloc(&d_A, matrixSize));
 
-  curandGenerator_t prng;
-  curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
-  curandSetPseudoRandomGeneratorSeed(prng, (unsigned long long)clock());
-  curandGenerateUniformDouble(prng, d_A, n * n);
+    curandGenerator_t prng;
+    curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
+    curandSetPseudoRandomGeneratorSeed(prng, (unsigned long long)clock());
+    curandGenerateUniformDouble(prng, d_A, n * n);
 
-  size_t numThreads = 1024;
-  size_t numBlocks = (n * n + numThreads - 1) / numThreads;
-  makeMatrixSymmetric<<<numBlocks, numThreads>>>(d_A, n);
+    size_t numThreads = 1024;
+    size_t numBlocks = (n * n + numThreads - 1) / numThreads;
+    makeMatrixSymmetric<<<numBlocks, numThreads>>>(d_A, n);
 
-  numThreads = 1024;
-  numBlocks = (n + numThreads - 1) / numThreads;
-  addIdenticalMatrix<<<numBlocks, numThreads>>>(d_A, n);
+    numThreads = 1024;
+    numBlocks = (n + numThreads - 1) / numThreads;
+    addIdenticalMatrix<<<numBlocks, numThreads>>>(d_A, n);
 
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaMemcpy(h_A, d_A, n * n * sizeof(double), cudaMemcpyDefault));
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaFree(d_A));
-  curandDestroyGenerator(prng);
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaMemcpy(h_A, d_A, n * n * sizeof(double), cudaMemcpyDefault));
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaFree(d_A));
+    curandDestroyGenerator(prng);
+  } else {
+    // CPU + OpenMP implementation for large matrices
+    fmt::print("Generating {}x{} matrix on CPU with OpenMP (%.2f MB exceeds GPU memory)\n", 
+               n, n, matrixSize / (1024.0 * 1024.0));
+    
+    // Use standard random with thread-safe generation
+    std::srand(std::time(nullptr));
+    
+    // Generate random values with OpenMP parallelization
+    #pragma omp parallel for collapse(2)
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = 0; j < n; j++) {
+        // Thread-safe random generation
+        unsigned int seed = i * n + j + omp_get_thread_num();
+        h_A[i * n + j] = (double)rand_r(&seed) / RAND_MAX;
+      }
+    }
+    
+    // Make symmetric
+    #pragma omp parallel for
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = i + 1; j < n; j++) {
+        double avg = 0.5 * (h_A[i * n + j] + h_A[j * n + i]);
+        h_A[i * n + j] = avg;
+        h_A[j * n + i] = avg;
+      }
+    }
+    
+    // Add identity scaled by n to ensure positive definiteness
+    #pragma omp parallel for
+    for (size_t i = 0; i < n; i++) {
+      h_A[i * n + i] += n;
+    }
+  }
 }
 
-void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_tiles) {
-  fmt::print("Initializing device data for {} tiles with {}x{} matrix\n", d_tiles.size(), N, N);
+void initializeDataOnCPU(double *h_originalMatrix, std::vector<double *> &d_tiles) {
+  fmt::print("Initializing data on CPU side for {} tiles with {}x{} matrix\n", d_tiles.size(), N, N);
+  
+  auto& memManager = MemoryManager::getInstance();
+  const size_t tileSize = B * B * sizeof(double);
+  
+  // Allocate temporary CPU buffer for a tile (using cudaMallocHost for better performance)
+  double* h_tile = nullptr;
+  checkCudaErrors(cudaMallocHost(&h_tile, tileSize));
   
   for (int i = 0; i < T; i++) {
     for (int j = 0; j < T; j++) {
+      // Copy matrix data to CPU tile buffer
       for (int k = 0; k < B; k++) {
-        auto& memManager = MemoryManager::getInstance();
-        void* srcAddress = memManager.getAddress(d_tiles[i + j * T]);
-        
-        // Handle memory manager address resolution properly
-        if (srcAddress == d_tiles[i + j * T]) {
-          srcAddress = memManager.getStoragePtr(d_tiles[i + j * T]);
-          if (srcAddress == nullptr) {
-            srcAddress = d_tiles[i + j * T];
-          }
-        }
-
-        checkCudaErrors(cudaMemcpy(
-          (char*)srcAddress + B * k * sizeof(double),
+        memcpy(
+          h_tile + B * k,
           h_originalMatrix + N * (j * B + k) + B * i,
-          B * sizeof(double),
-          cudaMemcpyDefault
-        ));
+          B * sizeof(double)
+        );
+      }
+      
+      // Copy CPU buffer to managed memory (will go to storage since device was freed)
+      if (!memManager.copyHostToManagedMemory(d_tiles[i + j * T], h_tile)) {
+        fmt::print("ERROR: Failed to copy tile [{},{}] to managed memory\n", i, j);
       }
     }
   }
-  checkCudaErrors(cudaDeviceSynchronize());
+  
+  checkCudaErrors(cudaFreeHost(h_tile));
+  fmt::print("CPU initialization complete - all data in storage\n");
 }
 
 // Simplified structural verification
@@ -172,7 +222,7 @@ void tiledCholeskyMemoryOptimized() {
   checkCudaErrors(cudaMallocHost(&h_matrix, N * N * sizeof(double)));
   generateRandomSymmetricPositiveDefiniteMatrix(h_matrix, N);
   
-  // Allocate GPU tiles
+  // Allocate GPU tiles and immediately move to storage for out-of-core computation
   std::vector<double*> d_tiles;
   auto& memManager = MemoryManager::getInstance();
   
@@ -180,15 +230,22 @@ void tiledCholeskyMemoryOptimized() {
     return d_tiles[i + j * T];
   };
   
+  fmt::print("Allocating tiles and moving to CPU storage for out-of-core computation...\n");
   for (int i = 0; i < T * T; i++) {
     double *d_tile;
+    // 1. Allocate GPU pointer (just a handle)
     checkCudaErrors(cudaMalloc(&d_tile, tileSize));
     d_tiles.push_back(d_tile);
+    
+    // 2. Register with MemoryManager
     memManager.registerManagedMemoryAddress(d_tile, tileSize);
+    
+    // 3. Immediately offload to storage (this frees GPU memory)
+    memManager.offloadToStorage(d_tile);
   }
   
   double totalManagedMemoryMB = memManager.GetMemoryManagedSizeInMB();
-  fmt::print("Total managed memory: {:.2f} MB\n", totalManagedMemoryMB);
+  fmt::print("Total managed memory: {:.2f} MB (all in CPU storage)\n", totalManagedMemoryMB);
 
   // CUDA library setup
   cusolverDnHandle_t cusolverDnHandle;
@@ -334,8 +391,8 @@ void tiledCholeskyMemoryOptimized() {
   double initialPeakMemory = memManager.GetMemoryManagedSizeInMB();
   fmt::print("Initial peak memory: {:.2f} MB\n", initialPeakMemory);
   
-  // Initialize data before optimization 
-  initializeDeviceData(h_matrix, d_tiles);
+  // Initialize data on CPU before profiling (all data is in storage)
+  initializeDataOnCPU(h_matrix, d_tiles);
   
   // Use staged profiling and optimization
   fmt::print("Using staged profiling and optimization with {} stages...\n", T);
@@ -346,19 +403,11 @@ void tiledCholeskyMemoryOptimized() {
   fmt::print("Memory reduction: {:.2f} MiB ({:.1f}%)\n", 
              optimizedGraph.originalMemoryUsage - optimizedGraph.anticipatedPeakMemoryUsage,
              ((optimizedGraph.originalMemoryUsage - optimizedGraph.anticipatedPeakMemoryUsage) / optimizedGraph.originalMemoryUsage) * 100);
-
-  // Move all data to storage before execution (required for optimized execution)
-  fmt::print("Moving all data to storage for optimized execution...\n");
-  memManager.offloadAllManagedMemoryToStorage();
-  fmt::print("✅ All data moved to CPU/storage\n");
   
   // =========================================================================
   // PHASE 3: EXECUTE WITH OPTIMIZED MEMORY
   // =========================================================================
   fmt::print("\n--- PHASE 3: Execute with Optimized Memory ---\n");
-  
-  // Reinitialize data after optimization
-  initializeDeviceData(h_matrix, d_tiles);
   
   // Get current GPU memory info
   size_t free_mem, total_mem;

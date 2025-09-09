@@ -491,6 +491,30 @@ public:
   bool checkStageMemoryRequirement(const std::set<void*>& requiredArrays) const;
   
   /**
+   * @brief Copy host data to managed memory (device if available, otherwise storage)
+   * 
+   * This function copies data from a host buffer to the managed memory.
+   * If device pointer is available, copies to device. Otherwise copies to storage.
+   * The size is determined from the managed memory registration.
+   * 
+   * @param managedMemoryAddress The managed memory address
+   * @param hostData Host buffer containing the data to copy
+   * @return True if copy succeeded, false otherwise
+   */
+  bool copyHostToManagedMemory(void* managedMemoryAddress, void* hostData);
+  
+  /**
+   * @brief Simple offload API for users - moves data from GPU to storage
+   * 
+   * This function offloads data from device memory to storage (CPU or secondary GPU)
+   * and frees the device memory. Uses internal storage configuration settings.
+   * 
+   * @param managedMemoryAddress The managed memory address to offload
+   * @return True if offload succeeded, false otherwise
+   */
+  bool offloadToStorage(void* managedMemoryAddress);
+  
+  /**
    * @brief Find array ID for a given memory address using the memoryArrayInfos structure
    * 
    * This method replaces the lookup in managedMemoryAddressToIndexMap with a search

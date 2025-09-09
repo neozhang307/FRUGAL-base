@@ -522,4 +522,56 @@ bool MemoryManager::checkStageMemoryRequirement(const std::set<void*>& requiredA
   return fits;
 }
 
+bool MemoryManager::copyHostToManagedMemory(void* managedMemoryAddress, void* hostData) {
+  ArrayId arrayId = getArrayId(managedMemoryAddress);
+  if (arrayId < 0 || arrayId >= memoryArrayInfos.size()) {
+    LOG_TRACE_WITH_INFO("Error: Managed address %p not found in registry", managedMemoryAddress);
+    return false;
+  }
+  
+  auto& arrayInfo = memoryArrayInfos[arrayId];
+  size_t size = arrayInfo.size;
+  
+  // Check current state - either device or storage should be non-null, not both
+  if (arrayInfo.deviceAddress != nullptr) {
+    // Data is currently on GPU - copy to device
+    checkCudaErrors(cudaMemcpy(arrayInfo.deviceAddress, hostData, size, cudaMemcpyHostToDevice));
+    LOG_TRACE_WITH_INFO("Copied %.2f MB to device address %p", 
+                        size / (1024.0 * 1024.0), arrayInfo.deviceAddress);
+  } 
+  else if (arrayInfo.storageAddress != nullptr) {
+    // Data is currently in storage - copy to storage
+    memcpy(arrayInfo.storageAddress, hostData, size);
+    LOG_TRACE_WITH_INFO("Copied %.2f MB to storage address %p", 
+                        size / (1024.0 * 1024.0), arrayInfo.storageAddress);
+  }
+  else {
+    // Neither device nor storage is allocated - this shouldn't happen after registration
+    // For safety, allocate storage and copy there
+    LOG_TRACE_WITH_INFO("Warning: Neither device nor storage allocated for %p, allocating storage", 
+                        managedMemoryAddress);
+    arrayInfo.storageAddress = allocateInStorage(managedMemoryAddress, 
+                                                 storageConfig.storageDeviceId, 
+                                                 storageConfig.useNvlink);
+    if (arrayInfo.storageAddress == nullptr) {
+      LOG_TRACE_WITH_INFO("Error: Failed to allocate storage for %p", managedMemoryAddress);
+      return false;
+    }
+    memcpy(arrayInfo.storageAddress, hostData, size);
+    LOG_TRACE_WITH_INFO("Copied %.2f MB to newly allocated storage %p", 
+                        size / (1024.0 * 1024.0), arrayInfo.storageAddress);
+  }
+  
+  return true;
+}
+
+bool MemoryManager::offloadToStorage(void* managedMemoryAddress) {
+  // Simply call the internal API with default parameters from storageConfig
+  offloadToStorage(managedMemoryAddress, 
+                   storageConfig.storageDeviceId, 
+                   storageConfig.useNvlink, 
+                   nullptr);  // Default stream
+  return true;  // The internal API doesn't return bool, so we assume success
+}
+
 } // namespace memopt
