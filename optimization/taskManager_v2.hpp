@@ -588,6 +588,34 @@ public:
     }
     
     /**
+     * @brief Get input arrays for a task
+     * 
+     * @param taskId Task ID
+     * @return Vector of input pointers
+     */
+    std::vector<void*> getTaskInputs(TaskId taskId) const {
+        auto it = tasks.find(taskId);
+        if (it != tasks.end()) {
+            return it->second.inputs;
+        }
+        return {};
+    }
+    
+    /**
+     * @brief Get output arrays for a task
+     * 
+     * @param taskId Task ID
+     * @return Vector of output pointers
+     */
+    std::vector<void*> getTaskOutputs(TaskId taskId) const {
+        auto it = tasks.find(taskId);
+        if (it != tasks.end()) {
+            return it->second.outputs;
+        }
+        return {};
+    }
+    
+    /**
      * @brief Get all registered task IDs
      * 
      * @return Vector of task IDs

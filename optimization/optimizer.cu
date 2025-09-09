@@ -1295,35 +1295,9 @@ OptimizationOutput Optimizer::profileAndOptimizeStaged(
     createdStream = true;
   }
   
-  // Phase 0: Pre-check memory requirements for all stages
-  LOG_TRACE_WITH_INFO("Pre-checking memory requirements for %zu stages", stageTaskIds.size());
   auto& memManager = MemoryManager::getInstance();
   
-  for (size_t i = 0; i < stageTaskIds.size(); i++) {
-    size_t stageMemReq = estimateStageMemoryRequirement(taskManager, stageTaskIds[i]);
-    LOG_TRACE_WITH_INFO("Stage %zu requires %.2f MB", i, stageMemReq / (1024.0 * 1024.0));
-    
-    if (!checkMemoryCapacity(stageMemReq, false)) {
-      size_t freeMem, totalMem;
-      checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
-      
-      LOG_TRACE_WITH_INFO("ERROR: Stage %zu requires %.2f GB but only %.2f GB available", 
-                i, stageMemReq/1e9, (freeMem * 0.9)/1e9);
-      
-      if (createdStream) {
-        cudaStreamDestroy(workStream);
-      }
-      
-      throw std::runtime_error(
-        "Stage " + std::to_string(i) + " exceeds GPU memory capacity. " +
-        "Required: " + std::to_string(stageMemReq/1e9) + " GB, " +
-        "Available: " + std::to_string((freeMem * 0.9)/1e9) + " GB. " +
-        "Consider adding more stage separators to reduce per-stage memory."
-      );
-    }
-  }
-  
-  // Phase 1: Construct and profile all stages
+  // Phase 1: Construct and profile all stages with memory management
   std::vector<cudaGraph_t> stageGraphs;
   std::vector<OptimizationOutput> stageOptimizations;
   
@@ -1332,6 +1306,54 @@ OptimizationOutput Optimizer::profileAndOptimizeStaged(
   for (size_t stageIdx = 0; stageIdx < stageTaskIds.size(); stageIdx++) {
     const auto& stageTasks = stageTaskIds[stageIdx];
     LOG_TRACE_WITH_INFO("Processing stage %zu with %zu tasks", stageIdx, stageTasks.size());
+    
+    // Collect arrays needed for this stage by analyzing task inputs/outputs
+    std::set<void*> requiredArrays;
+    std::set<void*> modifiedArrays;
+    
+    // Get input and output arrays for all tasks in this stage
+    for (TaskId taskId : stageTasks) {
+      auto inputs = taskManager.getTaskInputs(taskId);
+      auto outputs = taskManager.getTaskOutputs(taskId);
+      
+      requiredArrays.insert(inputs.begin(), inputs.end());
+      requiredArrays.insert(outputs.begin(), outputs.end());
+      modifiedArrays.insert(outputs.begin(), outputs.end());
+    }
+    
+    LOG_TRACE_WITH_INFO("Stage %zu requires %zu arrays, modifies %zu arrays", 
+                        stageIdx, requiredArrays.size(), modifiedArrays.size());
+    
+    // Check if stage memory requirements fit in GPU
+    if (!memManager.checkStageMemoryRequirement(requiredArrays)) {
+      size_t freeMem, totalMem;
+      checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+      
+      // Calculate actual requirement
+      size_t totalRequired = 0;
+      for (void* addr : requiredArrays) {
+        ArrayId arrayId = memManager.getArrayId(addr);
+        if (arrayId >= 0) {
+          totalRequired += memManager.getMemoryArrayInfos()[arrayId].size;
+        }
+      }
+      
+      if (createdStream) {
+        cudaStreamDestroy(workStream);
+      }
+      
+      throw std::runtime_error(
+        "Stage " + std::to_string(stageIdx) + " exceeds GPU memory capacity. " +
+        "Required: " + std::to_string(totalRequired/1e9) + " GB for " + 
+        std::to_string(requiredArrays.size()) + " arrays, " +
+        "Available: " + std::to_string((freeMem * 0.9)/1e9) + " GB. " +
+        "Please add more stage separators to reduce per-stage memory requirement."
+      );
+    }
+    
+    // Prepare stage: fetch required data from CPU to GPU
+    LOG_TRACE_WITH_INFO("Fetching data to GPU for stage %zu", stageIdx);
+    memManager.prepareStage(stageIdx, requiredArrays, workStream);
     
     // Construct subgraph for this stage
     cudaGraph_t stageGraph;
@@ -1348,13 +1370,14 @@ OptimizationOutput Optimizer::profileAndOptimizeStaged(
     // End capture
     checkCudaErrors(cudaStreamEndCapture(workStream, &stageGraph));
     
-    // TODO: Call memManager.prepareStage() to fetch required data to GPU
-    // TODO: Call memManager.finalizeStage() after stage execution to offload data
-    
     // Profile and optimize this stage
     LOG_TRACE_WITH_INFO("Profiling and optimizing stage %zu", stageIdx);
     auto stageOptimization = profileAndOptimize(stageGraph);
     stageOptimizations.push_back(stageOptimization);
+    
+    // Finalize stage: offload ALL data to CPU to free GPU memory completely
+    LOG_TRACE_WITH_INFO("Offloading ALL data to CPU after stage %zu", stageIdx);
+    memManager.finalizeStage(stageIdx, requiredArrays, {}, workStream);  // Pass all arrays, keep none
     
     LOG_TRACE_WITH_INFO("Stage %zu - Original: %.2f MB, Optimized: %.2f MB, Reduction: %.1f%%",
       stageIdx,
