@@ -102,7 +102,13 @@ std::vector<cudaGraphNode_t> Executor::handleDataMovementNode(
   }
   
   // Perform the appropriate data movement operation
-  if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
+  if (dataMovement.arrayId == -1) {
+    // Special case: offload ALL arrays to storage (used between stages)
+    if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+      LOG_TRACE_WITH_INFO("[VERBOSE] Offloading ALL arrays to storage between stages");
+    }
+    memManager.offloadRemainedManagedMemoryToStorageAsync(stream);
+  } else if (dataMovement.direction == OptimizationOutput::DataMovement::Direction::hostToDevice) {
     memManager.prefetchToDeviceAsync(dataMovement.arrayId, stream);
   } else {
     memManager.offloadFromDeviceAsync(dataMovement.arrayId, stream);

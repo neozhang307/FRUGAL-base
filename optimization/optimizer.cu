@@ -949,9 +949,23 @@ OptimizationOutput Optimizer::mergeOptimizationOutputs(std::vector<OptimizationO
       }
     }
 
-    mergedOptimizationOutput.addEdge(globalLastNodeIndex, rootNodeIndex + globalNodeIndexOffset);
+    // Add offload node between stages to move all data to CPU
+    int offloadNodeId = globalNodeIndexOffset + output.nodes.size();
+    mergedOptimizationOutput.nodes.push_back(offloadNodeId);
+    mergedOptimizationOutput.nodeIdToNodeTypeMap[offloadNodeId] = OptimizationOutput::NodeType::dataMovement;
+    
+    // Create offload data movement for ALL arrays (offload everything to CPU)
+    OptimizationOutput::DataMovement offloadMovement;
+    offloadMovement.direction = OptimizationOutput::DataMovement::Direction::deviceToHost;
+    offloadMovement.arrayId = -1; // Special value to indicate "offload all"
+    mergedOptimizationOutput.nodeIdToDataMovementMap[offloadNodeId] = offloadMovement;
+    
+    // Connect: lastStageNode -> offloadNode -> nextStageRoot
+    mergedOptimizationOutput.addEdge(globalLastNodeIndex, offloadNodeId);
+    mergedOptimizationOutput.addEdge(offloadNodeId, rootNodeIndex + globalNodeIndexOffset);
+    
     globalLastNodeIndex = lastNodeIndex + globalNodeIndexOffset;
-    globalNodeIndexOffset += output.nodes.size();
+    globalNodeIndexOffset += output.nodes.size() + 1; // +1 for the offload node
   }
 
   mergedOptimizationOutput.arraysInitiallyAllocatedOnDevice.clear();
