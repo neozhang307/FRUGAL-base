@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <chrono>
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
@@ -394,9 +395,16 @@ void tiledCholeskyMemoryOptimized() {
   // Initialize data on CPU before profiling (all data is in storage)
   initializeDataOnCPU(h_matrix, d_tiles);
   
-  // Use staged profiling and optimization
+  // Use staged profiling and optimization with timing
   fmt::print("Using staged profiling and optimization with {} stages...\n", T);
+  
+  // Measure profiling time
+  auto profileStartTime = std::chrono::high_resolution_clock::now();
   auto optimizedGraph = profileAndOptimizeStaged(tmanager_v2, stageTaskIds, s);
+  auto profileEndTime = std::chrono::high_resolution_clock::now();
+  
+  double profilingTimeMs = std::chrono::duration_cast<std::chrono::microseconds>(profileEndTime - profileStartTime).count() / 1000.0;
+  fmt::print("⏱️  Profiling time: {:.3f} ms\n", profilingTimeMs);
   
   fmt::print("Original peak memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
   fmt::print("Optimized peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
@@ -420,7 +428,8 @@ void tiledCholeskyMemoryOptimized() {
   PeakMemoryUsageProfiler peakProfiler(10); // Sample every 10ms
   peakProfiler.start();
   
-  // Run the optimized graph
+  // Run the optimized graph with detailed timing
+  auto execStartTime = std::chrono::high_resolution_clock::now();
   float runningTime;
   executeOptimizedGraph(
     optimizedGraph,
@@ -430,14 +439,36 @@ void tiledCholeskyMemoryOptimized() {
     runningTime,
     memManager
   );
+  auto execEndTime = std::chrono::high_resolution_clock::now();
   
   // Get peak memory usage
   size_t peakMemoryBytes = peakProfiler.end();
   double peakMemoryMB = (double)peakMemoryBytes / (1024.0 * 1024.0);
   
+  // Calculate execution time from chrono for consistency
+  double executionTimeMs = std::chrono::duration_cast<std::chrono::microseconds>(execEndTime - execStartTime).count() / 1000.0;
+  
   fmt::print("✅ Optimized execution completed!\n");
-  fmt::print("Execution time: {:.3f} ms\n", runningTime * 1000.0f);
+  fmt::print("⏱️  Execution time (from graph): {:.3f} ms\n", runningTime * 1000.0f);
+  fmt::print("⏱️  Execution time (wallclock): {:.3f} ms\n", executionTimeMs);
   fmt::print("📊 Peak GPU memory usage during execution: {:.2f} MB\n", peakMemoryMB);
+  
+  // Calculate FLOPS for tiled Cholesky decomposition
+  // For Cholesky decomposition of an N×N matrix:
+  // Theoretical FLOP count = N^3/3 + O(N^2) operations
+  // We use N^3/3 as the primary term for large N
+  double flopCount = (double)N * N * N / 3.0;
+  double executionTimeSec = executionTimeMs / 1000.0;
+  double gflops = (flopCount / 1e9) / executionTimeSec;
+  
+  fmt::print("\n📊 === Performance Metrics ===\n");
+  fmt::print("Matrix size: {}×{}\n", N, N);
+  fmt::print("Total FLOP count: {:.2e}\n", flopCount);
+  fmt::print("Performance: {:.2f} GFLOPS\n", gflops);
+  fmt::print("\n⏱️  === Timing Summary ===\n");
+  fmt::print("Profiling time: {:.3f} ms\n", profilingTimeMs);
+  fmt::print("Execution time: {:.3f} ms\n", executionTimeMs);
+  fmt::print("Total time: {:.3f} ms\n", profilingTimeMs + executionTimeMs);
   
   // Verify results
   bool result = verifyCholeskyDecompositionPartially(h_matrix, d_tiles);
