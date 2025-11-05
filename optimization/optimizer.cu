@@ -1070,9 +1070,19 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
   ScopeGuard scopeGuard([]() -> void { cleanUpDummyKernelFuncHandleRegistrations(); });
 
   //---------- PROFILING PHASE ----------
+  SystemWallClock profilingClock;
+  profilingClock.start();
   
   // Execute the graph once to capture its execution timeline
   auto timeline = getCudaGraphExecutionTimeline(originalGraph);
+  
+  profilingClock.end();
+  LOG_TRACE_WITH_INFO("Profiling phase completed in %.3f seconds", profilingClock.getTimeInSeconds());
+  printf("[TIMING] Profiling phase: %.3f seconds\n", profilingClock.getTimeInSeconds());
+
+  //---------- GRAPH ANALYSIS PHASE ----------
+  SystemWallClock graphAnalysisClock;
+  graphAnalysisClock.start();
 
   // Extract the graph structure (nodes and edges)
   std::vector<cudaGraphNode_t> nodes;
@@ -1176,7 +1186,14 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     mapNodeToStage(originalGraph, edges, nodeToStageIndexMap);
   }
 
+  // Complete graph analysis timing
+  graphAnalysisClock.end();
+  LOG_TRACE_WITH_INFO("Graph analysis phase completed in %.3f seconds", graphAnalysisClock.getTimeInSeconds());
+  printf("[TIMING] Graph analysis phase: %.3f seconds\n", graphAnalysisClock.getTimeInSeconds());
+
   //---------- OPTIMIZATION PHASE ----------
+  SystemWallClock optimizationClock;
+  optimizationClock.start();
   
   if (hasOnlyOneStage) {
     /**
@@ -1206,6 +1223,19 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     if (optimizationOutput.optimal) {
       // Save the plan to file for potential reuse in future runs
       writeOptimizationOutputToFile(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+      
+      optimizationClock.end();
+      LOG_TRACE_WITH_INFO("Optimization phase completed in %.3f seconds", optimizationClock.getTimeInSeconds());
+      printf("[TIMING] Optimization phase: %.3f seconds\n", optimizationClock.getTimeInSeconds());
+      
+      // Report total time
+      clock.end();
+      printf("[TIMING] Total profileAndOptimize time: %.3f seconds\n", clock.getTimeInSeconds());
+      printf("[TIMING] Breakdown - Profiling: %.3fs, Graph Analysis: %.3fs, Optimization: %.3fs\n",
+             profilingClock.getTimeInSeconds(), 
+             graphAnalysisClock.getTimeInSeconds(),
+             optimizationClock.getTimeInSeconds());
+      
       return optimizationOutput;
     } else {
       LOG_TRACE_WITH_INFO("Could not find any feasible solution");
@@ -1251,6 +1281,19 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     // This creates a unified plan that properly transitions between stages
     auto mergedOptimizationOutput = mergeOptimizationOutputs(optimizationOutputs);
     writeOptimizationOutputToFile(mergedOptimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+    
+    optimizationClock.end();
+    LOG_TRACE_WITH_INFO("Optimization phase (multi-stage) completed in %.3f seconds", optimizationClock.getTimeInSeconds());
+    printf("[TIMING] Optimization phase (multi-stage): %.3f seconds\n", optimizationClock.getTimeInSeconds());
+    
+    // Report total time for multi-stage
+    clock.end();
+    printf("[TIMING] Total profileAndOptimize time (multi-stage): %.3f seconds\n", clock.getTimeInSeconds());
+    printf("[TIMING] Breakdown - Profiling: %.3fs, Graph Analysis: %.3fs, Optimization: %.3fs\n",
+           profilingClock.getTimeInSeconds(), 
+           graphAnalysisClock.getTimeInSeconds(),
+           optimizationClock.getTimeInSeconds());
+    
     return mergedOptimizationOutput;
   }
 }

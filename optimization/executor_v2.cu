@@ -1,4 +1,5 @@
 #include <cassert>
+#include <chrono>
 #include <memory>
 #include <queue>
 
@@ -175,6 +176,10 @@ cudaGraph_t Executor::buildOptimizedGraph(
 ) {
   LOG_TRACE_WITH_INFO("Record nodes to a new CUDA Graph");
   
+  // Timing measurement for graph construction
+  std::chrono::high_resolution_clock::time_point timeStart, timeEnd;
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Create a new CUDA graph
   cudaGraph_t graph;
   checkCudaErrors(cudaGraphCreate(&graph, 0));
@@ -245,6 +250,14 @@ cudaGraph_t Executor::buildOptimizedGraph(
   LOG_TRACE_WITH_INFO("Printing the new CUDA Graph to newGraph.dot");
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "newGraph.dot", 0));
   
+  // Record end time and log if verbose
+  timeEnd = std::chrono::high_resolution_clock::now();
+  double timeConstruction = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    LOG_TRACE_WITH_INFO("[TIMING] Optimized graph construction: %.3f ms", timeConstruction);
+  }
+  
   return graph;
 }
 
@@ -267,10 +280,18 @@ cudaGraphExec_t Executor::initializeMemory(
   
   LOG_TRACE_WITH_INFO("Initialize managed data distribution");
   
+  // Timing measurements
+  std::chrono::high_resolution_clock::time_point timeStart, timeEnd;
+  double timeCapture = 0.0;
+  double timeInstantiate = 0.0;
+  
   // Configure memory manager storage
 
   // Clear current memory mappings
   // memManager.clearCurrentMappings();
+  
+  // Time graph capture
+  timeStart = std::chrono::high_resolution_clock::now();
   
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
@@ -285,10 +306,26 @@ cudaGraphExec_t Executor::initializeMemory(
   cudaGraph_t graphForInitialDataDistribution;
   checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
   
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeCapture = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
+  // Time instantiation
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Instantiate and execute the initial data distribution graph
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(
     &graphExec, graphForInitialDataDistribution, nullptr, nullptr, 0));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeInstantiate = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
+  // Log timing if verbose
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    LOG_TRACE_WITH_INFO("[TIMING] Initial data graph capture: %.3f ms", timeCapture);
+    LOG_TRACE_WITH_INFO("[TIMING] Initial data graph instantiate: %.3f ms", timeInstantiate);
+  }
+  
   checkCudaErrors(cudaGraphLaunch(graphExec, stream));
   checkCudaErrors(cudaDeviceSynchronize());
   
@@ -314,17 +351,40 @@ void Executor::executeGraph(
 ) {
   LOG_TRACE_WITH_INFO("Execute the new CUDA Graph");
   
+  // Timing measurements for instantiation and upload
+  std::chrono::high_resolution_clock::time_point timeStart, timeEnd;
+  double timeInstantiate = 0.0;
+  double timeUpload = 0.0;
+  
   // Set up profiling if requested
   PeakMemoryUsageProfiler peakMemoryUsageProfiler;
   CudaEventClock cudaEventClock;
+  
+  // Time graph instantiation
+  timeStart = std::chrono::high_resolution_clock::now();
   
   // Instantiate the graph for execution
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
   
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeInstantiate = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
+  // Time graph upload
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Upload the graph to the device for faster execution
   checkCudaErrors(cudaGraphUpload(graphExec, stream));
   checkCudaErrors(cudaStreamSynchronize(stream));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeUpload = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
+  // Log timing if verbose
+  if (ConfigurationManager::getConfig().execution.enableVerboseOutput) {
+    LOG_TRACE_WITH_INFO("[TIMING] Optimized graph instantiate: %.3f ms", timeInstantiate);
+    LOG_TRACE_WITH_INFO("[TIMING] Optimized graph upload: %.3f ms", timeUpload);
+  }
   
   // Start memory usage profiling if requested
   if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
@@ -371,6 +431,12 @@ void Executor::executeOptimizedGraph(
 ) {
   LOG_TRACE_WITH_INFO("Initialize");
   
+  // Timing measurements for overall construction phases
+  std::chrono::high_resolution_clock::time_point timeStart, timeEnd;
+  double timeInitializeMemory = 0.0;
+  double timeBuildGraph = 0.0;
+  double timeExecuteGraph = 0.0;
+  
   // Create CUDA stream
   cudaStream_t stream;
   checkCudaErrors(cudaStreamCreate(&stream));
@@ -386,15 +452,27 @@ void Executor::executeOptimizedGraph(
   // The control would automatically go back to the main device. 
   memManager.offloadAllManagedMemoryToStorage();
   fprintf(stderr, "[DEBUG] offloadAllManagedMemoryToStorage done\n");
+  
+  // Time initialize memory phase
+  timeStart = std::chrono::high_resolution_clock::now();
   cudaGraphExec_t initialDataGraphExec = initializeMemory(
     optimizedGraph, memManager, stream);
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeInitializeMemory = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
   fprintf(stderr, "[DEBUG] initializeMemory done\n");
-  // Build the optimized execution graph
+  
+  // Time build graph phase
+  timeStart = std::chrono::high_resolution_clock::now();
   cudaGraph_t graph = buildOptimizedGraph(
     optimizedGraph, executeRandomTask, memManager, stream);
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeBuildGraph = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
   
-  // Execute the optimized graph
+  // Time execute graph phase (includes instantiation, upload and execution)
+  timeStart = std::chrono::high_resolution_clock::now();
   executeGraph(graph, stream, runningTime);
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeExecuteGraph = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
   
   // Clean up resources
   LOG_TRACE_WITH_INFO("Clean up");
@@ -409,6 +487,25 @@ void Executor::executeOptimizedGraph(
   
   // Reset Storage Config
   memManager.ResetStorageConfig();
+  
+  // Log comprehensive timing summary
+  LOG_TRACE_WITH_INFO("=== CUDA Graph Construction Overhead Summary (executor_v2) ===");
+  LOG_TRACE_WITH_INFO("Initialize memory phase: %.3f ms", timeInitializeMemory);
+  LOG_TRACE_WITH_INFO("Build optimized graph phase: %.3f ms", timeBuildGraph);
+  LOG_TRACE_WITH_INFO("Execute graph phase (instantiate+upload+execute): %.3f ms", timeExecuteGraph);
+  
+  double totalConstructionOverhead = timeInitializeMemory + timeBuildGraph;
+  LOG_TRACE_WITH_INFO("Total construction overhead (CPU-side): %.3f ms", totalConstructionOverhead);
+  LOG_TRACE_WITH_INFO("Graph execution time (GPU): %.3f ms", runningTime * 1000.0);
+  
+  // Note: timeExecuteGraph includes both construction (instantiate+upload) and execution
+  // The actual GPU execution time is in runningTime
+  double instantiateAndUploadTime = timeExecuteGraph - (runningTime * 1000.0);
+  LOG_TRACE_WITH_INFO("Graph instantiate+upload time: %.3f ms", instantiateAndUploadTime);
+  
+  double totalOverhead = totalConstructionOverhead + instantiateAndUploadTime;
+  LOG_TRACE_WITH_INFO("Total overhead (all CPU-side operations): %.3f ms", totalOverhead);
+  LOG_TRACE_WITH_INFO("Construction Overhead/Execution ratio: %.2fx", totalOverhead / (runningTime * 1000.0));
 }
 
 /*

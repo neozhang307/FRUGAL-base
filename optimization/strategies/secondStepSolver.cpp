@@ -374,8 +374,12 @@ struct IntegerProgrammingSolver {
         }
       }
     }
-    LOG_TRACE_WITH_INFO(fmt::format("Lookback optimization: eliminated {}/{} ({:.1f}%) prefetch variables", 
-                        eliminatedVars, totalPrefetchVars, 100.0 * eliminatedVars / totalPrefetchVars).c_str());
+    if (ConfigurationManager::getConfig().optimization.disableLookback) {
+      LOG_TRACE_WITH_INFO("Lookback optimization: DISABLED (all prefetch variables allowed)");
+    } else {
+      LOG_TRACE_WITH_INFO(fmt::format("Lookback optimization: eliminated {}/{} ({:.1f}%) prefetch variables", 
+                          eliminatedVars, totalPrefetchVars, 100.0 * eliminatedVars / totalPrefetchVars).c_str());
+    }
     
     p.clear();
     for (int i = 0; i < numberOfTaskGroups; i++) {
@@ -388,7 +392,7 @@ struct IntegerProgrammingSolver {
         // force the variable to be 1 by setting its lower bound -> lower bound is true means forcing true
         if (shouldAllocateWithoutPrefetch[std::make_pair(i, j)]) {
           p[i][j]->SetLB(1);  // This forces p[i][j] = 1 (must prefetch)
-        } else if (!allowPrefetch[i][j]) {
+        } else if (!allowPrefetch[i][j] && !ConfigurationManager::getConfig().optimization.disableLookback) {
           // LOOKBACK OPTIMIZATION: Task i is outside the responsible range for array j
           p[i][j]->SetUB(0);  // Force p[i][j] = 0 (outside lookback window)
         } else if (i > 0) {
@@ -461,9 +465,10 @@ struct IntegerProgrammingSolver {
         // one memory operation - either prefetch it OR offload it to one destination
         // This creates a constraint: 0 <= p_ij + sum(o_ijk for all k) <= 1
         // MakeRowConstraint(0, 1) creates the bounds for this linear constraint
-        auto sumLessThanOneConstraint = solver->MakeRowConstraint(0, 1);
+        // TEMPORARILY COMMENTED OUT - This constraint is preventing valid prefetch+offload scenarios
+        // auto sumLessThanOneConstraint = solver->MakeRowConstraint(0, 1);
         // SetCoefficient(variable, coefficient) adds the term: coefficient * variable to the constraint
-        sumLessThanOneConstraint->SetCoefficient(p[i][j], 1);  // Add p_ij to the constraint with coefficient 1
+        // sumLessThanOneConstraint->SetCoefficient(p[i][j], 1);  // Add p_ij to the constraint with coefficient 1
 
         // For each possible destination task k where we might need the array again
         for (int k = 0; k < numberOfTaskGroups; k++) {
@@ -473,7 +478,8 @@ struct IntegerProgrammingSolver {
           
           // Add this offload variable to our constraint with coefficient 1
           // This builds the sum: p[i][j] + o[i][j][0] + o[i][j][1] + ... + o[i][j][k] <= 1
-          sumLessThanOneConstraint->SetCoefficient(o[i][j][k], 1);
+          // TEMPORARILY COMMENTED OUT - This constraint is preventing valid prefetch+offload scenarios
+          // sumLessThanOneConstraint->SetCoefficient(o[i][j][k], 1);
           
           // Track whether this variable will be eliminated
           bool willEliminate = false;
@@ -520,7 +526,7 @@ struct IntegerProgrammingSolver {
             // Use whichever limit is more restrictive
             int effectiveLookaheadEnd = std::min(distanceLookaheadEnd, timeLookaheadEnd);
             
-            if (k > effectiveLookaheadEnd) {
+            if (k > effectiveLookaheadEnd && !ConfigurationManager::getConfig().optimization.disableLookahead) {
               // LOOKAHEAD OPTIMIZATION: Cannot offload beyond dynamic window
               o[i][j][k]->SetUB(0);  // Force o[i][j][k] = 0 (outside dynamic window)
               willEliminate = true;
@@ -540,9 +546,13 @@ struct IntegerProgrammingSolver {
     }
     
     // Log statistics about offload variable elimination
-    LOG_TRACE_WITH_INFO(fmt::format("Offload lookahead optimization: eliminated {}/{} ({:.1f}%) offload variables", 
-                        eliminatedOffloadVars, totalOffloadVars, 
-                        100.0 * eliminatedOffloadVars / totalOffloadVars).c_str());
+    if (ConfigurationManager::getConfig().optimization.disableLookahead) {
+      LOG_TRACE_WITH_INFO("Lookahead optimization: DISABLED (all offload variables allowed)");
+    } else {
+      LOG_TRACE_WITH_INFO(fmt::format("Offload lookahead optimization: eliminated {}/{} ({:.1f}%) offload variables", 
+                          eliminatedOffloadVars, totalOffloadVars, 
+                          100.0 * eliminatedOffloadVars / totalOffloadVars).c_str());
+    }
   }
 
   /**
@@ -1290,6 +1300,127 @@ struct IntegerProgrammingSolver {
   }
 
   /**
+   * @brief Output data dependencies between task groups to debug file
+   * 
+   * Analyzes and outputs Read-After-Write (RAW), Write-After-Read (WAR), 
+   * and Write-After-Write (WAW) dependencies between task groups to help
+   * understand the data flow and constraints in the optimization problem.
+   * 
+   * @param input The solver input containing task group array access patterns
+   */
+  void printDataDependenciesToFile(const SecondStepSolver::Input &input) {
+    // Skip debug output if disabled in configuration
+    if (!ConfigurationManager::getConfig().execution.enableDebugOutput) {
+      return;
+    }
+    
+    // Create output file path for data dependencies
+    std::string outputFilePath = fmt::format("debug/{}.dataDependencies.out", input.stageIndex);
+    LOG_TRACE_WITH_INFO("Printing data dependencies to %s", outputFilePath.c_str());
+
+    // Open output file for writing
+    auto fp = fopen(outputFilePath.c_str(), "w");
+    if (!fp) {
+      LOG_TRACE_WITH_INFO("Could not open debug output file %s", outputFilePath.c_str());
+      return;
+    }
+
+    fmt::print(fp, "Data Dependencies Analysis\n");
+    fmt::print(fp, "==========================\n\n");
+
+    int numberOfTaskGroups = input.taskGroupRunningTimes.size();
+    
+    // First output task group I/O summary
+    fmt::print(fp, "Task Group Input/Output Summary:\n");
+    for (int i = 0; i < numberOfTaskGroups; i++) {
+      fmt::print(fp, "TaskGroup {}:\n", i);
+      fmt::print(fp, "  Inputs: ");
+      for (auto arrayIndex : input.taskGroupInputArrays[i]) {
+        fmt::print(fp, "{}, ", arrayIndex);
+      }
+      fmt::print(fp, "\n");
+      
+      fmt::print(fp, "  Outputs: ");
+      for (auto arrayIndex : input.taskGroupOutputArrays[i]) {
+        fmt::print(fp, "{}, ", arrayIndex);
+      }
+      fmt::print(fp, "\n\n");
+    }
+
+    fmt::print(fp, "Data Dependencies Between Task Groups:\n");
+    fmt::print(fp, "=====================================\n");
+
+    bool hasDependencies = false;
+    
+    // Analyze dependencies between all pairs of task groups
+    for (int i = 0; i < numberOfTaskGroups; i++) {
+      for (int j = i + 1; j < numberOfTaskGroups; j++) {
+        // Check for Read-After-Write (RAW) dependencies: task i writes, task j reads
+        std::vector<ArrayId> rawDeps;
+        for (auto outputArray : input.taskGroupOutputArrays[i]) {
+          if (input.taskGroupInputArrays[j].count(outputArray) > 0) {
+            rawDeps.push_back(outputArray);
+          }
+        }
+        
+        // Check for Write-After-Read (WAR) dependencies: task i reads, task j writes  
+        std::vector<ArrayId> warDeps;
+        for (auto inputArray : input.taskGroupInputArrays[i]) {
+          if (input.taskGroupOutputArrays[j].count(inputArray) > 0) {
+            warDeps.push_back(inputArray);
+          }
+        }
+        
+        // Check for Write-After-Write (WAW) dependencies: both tasks write to same array
+        std::vector<ArrayId> wawDeps;
+        for (auto outputArray : input.taskGroupOutputArrays[i]) {
+          if (input.taskGroupOutputArrays[j].count(outputArray) > 0) {
+            wawDeps.push_back(outputArray);
+          }
+        }
+        
+        // Output dependencies if any exist
+        if (!rawDeps.empty() || !warDeps.empty() || !wawDeps.empty()) {
+          hasDependencies = true;
+          fmt::print(fp, "TaskGroup {} -> TaskGroup {}:\n", i, j);
+          
+          if (!rawDeps.empty()) {
+            fmt::print(fp, "  RAW (Read-After-Write): ");
+            for (auto arrayId : rawDeps) {
+              fmt::print(fp, "{}, ", arrayId);
+            }
+            fmt::print(fp, "\n");
+          }
+          
+          if (!warDeps.empty()) {
+            fmt::print(fp, "  WAR (Write-After-Read): ");
+            for (auto arrayId : warDeps) {
+              fmt::print(fp, "{}, ", arrayId);
+            }
+            fmt::print(fp, "\n");
+          }
+          
+          if (!wawDeps.empty()) {
+            fmt::print(fp, "  WAW (Write-After-Write): ");
+            for (auto arrayId : wawDeps) {
+              fmt::print(fp, "{}, ", arrayId);
+            }
+            fmt::print(fp, "\n");
+          }
+          fmt::print(fp, "\n");
+        }
+      }
+    }
+    
+    if (!hasDependencies) {
+      fmt::print(fp, "No data dependencies found between task groups.\n");
+    }
+
+    // Close the output file
+    fclose(fp);
+  }
+
+  /**
    * @brief Configure Gurobi environment variables for advanced optimization
    * 
    * Sets Gurobi-specific parameters via environment variables to optimize solver
@@ -1365,6 +1496,9 @@ struct IntegerProgrammingSolver {
 
     // Debug output: print task durations/runtime and array sizes/memory consumptions
     printDurationsAndSizes();
+
+    // Debug output: print data dependencies between task groups
+    printDataDependenciesToFile(this->input);
 
     // Set up the MIP problem components
     

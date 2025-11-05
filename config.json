@@ -14,7 +14,7 @@
     "byPassingFirstStep": false,
     "enableGapOverlap": true,
     "gapOverlapDecayFactor": 0.5,
-    "firstStepSolverType": "BYPASSING",
+    "firstStepSolverType": "BEAN_SEARCH",
     "enableEarlyTermination": true,
     "maxSolverIterations": 1000000,
     "beamWidth": 100,
@@ -23,8 +23,8 @@
     "minManagedArraySize": 0,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
     "maxPeakMemoryUsageInMiB": 0,
-    "weightOfPeakMemoryUsage": 0.01,
-    "weightOfTotalRunningTime": 1.0,
+    "weightOfPeakMemoryUsage": 1,
+    "weightOfTotalRunningTime": 0.0001,
     "weightOfNumberOfMigrations": 0.01,
     "prefetchLookbackDistanceLimit": 30,
     "prefetchLookbackTimeBudgetFactor": 50.0,
@@ -33,7 +33,9 @@
     "gurobiTimeLimitSeconds": 60,
     "gurobiMipGap": 0.10,
     "gurobiThreads": 0,
-    "gurobiEnableHeuristics": true
+    "gurobiEnableHeuristics": true,
+    "disableLookahead": false,
+    "disableLookback": false
   },
   "execution": {
     "useNvlink": false,
@@ -45,7 +47,7 @@
   },
   "tiledCholesky": {
     "n": 102400,
-    "t": 6,
+    "t": 4,
     "mode": 0
   },
   "lulesh": {
