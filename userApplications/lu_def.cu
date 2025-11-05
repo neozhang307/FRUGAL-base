@@ -842,7 +842,7 @@ void tiledLU(bool verify)
     // Execute the graph and measure time
     clock.logWithCurrentTime("Start execution");
     memopt::CudaEventClock cudaEventClock;
-   
+
     //warmup
     checkCudaErrors(cudaGraphLaunch(graphExec, s));
     //reset
@@ -860,20 +860,49 @@ void tiledLU(bool verify)
             }
         }
     }
-     // Start memory profiling before execution
+
+    // Unified Memory memory restriction (if enabled)
+    if (ConfigurationManager::getConfig().generic.useUM) {
+        // Limit available memory for unified memory
+        size_t available = 1024ULL * 1024ULL * ConfigurationManager::getConfig().generic.availableMemoryForUMInMiB;
+        reduceAvailableMemoryForUM(available);
+
+        // Prefetch data to device (up to available memory limit)
+        size_t sum = 0;
+        for (int i = 0; i < T * T; i++) {
+            if (sum + tileSize > available) {
+                break;  // Stop when memory limit is reached
+            }
+            checkCudaErrors(cudaMemPrefetchAsync(
+                d_tiles[i],
+                tileSize,
+                ConfigurationManager::getConfig().execution.mainDeviceId,
+                s
+            ));
+            sum += tileSize;
+        }
+        checkCudaErrors(cudaStreamSynchronize(s));
+    }
+
+    // Start memory profiling before execution
     checkCudaErrors(cudaDeviceSynchronize());
     peakMemoryUsageProfiler.start();
-    
+
     cudaEventClock.start(s);
     checkCudaErrors(cudaGraphLaunch(graphExec, s));
     // checkCudaErrors(cudaStreamSynchronize(s));
     cudaEventClock.end(s);
     checkCudaErrors(cudaDeviceSynchronize());
-    
+
     // End memory profiling and report results
     const auto peakMemoryUsage = peakMemoryUsageProfiler.end();
-    fmt::print("Peak memory usage (MiB): {:.2f}\n", 
+    fmt::print("Peak memory usage (MiB): {:.2f}\n",
               static_cast<float>(peakMemoryUsage) / 1024.0 / 1024.0);
+
+    // Reset memory limit for unified memory
+    if (ConfigurationManager::getConfig().generic.useUM) {
+        resetAvailableMemoryForUM();
+    }
     
     clock.logWithCurrentTime("Execution completed");
 
