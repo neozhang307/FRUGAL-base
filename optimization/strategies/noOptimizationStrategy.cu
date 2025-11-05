@@ -1,4 +1,5 @@
 #include "../../profiling/memoryManager.hpp"
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "../../utilities/types.hpp"
 #include "strategies.hpp"
@@ -24,7 +25,9 @@ OptimizationOutput NoOptimizationStrategy::run(OptimizationInput &input) {
   LOG_TRACE();
 
   // Print input for debugging purposes
-  printOptimizationInput(input);
+  if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    printOptimizationInput(input);
+  }
 
   OptimizationOutput output;
   output.optimal = true;  // Mark the solution as feasible (though unoptimized)
