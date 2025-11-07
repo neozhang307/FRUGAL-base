@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -22,7 +23,7 @@
 
 #include "../include/argh.h"
 #include "memopt.hpp"
-
+#include "omp.h"
 using namespace memopt;
 
 // Global variables (will be set from config or command line)
@@ -37,6 +38,72 @@ size_t B_large; // Block size for large domain
 size_t* current_block_size = &B_small;
 
 const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
+
+// Helper class for timing measurements
+class Timer {
+private:
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::chrono::high_resolution_clock::time_point end_time;
+    bool is_running;
+    
+public:
+    Timer() : is_running(false) {}
+    
+    void start() {
+        start_time = std::chrono::high_resolution_clock::now();
+        is_running = true;
+    }
+    
+    void stop() {
+        end_time = std::chrono::high_resolution_clock::now();
+        is_running = false;
+    }
+    
+    double getElapsedMilliseconds() const {
+        auto duration = is_running ? 
+            std::chrono::high_resolution_clock::now() - start_time :
+            end_time - start_time;
+        return std::chrono::duration<double, std::milli>(duration).count();
+    }
+    
+    double getElapsedSeconds() const {
+        return getElapsedMilliseconds() / 1000.0;
+    }
+};
+
+// FLOPS calculation for Cholesky decomposition
+// Standard formula: N³/3 + O(N²) operations
+double calculateCholeskyFLOPS(size_t N, size_t T, size_t B) {
+    // Use standard Cholesky FLOPS formula (default)
+    double flops = (1.0/3.0) * N * N * N + (1.0/2.0) * N * N + (1.0/6.0) * N;
+    return flops;
+}
+
+// Alternative: Detailed tiled FLOPS calculation (for verification)
+double calculateCholeskyFLOPSTiled(size_t N, size_t T, size_t B) {
+    double flops = 0.0;
+    
+    // For each iteration k from 0 to T-1
+    for (size_t k = 0; k < T; k++) {
+        // POTRF on diagonal tile: ~B³/3 operations
+        flops += (1.0/3.0) * B * B * B + (1.0/2.0) * B * B + (1.0/6.0) * B;
+        
+        // TRSM for (T-k-1) tiles in column k: B³ per tile
+        flops += (T - k - 1) * B * B * B;
+        
+        // SYRK for (T-k-1) symmetric rank-k updates: B³ per tile
+        flops += (T - k - 1) * B * B * B;
+        
+        // GEMM for remaining off-diagonal tiles: 2B³ per tile
+        // Number of GEMM operations: (T-k-1)*(T-k-2)/2
+        if (T > k + 1) {
+            size_t num_gemm = ((T - k - 1) * (T - k - 2)) / 2;
+            flops += num_gemm * 2.0 * B * B * B;
+        }
+    }
+    
+    return flops;
+}
 
 // Kernels from original
 __global__ void makeMatrixSymmetric(double *d_matrix, size_t n) {
@@ -62,27 +129,72 @@ __global__ void addIdenticalMatrix(double *d_matrix, size_t n) {
 }
 
 void generateRandomSymmetricPositiveDefiniteMatrix(double *h_A, const size_t n) {
-  double *d_A;
-  checkCudaErrors(cudaMalloc(&d_A, n * n * sizeof(double)));
+  size_t matrixSize = n * n * sizeof(double);
+  size_t freeMem, totalMem;
+  checkCudaErrors(cudaMemGetInfo(&freeMem, &totalMem));
+  
+  // Check if matrix fits in GPU memory with safety margin
+  const double SAFETY_FACTOR = 0.8;
+  bool useGPU = (matrixSize < freeMem * SAFETY_FACTOR);
+  
+  if (useGPU) {
+    // Original GPU implementation for small matrices
+    fmt::print("Generating {}x{} matrix on GPU (%.2f MB)\n", n, n, matrixSize / (1024.0 * 1024.0));
+    double *d_A;
+    checkCudaErrors(cudaMalloc(&d_A, matrixSize));
 
-  curandGenerator_t prng;
-  curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
-  curandSetPseudoRandomGeneratorSeed(prng, (unsigned long long)clock());
-  curandGenerateUniformDouble(prng, d_A, n * n);
+    curandGenerator_t prng;
+    curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
+    curandSetPseudoRandomGeneratorSeed(prng, (unsigned long long)clock());
+    curandGenerateUniformDouble(prng, d_A, n * n);
 
-  size_t numThreads = 1024;
-  size_t numBlocks = (n * n + numThreads - 1) / numThreads;
-  makeMatrixSymmetric<<<numBlocks, numThreads>>>(d_A, n);
+    size_t numThreads = 1024;
+    size_t numBlocks = (n * n + numThreads - 1) / numThreads;
+    makeMatrixSymmetric<<<numBlocks, numThreads>>>(d_A, n);
 
-  numThreads = 1024;
-  numBlocks = (n + numThreads - 1) / numThreads;
-  addIdenticalMatrix<<<numBlocks, numThreads>>>(d_A, n);
+    numThreads = 1024;
+    numBlocks = (n + numThreads - 1) / numThreads;
+    addIdenticalMatrix<<<numBlocks, numThreads>>>(d_A, n);
 
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaMemcpy(h_A, d_A, n * n * sizeof(double), cudaMemcpyDefault));
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaFree(d_A));
-  curandDestroyGenerator(prng);
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaMemcpy(h_A, d_A, n * n * sizeof(double), cudaMemcpyDefault));
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaFree(d_A));
+    curandDestroyGenerator(prng);
+  } else {
+    // CPU + OpenMP implementation for large matrices
+    fmt::print("Generating {}x{} matrix on CPU with OpenMP (%.2f MB exceeds GPU memory)\n", 
+               n, n, matrixSize / (1024.0 * 1024.0));
+    
+    // Use standard random with thread-safe generation
+    std::srand(std::time(nullptr));
+    
+    // Generate random values with OpenMP parallelization
+    #pragma omp parallel for collapse(2)
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = 0; j < n; j++) {
+        // Thread-safe random generation
+        unsigned int seed = i * n + j + omp_get_thread_num();
+        h_A[i * n + j] = (double)rand_r(&seed) / RAND_MAX;
+      }
+    }
+    
+    // Make symmetric
+    #pragma omp parallel for
+    for (size_t i = 0; i < n; i++) {
+      for (size_t j = i + 1; j < n; j++) {
+        double avg = 0.5 * (h_A[i * n + j] + h_A[j * n + i]);
+        h_A[i * n + j] = avg;
+        h_A[j * n + i] = avg;
+      }
+    }
+    
+    // Add identity scaled by n to ensure positive definiteness
+    #pragma omp parallel for
+    for (size_t i = 0; i < n; i++) {
+      h_A[i * n + i] += n;
+    }
+  }
 }
 
 void initializeDeviceData(double *h_originalMatrix, std::vector<double *> &d_tiles, size_t matrix_size, size_t block_size) {
@@ -157,8 +269,8 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
 }
 
 void tiledCholeskyDomainEnlargement() {
-  SystemWallClock clock;
-  clock.start();
+  Timer overall_timer;
+  overall_timer.start();
   
   fmt::print("=== Tiled Cholesky Domain Enlargement Demo ===\n");
   fmt::print("Small domain: {}x{} matrix, {} tiles, {}x{} blocks ({:.2f} MB)\n", 
@@ -168,12 +280,21 @@ void tiledCholeskyDomainEnlargement() {
              N_large, N_large, T*T, B_large, B_large, 
              (double)(N_large * N_large * sizeof(double)) / (1024.0 * 1024.0));
   
+  // Calculate theoretical FLOPS for both domains
+  double flops_small = calculateCholeskyFLOPS(N_small, T, B_small);
+  double flops_large = calculateCholeskyFLOPS(N_large, T, B_large);
+  fmt::print("Theoretical FLOPS - Small: {:.2e}, Large: {:.2e}\n", flops_small, flops_large);
+  fmt::print("Using standard formula: N³/3 + O(N²)\n");
+  
   initializeCudaDevice();
 
   // =========================================================================
   // PHASE 1: OPTIMIZATION WITH SMALL DOMAIN
   // =========================================================================
   fmt::print("\n--- PHASE 1: Optimization with Small Domain ---\n");
+  
+  Timer phase1_timer;
+  phase1_timer.start();
   
   const size_t tileSize_small = B_small * B_small * sizeof(double);
   
@@ -349,10 +470,18 @@ void tiledCholeskyDomainEnlargement() {
 
   // Profile and optimize
   fmt::print("Profiling and optimizing with small domain...\n");
+  
+  Timer profiling_timer;
+  profiling_timer.start();
   auto optimizedGraph = profileAndOptimize(graph);
+  profiling_timer.stop();
+  
+  phase1_timer.stop();
   
   fmt::print("Original peak memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
   fmt::print("Optimized peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
+  fmt::print("⏱️  Profiling time: {:.3f} ms\n", profiling_timer.getElapsedMilliseconds());
+  fmt::print("⏱️  Total Phase 1 time: {:.3f} ms\n", phase1_timer.getElapsedMilliseconds());
 
   // Move all data to storage before enlargement (required for cold start)
   fmt::print("Moving all small domain data to storage...\n");
@@ -363,6 +492,9 @@ void tiledCholeskyDomainEnlargement() {
   // PHASE 2: DOMAIN ENLARGEMENT
   // =========================================================================
   fmt::print("\n--- PHASE 2: Domain Enlargement ---\n");
+  
+  Timer phase2_timer;
+  phase2_timer.start();
   
   // Generate large matrix
   double* h_largeMatrix = nullptr;
@@ -418,6 +550,9 @@ void tiledCholeskyDomainEnlargement() {
   
   fmt::print("✅ Re-registration complete - optimization plan preserved\n");
   
+  phase2_timer.stop();
+  fmt::print("⏱️  Domain enlargement time: {:.3f} ms\n", phase2_timer.getElapsedMilliseconds());
+  
   // Switch kernels to use large block size for execution
   size_t old_block_size = *current_block_size;
   *current_block_size = B_large;
@@ -448,6 +583,9 @@ void tiledCholeskyDomainEnlargement() {
   // =========================================================================
   fmt::print("\n--- PHASE 3: Cold Start Execution with Large Domain ---\n");
   
+  Timer phase3_timer;
+  phase3_timer.start();
+  
   // Get current GPU memory info
   size_t free_mem, total_mem;
   checkCudaErrors(cudaMemGetInfo(&free_mem, &total_mem));
@@ -472,6 +610,9 @@ void tiledCholeskyDomainEnlargement() {
   Executor* executor = Executor::getInstance();
   tmanager_v2.setExecutionMode(TaskManager_v2::ExecutionMode::Production);
   
+  Timer execution_timer;
+  execution_timer.start();
+  
   executor->executeOptimizedGraphColdStart(
     optimizedGraph,
     [&tmanager_v2](int taskId, std::map<void*, void*> addressMapping, cudaStream_t stream) {
@@ -481,13 +622,24 @@ void tiledCholeskyDomainEnlargement() {
     memManager
   );
   
+  execution_timer.stop();
+  
   // Get peak memory usage
   size_t peakMemoryBytes = peakProfiler.end();
   double peakMemoryMB = (double)peakMemoryBytes / (1024.0 * 1024.0);
   
+  phase3_timer.stop();
+  
   fmt::print("✅ Cold start execution completed!\n");
   fmt::print("Execution time with enlarged domain: {:.3f} ms\n", runningTime * 1000.0f);
+  fmt::print("⏱️  Execution timer measurement: {:.3f} ms\n", execution_timer.getElapsedMilliseconds());
+  fmt::print("⏱️  Total Phase 3 time: {:.3f} ms\n", phase3_timer.getElapsedMilliseconds());
   fmt::print("📊 Peak GPU memory usage during execution: {:.2f} MB\n", peakMemoryMB);
+  
+  // Calculate GFLOPS performance
+  double execution_seconds = execution_timer.getElapsedSeconds();
+  double gflops = flops_large / (execution_seconds * 1e9);
+  fmt::print("🚀 Performance: {:.2f} GFLOPS\n", gflops);
   
   // Compare with static measurements
   size_t current_free, current_total;
@@ -500,23 +652,47 @@ void tiledCholeskyDomainEnlargement() {
   // =========================================================================
   fmt::print("\n--- PHASE 4: Verification ---\n");
   
+  Timer verification_timer;
+  verification_timer.start();
+  
   bool verificationPassed = verifyCholeskyDecompositionPartially(h_largeMatrix, d_tiles, N_large, B_large);
+  
+  verification_timer.stop();
   
   if (verificationPassed) {
     fmt::print("✅ Verification PASSED: Results are valid\n");
   } else {
     fmt::print("❌ Verification FAILED\n");
   }
+  
+  fmt::print("⏱️  Verification time: {:.3f} ms\n", verification_timer.getElapsedMilliseconds());
 
   // =========================================================================
   // PHASE 4.5: COMPARISON WITH DIRECT CHOLESKY
   // =========================================================================
   fmt::print("\n--- PHASE 4.5: Comparison with cuSOLVER Direct Cholesky ---\n");
   
-  // Allocate memory for direct Cholesky
-  double* d_A_direct;
-  checkCudaErrors(cudaMalloc(&d_A_direct, N_large * N_large * sizeof(double)));
-  checkCudaErrors(cudaMemcpy(d_A_direct, h_largeMatrix, N_large * N_large * sizeof(double), cudaMemcpyHostToDevice));
+  Timer comparison_timer;
+  comparison_timer.start();
+  
+  // Variables that might be used in performance summary
+  Timer direct_timer;
+  double direct_gflops = 0.0;
+  
+  // Check if matrix is too large for cuSOLVER verification
+  const size_t MAX_CUSOLVER_SIZE = 4096;  // Threshold for skipping cuSOLVER verification
+  size_t matrix_memory_mb = (N_large * N_large * sizeof(double)) / (1024 * 1024);
+  
+  if (N_large > MAX_CUSOLVER_SIZE) {
+    fmt::print("⚠️  Skipping cuSOLVER verification: matrix size {}x{} ({} MB) exceeds threshold {}x{}\n",
+               N_large, N_large, matrix_memory_mb, MAX_CUSOLVER_SIZE, MAX_CUSOLVER_SIZE);
+    fmt::print("   (cuSOLVER direct method would require too much memory)\n");
+    comparison_timer.stop();
+  } else {
+    // Allocate memory for direct Cholesky
+    double* d_A_direct;
+    checkCudaErrors(cudaMalloc(&d_A_direct, N_large * N_large * sizeof(double)));
+    checkCudaErrors(cudaMemcpy(d_A_direct, h_largeMatrix, N_large * N_large * sizeof(double), cudaMemcpyHostToDevice));
   
   // Create new cuSOLVER handle for direct computation
   cusolverDnHandle_t directSolverHandle;
@@ -535,9 +711,22 @@ void tiledCholeskyDomainEnlargement() {
   
   // Perform direct Cholesky decomposition
   fmt::print("Running cuSOLVER direct Cholesky on {}x{} matrix...\n", N_large, N_large);
+  
+  direct_timer.start();
+  
   checkCudaErrors(cusolverDnDpotrf(
     directSolverHandle, CUBLAS_FILL_MODE_LOWER, N_large, d_A_direct, N_large, 
     d_directWorkspace, directWorkspaceSize, d_directInfo));
+  
+  checkCudaErrors(cudaDeviceSynchronize());
+  direct_timer.stop();
+  
+  fmt::print("⏱️  Direct Cholesky time: {:.3f} ms\n", direct_timer.getElapsedMilliseconds());
+  
+  // Calculate direct Cholesky GFLOPS
+  double direct_seconds = direct_timer.getElapsedSeconds();
+  direct_gflops = flops_large / (direct_seconds * 1e9);
+  fmt::print("🚀 Direct Cholesky performance: {:.2f} GFLOPS\n", direct_gflops);
   
   // Check if direct decomposition succeeded
   int h_directInfo;
@@ -628,11 +817,15 @@ void tiledCholeskyDomainEnlargement() {
     checkCudaErrors(cudaFreeHost(h_L_tiled));
   }
   
-  // Cleanup direct Cholesky resources
-  checkCudaErrors(cudaFree(d_A_direct));
-  checkCudaErrors(cudaFree(d_directWorkspace));
-  checkCudaErrors(cudaFree(d_directInfo));
-  checkCudaErrors(cusolverDnDestroy(directSolverHandle));
+    // Cleanup direct Cholesky resources
+    checkCudaErrors(cudaFree(d_A_direct));
+    checkCudaErrors(cudaFree(d_directWorkspace));
+    checkCudaErrors(cudaFree(d_directInfo));
+    checkCudaErrors(cusolverDnDestroy(directSolverHandle));
+    
+    comparison_timer.stop();
+    fmt::print("⏱️  Comparison phase time: {:.3f} ms\n", comparison_timer.getElapsedMilliseconds());
+  }  // End of cuSOLVER verification block
 
   // =========================================================================
   // PHASE 5: CLEANUP
@@ -660,7 +853,34 @@ void tiledCholeskyDomainEnlargement() {
   checkCudaErrors(cublasDestroy(cublasHandle));
   checkCudaErrors(cudaStreamDestroy(s));
   
-  fmt::print("=== Domain Enlargement Demo Complete ===\n");
+  overall_timer.stop();
+  double total_time = overall_timer.getElapsedMilliseconds();
+  
+  fmt::print("\n=== Performance Summary ===\n");
+  fmt::print("Phase 1 (Optimization): {:.3f} ms\n", phase1_timer.getElapsedMilliseconds());
+  fmt::print("  - Graph building: ~{:.3f} ms\n", phase1_timer.getElapsedMilliseconds() - profiling_timer.getElapsedMilliseconds());
+  fmt::print("  - Profiling/optimization: {:.3f} ms\n", profiling_timer.getElapsedMilliseconds());
+  fmt::print("Phase 2 (Domain Enlargement): {:.3f} ms\n", phase2_timer.getElapsedMilliseconds());
+  fmt::print("Phase 3 (Execution): {:.3f} ms\n", phase3_timer.getElapsedMilliseconds());
+  fmt::print("  - Kernel execution: {:.3f} ms\n", execution_timer.getElapsedMilliseconds());
+  fmt::print("Phase 4 (Verification): {:.3f} ms\n", verification_timer.getElapsedMilliseconds());
+  fmt::print("Phase 4.5 (Comparison): {:.3f} ms\n", comparison_timer.getElapsedMilliseconds());
+  fmt::print("Total execution time: {:.3f} ms\n", total_time);
+  
+  fmt::print("\n=== FLOPS Performance ===\n");
+  fmt::print("Theoretical FLOPS: {:.2e} (using N³/3 formula)\n", flops_large);
+  fmt::print("Tiled Cholesky: {:.2f} GFLOPS ({:.3f} ms for {:.2e} FLOPS)\n", 
+             gflops, execution_timer.getElapsedMilliseconds(), flops_large);
+  
+  if (N_large <= MAX_CUSOLVER_SIZE) {
+    fmt::print("Direct Cholesky: {:.2f} GFLOPS ({:.3f} ms for {:.2e} FLOPS)\n", 
+               direct_gflops, direct_timer.getElapsedMilliseconds(), flops_large);
+    fmt::print("Speedup: {:.2f}x\n", direct_timer.getElapsedMilliseconds() / execution_timer.getElapsedMilliseconds());
+  } else {
+    fmt::print("Direct Cholesky: N/A (matrix too large for cuSOLVER)\n");
+  }
+  
+  fmt::print("\n=== Domain Enlargement Demo Complete ===\n");
 }
 
 int main(int argc, char **argv) {

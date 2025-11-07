@@ -468,7 +468,9 @@ OptimizationOutput TwoStepOptimizationStrategy::run(OptimizationInput &input) {
   LOG_TRACE();
 
   // Print the input for debugging/visualization purposes
-  printOptimizationInput(input);
+  if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
+    printOptimizationInput(input);
+  }
 
   std::cout << "[DEBUG-OUTPUT-OPTIMIZER] ==================== STARTING STEP 1: TASK SCHEDULING OPTIMIZATION ====================" << std::endl;
   

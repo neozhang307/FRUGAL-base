@@ -1,4 +1,5 @@
 #include <cassert>
+#include <chrono>
 #include <memory>
 #include <queue>
 
@@ -97,6 +98,14 @@ void Executor::executeOptimizedGraph(
 ) {
   LOG_TRACE_WITH_INFO("Initialize");
 
+  // Timing measurements for graph construction overhead
+  std::chrono::high_resolution_clock::time_point timeStart, timeEnd;
+  double timeInitialGraphCapture = 0.0;
+  double timeInitialGraphInstantiate = 0.0;
+  double timeOptimizedGraphConstruction = 0.0;
+  double timeOptimizedGraphInstantiate = 0.0;
+  double timeOptimizedGraphUpload = 0.0;
+
   // Reset the memory mapping
   managedDeviceArrayToHostArrayMap.clear();
 
@@ -191,6 +200,10 @@ void Executor::executeOptimizedGraph(
   // Track memory addresses that have been updated (device copies)
   // address mapping original to new device address
   memManager.clearCurrentMappings();
+  
+  // Time initial data distribution graph capture
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Create a subgraph for initial data prefetching
   checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
   for (auto arrayId : optimizedGraph.arraysInitiallyAllocatedOnDevice) {
@@ -208,10 +221,20 @@ void Executor::executeOptimizedGraph(
   // End capture and instantiate the initial data distribution graph
   cudaGraph_t graphForInitialDataDistribution;
   checkCudaErrors(cudaStreamEndCapture(stream, &graphForInitialDataDistribution));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeInitialGraphCapture = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
 
+  // Time initial graph instantiation
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Execute the initial data distribution
   cudaGraphExec_t graphExecForInitialDataDistribution;
   checkCudaErrors(cudaGraphInstantiate(&graphExecForInitialDataDistribution, graphForInitialDataDistribution, nullptr, nullptr, 0));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeInitialGraphInstantiate = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+  
   checkCudaErrors(cudaGraphLaunch(graphExecForInitialDataDistribution, stream));
   checkCudaErrors(cudaDeviceSynchronize());
 
@@ -220,6 +243,9 @@ void Executor::executeOptimizedGraph(
   //----------------------------------------------------------------------
   
   LOG_TRACE_WITH_INFO("Record nodes to a new CUDA Graph");
+
+  // Time optimized graph construction
+  timeStart = std::chrono::high_resolution_clock::now();
 
   // Maps nodes to their dependencies in the CUDA graph
   std::map<int, std::vector<cudaGraphNode_t>> nodeToDependentNodesMap;
@@ -328,6 +354,10 @@ void Executor::executeOptimizedGraph(
     }
   }
 
+  // Record end time for graph construction
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeOptimizedGraphConstruction = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
+
   // Export graph for debugging/visualization
   LOG_TRACE_WITH_INFO("Printing the new CUDA Graph to newGraph.dot");
   checkCudaErrors(cudaGraphDebugDotPrint(graph, "newGraph.dot", 0));
@@ -342,13 +372,25 @@ void Executor::executeOptimizedGraph(
   PeakMemoryUsageProfiler peakMemoryUsageProfiler;
   CudaEventClock cudaEventClock;
   
+  // Time graph instantiation
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Instantiate the graph for execution
   cudaGraphExec_t graphExec;
   checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, nullptr, nullptr, 0));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeOptimizedGraphInstantiate = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
 
+  // Time graph upload
+  timeStart = std::chrono::high_resolution_clock::now();
+  
   // Upload the graph to the device for faster execution
   checkCudaErrors(cudaGraphUpload(graphExec, stream));
   checkCudaErrors(cudaStreamSynchronize(stream));
+  
+  timeEnd = std::chrono::high_resolution_clock::now();
+  timeOptimizedGraphUpload = std::chrono::duration<double, std::milli>(timeEnd - timeStart).count();
 
   // Start memory usage profiling if requested
   if (ConfigurationManager::getConfig().execution.measurePeakMemoryUsage) {
@@ -402,8 +444,23 @@ void Executor::executeOptimizedGraph(
     disablePeerAccessForNvlink(mainDeviceId, storageDeviceId);
   }
 
-  // Store the execution time
+  // Store the execution time (GPU execution time measured with CUDA events)
   runningTime = cudaEventClock.getTimeInSeconds();
+
+  // Log graph construction overhead timings (all CPU-side operations)
+  LOG_TRACE_WITH_INFO("=== CUDA Graph Construction Overhead (CPU-side) ===");
+  LOG_TRACE_WITH_INFO("Initial data distribution graph capture: %.3f ms", timeInitialGraphCapture);
+  LOG_TRACE_WITH_INFO("Initial data distribution graph instantiate: %.3f ms", timeInitialGraphInstantiate);
+  LOG_TRACE_WITH_INFO("Optimized graph construction: %.3f ms", timeOptimizedGraphConstruction);
+  LOG_TRACE_WITH_INFO("Optimized graph instantiate: %.3f ms", timeOptimizedGraphInstantiate);
+  LOG_TRACE_WITH_INFO("Optimized graph upload: %.3f ms", timeOptimizedGraphUpload);
+
+  double totalConstructionOverhead = timeInitialGraphCapture + timeInitialGraphInstantiate + 
+                                     timeOptimizedGraphConstruction + timeOptimizedGraphInstantiate + 
+                                     timeOptimizedGraphUpload;
+  LOG_TRACE_WITH_INFO("Total construction overhead: %.3f ms", totalConstructionOverhead);
+  LOG_TRACE_WITH_INFO("Graph execution time (GPU): %.3f ms", runningTime * 1000.0);
+  LOG_TRACE_WITH_INFO("Construction Overhead/Execution ratio: %.2fx", totalConstructionOverhead / (runningTime * 1000.0));
 }
 
 void Executor::executeOptimizedGraphRepeatedly(
@@ -489,11 +546,11 @@ void Executor::executeOptimizedGraphRepeatedly(
   checkCudaErrors(cudaSetDevice(mainDeviceId));
   checkCudaErrors(cudaDeviceSynchronize());
 
-  // Start timing the graph creation process
-  SystemWallClock clock;
-  clock.start();
+  // Start timing the graph construction process (CPU-side operation)
+  SystemWallClock graphConstructionClock;
+  graphConstructionClock.start();
 
-  LOG_TRACE_WITH_INFO("Record nodes to a new CUDA Graph");
+  LOG_TRACE_WITH_INFO("Starting CUDA Graph construction");
 
   //----------------------------------------------------------------------
   // STEP 4: Build the optimized execution graph
@@ -640,8 +697,11 @@ void Executor::executeOptimizedGraphRepeatedly(
   checkCudaErrors(cudaDeviceSynchronize());
 
   // Report time taken to build the graph
-  clock.end();
-  LOG_TRACE_WITH_INFO("Time taken for recording graph: %.6f", clock.getTimeInSeconds());
+  graphConstructionClock.end();
+  float graphConstructionTime = graphConstructionClock.getTimeInSeconds();
+  LOG_TRACE_WITH_INFO("CUDA Graph construction completed");
+  LOG_TRACE_WITH_INFO("Time taken for CUDA graph construction: %.6f seconds", graphConstructionTime);
+  fprintf(stderr, "[TIMER] CUDA graph construction time: %.6f seconds\n", graphConstructionTime);
 
   // Export graph for debugging/visualization
   LOG_TRACE_WITH_INFO("Printing the new CUDA Graph to newGraph.dot");
