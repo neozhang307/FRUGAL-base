@@ -1,10 +1,16 @@
 # CUDA Memory Optimization Project Guidelines
 
+## Project Status (Updated: November 2024)
+- **Branch**: CGO26/master (main development)
+- **Phase 1 Optimization**: ✅ SOLVED - Beam search with configurable width provides fast solutions
+- **Phase 2 Optimization**: ✅ Improved - Variable reduction using dependencies as constraints
+- **Current Focus**: Warm start implementation, Top-K solutions, validation experiments
+
 ## Git Usage Rules (IMPORTANT - ALWAYS FOLLOW)
 - **NEVER use `git add -A` or `git add .`** - Only add specific files that were modified
 - **NEVER commit unrelated files** - Only commit files directly related to the current task
 - **ALWAYS use `git add <specific-file>`** for each file you want to stage
-- **NEVER commit TODO.md, configs/, or other temporary/generated files**
+- **NEVER commit TODO.md, TODO_TIMELINE.md, configs/, or other temporary/generated files**
 - **ALWAYS check `git status` before committing** to ensure only intended files are staged
 
 ## Build Commands
@@ -35,9 +41,26 @@
 - Use Doxygen-style documentation for classes and methods
 - Explain complex algorithms with comments that describe the purpose
 
+## Known Issues
+- **Stage Logic Bug**: Different behavior between CGO26/master (working) and CGO26/stage-showcase (buggy) for out-of-core initialization
+- **Minor**: cudaFreeHost error in domain enlargement (doesn't affect functionality)
+
+## Upcoming Features (In Development)
+- **Warm Start for Gurobi**: Heuristic initial solution to speed up optimization
+- **Top-K Solutions**: Using Gurobi solution pool to explore alternative schedules
+- **Minimal Memory Calculation**: Theoretical lower bound for memory usage
+- **Batch Testing Infrastructure**: Automated parameter sweeps and evaluation
+
+## Configuration Parameters
+- **Solver**: `firstStepSolverType` should be "BEAM_SEARCH" (note: typo "BEAN_SEARCH" in some configs)
+- **Beam Width**: Default 100, configurable for quality/speed tradeoff
+- **Gurobi Settings**: 60s timeout, 10% MIP gap (proven sufficient)
+- **Weights**: Set to 0 for pure memory optimization, adjust for runtime optimization
+
 ## Best Practices
 - Prefer strong typing and avoid magic numbers
 - Use smart pointers for memory management (std::unique_ptr)
-- Prefer TaskManager for task execution and MemoryManager for memory tracking
+- Prefer TaskManager_v2 for task execution (enhanced with annotation support)
 - Use the MemoryManager singleton with getInstance() for most operations
 - Always synchronize CUDA operations properly with cudaDeviceSynchronize()
+- For experiments, use JSON configuration instead of recompiling
