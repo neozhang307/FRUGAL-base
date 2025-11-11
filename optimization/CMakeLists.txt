@@ -18,6 +18,7 @@ target_link_libraries(
   utilities
   memred
   memoryManager
+  fmt::fmt
   CUDA::cuda_driver
 )
 

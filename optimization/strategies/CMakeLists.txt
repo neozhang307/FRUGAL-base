@@ -1,3 +1,11 @@
+add_library(minimalMemoryCalculator STATIC ../minimalMemoryCalculator.cpp)
+target_link_libraries(
+  minimalMemoryCalculator
+  PUBLIC
+  fmt::fmt
+  utilities
+)
+
 add_library(strategyUtilities STATIC strategyUtilities.cu)
 target_link_libraries(
   strategyUtilities
@@ -24,8 +32,9 @@ target_link_libraries(
 add_library(secondStepSolver STATIC secondStepSolver.cpp)
 target_link_libraries(
   secondStepSolver
-  PRIVATE
+  PUBLIC
   utilities
   fmt::fmt
   ortools::ortools
+  minimalMemoryCalculator
 )

@@ -25,11 +25,12 @@
 ### High Priority Optimizations
 
 #### Second-Step Solver Improvements
-- [ ] **Calculate Minimal Memory Usage Bound**
-  - Find theoretical minimum memory = max(sum of arrays needed per task)
-  - For each task, sum memory of all arrays that must be present
-  - Use as optimization target and constraint bound
-  - Location: Add to `secondStepSolver.cpp` before optimization
+- [x] **Calculate Minimal Memory Usage Bound** ✅ COMPLETED (2024-11-11)
+  - Created standalone `MinimalMemoryCalculator` class in `optimization/minimalMemoryCalculator.{hpp,cpp}`
+  - Calculates theoretical minimum memory = max(sum of arrays needed per task)
+  - Supports single-stage and multi-stage inputs
+  - Integrated into `secondStepSolver.cpp` with detailed result output
+  - Provides memory reduction potential, critical task identification, and per-task analysis
 
 - [ ] **Implement Heuristic-Based Warm Start for Gurobi**
   - Generate initial feasible solution using heuristic rules

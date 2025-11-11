@@ -12,6 +12,7 @@
 #include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "../../utilities/utilities.hpp"
+#include "../minimalMemoryCalculator.hpp"
 
 using namespace operations_research;
 
@@ -147,55 +148,20 @@ struct IntegerProgrammingSolver {
     originalTotalRunningTime = input.originalTotalRunningTime;
 
     // ------STAGE BEGIN: Calculate the theoretical lower bound on peak memory usage ------
-    // This is the maximum memory needed by any individual task group
-    lowestPeakMemoryUsagePossible = 0;
-    std::set<int> allDependencies, currentDependencies;
-    
-    for (int i = 0; i < numberOfTaskGroups; i++) {
-      // Find all arrays accessed by this task group (both inputs and outputs)
-      currentDependencies.clear();
-      std::set_union(
-        input.taskGroupInputArrays[i].begin(),
-        input.taskGroupInputArrays[i].end(),
-        input.taskGroupOutputArrays[i].begin(),
-        input.taskGroupOutputArrays[i].end(),
-        std::inserter(currentDependencies, currentDependencies.begin())
-      );
-      
-      // Add to the set of all arrays accessed by any task
-      // union set remove duplicate arrays
-      std::set_union(
-        currentDependencies.begin(),
-        currentDependencies.end(),
-        allDependencies.begin(),
-        allDependencies.end(),
-        std::inserter(allDependencies, allDependencies.begin())
-      );
-      
-      // Calculate memory needed by this task group and update the lower bound
-      // Convert bytes to MiB (divide by 1024*1024)
-      double taskMemoryUsage = 1.0 / 1024.0 / 1024.0 * 
-        std::accumulate(currentDependencies.begin(), currentDependencies.end(), 
-                      static_cast<size_t>(0), [&](size_t total, int arrayId) {
-          return total + input.arraySizes[arrayId];
-        });
-      
-      // Update the lower bound if this task needs more memory
-      lowestPeakMemoryUsagePossible = std::max(taskMemoryUsage, lowestPeakMemoryUsagePossible);
-    }
+    // Use the MinimalMemoryCalculator for consistent calculation across the codebase
+    MinimalMemoryCalculator calculator;
+    auto memoryResult = calculator.calculateFromSecondStepInput(input);
+
+    // Extract the key metrics for use in the solver
+    lowestPeakMemoryUsagePossible = memoryResult.minimalMemoryMiB;
+    originalPeakMemoryUsage = memoryResult.originalMemoryMiB;
+
+    // Print detailed memory analysis
+    memoryResult.printSummary();
     // ------STAGE END: Calculate the theoretical lower bound on peak memory usage ------
 
-
-    // Calculate the original peak memory usage (all arrays together)
-    // This is the memory usage without any optimization
-    originalPeakMemoryUsage = 1.0 / 1024.0 / 1024.0 * 
-      std::accumulate(allDependencies.begin(), allDependencies.end(), 
-                    static_cast<size_t>(0), [&](size_t total, int arrayId) {
-        return total + input.arraySizes[arrayId];
-      });
-
     // This ratio is used to balance memory vs time in the objective function
-    originalPeakMemoryUsageToTotalRunningTimeRatio = 
+    originalPeakMemoryUsageToTotalRunningTimeRatio =
       static_cast<double>(originalPeakMemoryUsage) / static_cast<double>(originalTotalRunningTime);
 
     shouldAllocateWithoutPrefetch.clear();
