@@ -44,15 +44,18 @@
   - Integrated into `secondStepSolver.cpp` with mode selection
   - Location: `optimization/strategies/greedyScheduler.{hpp,cpp}`
 
-- [ ] **Implement Warm Start for MIP Solver Using Greedy Solution**
-  - Use greedy scheduler to generate initial feasible solution
-  - Convert greedy schedule to Gurobi variable format
-  - Set initial values for decision variables (x, y, p, o)
-  - **Implementation Considerations**:
-    - Map greedy prefetch/offload decisions to Gurobi variables
-    - Ensure warm start solution is feasible
-    - Measure solve time reduction (target: 30-50%)
-  - Impact: Significantly faster Gurobi convergence by starting from good solution
+- [x] **Implement Warm Start for MIP Solver Using Greedy Solution** ✅ COMPLETED (2025-11-11)
+  - Implemented `generateWarmStart()` method in `GreedyScheduler` class
+  - Automatically selects warm start mode based on memory constraints:
+    - If `maxPeakMemoryUsageInMiB < totalMemory`: Uses MIN_MEMORY greedy mode
+    - If `maxPeakMemoryUsageInMiB >= totalMemory`: Uses MAX_PERFORMANCE greedy mode
+  - Converts greedy schedule to Gurobi variable format (I, p, o, x, y variables)
+  - Applies variable hints to MIP solver using OR-Tools SetInteger() API
+  - **Note**: Warm start effectiveness needs further evaluation
+    - May help MIP solver converge faster in some cases
+    - Could potentially lead solver away from optimal if greedy solution is poor
+    - Needs benchmarking to measure actual impact on solve time
+  - Configuration: Set `secondStepSolverType = "GREEDY_WARMSTART"` in config.json
   - Location: `greedyScheduler.cpp::generateWarmStart()` and `secondStepSolver.cpp`
 
 ### Potential Future Optimizations

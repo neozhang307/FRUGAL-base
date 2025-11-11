@@ -52,6 +52,10 @@ struct IntegerProgrammingSolver {
   std::unique_ptr<MPSolver> solver;  // Google OR-Tools Mixed Integer Programming solver
   double infinity;                   // Representation of infinity for the solver
 
+  // Warm start support
+  std::map<std::string, double> warmStartValues;  // Variable name -> initial value mapping
+  bool useWarmStart = false;  // Whether to use warm start
+
   // Decision variables for the integer programming problem
   
   // Binary variables for initial memory placement
@@ -1435,11 +1439,24 @@ struct IntegerProgrammingSolver {
   }
 
   /**
+   * @brief Set warm start values for the MIP solver
+   * @param warmStart Map of variable names to initial values
+   *
+   * This provides an initial feasible solution to the MIP solver,
+   * which can significantly reduce solve time by starting from a good solution.
+   */
+  void setWarmStart(const std::map<std::string, double>& warmStart) {
+    warmStartValues = warmStart;
+    useWarmStart = true;
+    LOG_TRACE_WITH_INFO("Warm start enabled with %zu variable hints", warmStartValues.size());
+  }
+
+  /**
    * @brief Main solver method for the memory optimization problem
    * @param input Input parameters for the optimization
    * @param verbose Whether to print detailed debugging information
    * @return The optimized memory management strategy
-   * 
+   *
    * This function sets up and solves the Mixed Integer Programming (MIP) problem
    * that finds the optimal memory management strategy to minimize peak memory usage.
    */
@@ -1595,10 +1612,34 @@ struct IntegerProgrammingSolver {
       // Enable aggressive heuristics for faster feasible solution finding
       // Note: These require Gurobi-specific API access beyond OR-Tools
       // For now, rely on the MIP gap tolerance to accept suboptimal solutions
-      
+
       // Alternative: Set solver focus to finding feasible solutions quickly
       // This is a Gurobi-specific parameter that might not be available in OR-Tools
       // solverParam.SetIntegerParam(MPSolverParameters::MIP_STRATEGY, 1); // Focus on feasibility
+    }
+
+    // Apply warm start if provided
+    if (useWarmStart) {
+      LOG_TRACE_WITH_INFO("Applying warm start hints to %zu variables", warmStartValues.size());
+      int hintsApplied = 0;
+
+      // Apply warm start values to variables
+      // Note: OR-Tools uses variable->SetInteger() for integer/boolean hints
+      for (const auto& [varName, value] : warmStartValues) {
+        // Find the variable by iterating through all variables
+        const auto& vars = solver->variables();
+        for (MPVariable* var : vars) {
+          if (var->name() == varName) {
+            // Set the initial hint value (rounded to nearest integer for boolean vars)
+            int intValue = static_cast<int>(value + 0.5);
+            var->SetInteger(intValue);
+            hintsApplied++;
+            break;
+          }
+        }
+      }
+
+      LOG_TRACE_WITH_INFO("Successfully applied %d warm start hints", hintsApplied);
     }
 
     // Measure solver execution time
@@ -1699,11 +1740,13 @@ SecondStepSolver::Output SecondStepSolver::solve(SecondStepSolver::Input &&input
     // Use greedy scheduler to generate warm start, then solve with MIP
     LOG_TRACE_WITH_INFO("Using GREEDY warm start + MIP solver");
 
-    // TODO: Implement warm start integration
-    // For now, fall back to regular MIP solver
-    LOG_TRACE_WITH_INFO("Warm start not yet implemented, falling back to MIP");
+    // Generate warm start using greedy scheduler
+    GreedyScheduler greedy;
+    auto warmStart = greedy.generateWarmStart(input);
 
+    // Create MIP solver with warm start
     IntegerProgrammingSolver solver;
+    solver.setWarmStart(warmStart);
     return solver.solve(std::move(input));
 
   } else {

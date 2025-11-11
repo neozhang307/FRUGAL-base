@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <numeric>
+#include <fmt/core.h>
 
+#include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "../../utilities/utilities.hpp"
 
@@ -207,16 +209,128 @@ std::map<std::string, double> GreedyScheduler::generateWarmStart(const SecondSte
   LOG_TRACE();
   LOG_TRACE_WITH_INFO("Generating warm start solution for MIP solver");
 
-  // Generate a greedy schedule
-  auto schedule = generateSchedule(input);
+  const int numTasks = input.taskGroupRunningTimes.size();
+  const int numArrays = input.arraySizes.size();
 
-  // TODO: Convert schedule to Gurobi variable format
-  // This requires understanding the variable naming scheme used in secondStepSolver.cpp
-  // For now, return empty map (warm start not yet implemented)
+  // Decide which mode to use based on memory constraints
+  Config warmStartConfig;
 
+  // Calculate total memory needed (all arrays on device)
+  double totalMemoryBytes = 0.0;
+  for (size_t arraySize : input.arraySizes) {
+    totalMemoryBytes += arraySize;
+  }
+  double totalMemoryMiB = totalMemoryBytes / (1024.0 * 1024.0);
+
+  // Check if there's a real memory constraint
+  auto& config = ConfigurationManager::getConfig().optimization;
+  bool hasMemoryConstraint = (config.maxPeakMemoryUsageInMiB > 0.0) &&
+                             (config.maxPeakMemoryUsageInMiB < totalMemoryMiB);
+
+  if (hasMemoryConstraint) {
+    LOG_TRACE_WITH_INFO("Memory constraint detected (%.2f MiB < %.2f MiB total), using MIN_MEMORY mode for warm start",
+                        config.maxPeakMemoryUsageInMiB, totalMemoryMiB);
+    warmStartConfig.mode = Mode::MIN_MEMORY;
+  } else {
+    LOG_TRACE_WITH_INFO("No effective memory constraint (%.2f MiB >= %.2f MiB total), using MAX_PERFORMANCE mode for warm start",
+                        config.maxPeakMemoryUsageInMiB, totalMemoryMiB);
+    warmStartConfig.mode = Mode::MAX_PERFORMANCE;
+  }
+
+  // Generate greedy schedule with selected mode
+  GreedyScheduler tempScheduler(warmStartConfig);
+  auto schedule = tempScheduler.generateSchedule(input);
+
+  // Convert greedy schedule to Gurobi variable format
   std::map<std::string, double> warmStart;
 
-  LOG_TRACE_WITH_INFO("Warm start generation not yet fully implemented");
+  // 1. Initial allocation variables: I_{j}
+  // Arrays in indicesOfArraysInitiallyOnDevice should have I_{j} = 1
+  std::set<ArrayId> initialArrays(schedule.indicesOfArraysInitiallyOnDevice.begin(),
+                                    schedule.indicesOfArraysInitiallyOnDevice.end());
+  for (int j = 0; j < numArrays; j++) {
+    std::string varName = fmt::format("I_{{{}}}", j);
+    warmStart[varName] = initialArrays.count(j) > 0 ? 1.0 : 0.0;
+  }
+
+  // 2. Prefetch variables: p_{i,j}
+  // Set to 1 if (i,j) is in prefetches list
+  for (int i = 0; i < numTasks; i++) {
+    for (int j = 0; j < numArrays; j++) {
+      std::string varName = fmt::format("p_{{{}, {}}}", i, j);
+      bool isPrefetched = false;
+      for (const auto& prefetch : schedule.prefetches) {
+        if (std::get<0>(prefetch) == i && std::get<1>(prefetch) == j) {
+          isPrefetched = true;
+          break;
+        }
+      }
+      warmStart[varName] = isPrefetched ? 1.0 : 0.0;
+    }
+  }
+
+  // 3. Offload variables: o_{i,j,k}
+  // Set to 1 if (i,j,k) is in offloadings list
+  for (int i = 0; i < numTasks; i++) {
+    for (int j = 0; j < numArrays; j++) {
+      for (int k = 0; k < numTasks; k++) {
+        std::string varName = fmt::format("o_{{{},{},{}}}", i, j, k);
+        bool isOffloaded = false;
+        for (const auto& offload : schedule.offloadings) {
+          if (std::get<0>(offload) == i &&
+              std::get<1>(offload) == j &&
+              std::get<2>(offload) == k) {
+            isOffloaded = true;
+            break;
+          }
+        }
+        warmStart[varName] = isOffloaded ? 1.0 : 0.0;
+      }
+    }
+  }
+
+  // 4. State variables: x_{i,j} and y_{i,j}
+  // These track which arrays are allocated/available at each task
+  // Simulate the schedule to determine these states
+  std::set<ArrayId> arraysOnDevice;
+
+  // Start with initial arrays
+  for (ArrayId arrayId : schedule.indicesOfArraysInitiallyOnDevice) {
+    arraysOnDevice.insert(arrayId);
+  }
+
+  for (int i = 0; i < numTasks; i++) {
+    // Apply prefetches for this task
+    for (const auto& prefetch : schedule.prefetches) {
+      if (std::get<0>(prefetch) == i) {
+        arraysOnDevice.insert(std::get<1>(prefetch));
+      }
+    }
+
+    // Set y_{i,j} = 1 if array j is available at start of task i
+    for (int j = 0; j < numArrays; j++) {
+      std::string yVarName = fmt::format("y_{{{}, {}}}", i, j);
+      warmStart[yVarName] = arraysOnDevice.count(j) > 0 ? 1.0 : 0.0;
+    }
+
+    // Set x_{i,j} = 1 if array j is allocated on device at task i
+    for (int j = 0; j < numArrays; j++) {
+      std::string xVarName = fmt::format("x_{{{}, {}}}", i, j);
+      warmStart[xVarName] = arraysOnDevice.count(j) > 0 ? 1.0 : 0.0;
+    }
+
+    // Apply offloads after this task
+    for (const auto& offload : schedule.offloadings) {
+      if (std::get<0>(offload) == i) {
+        arraysOnDevice.erase(std::get<1>(offload));
+      }
+    }
+  }
+
+  LOG_TRACE_WITH_INFO("Generated warm start with %zu variable assignments", warmStart.size());
+  LOG_TRACE_WITH_INFO("  Initial arrays: %zu", schedule.indicesOfArraysInitiallyOnDevice.size());
+  LOG_TRACE_WITH_INFO("  Prefetches: %zu", schedule.prefetches.size());
+  LOG_TRACE_WITH_INFO("  Offloads: %zu", schedule.offloadings.size());
 
   return warmStart;
 }
