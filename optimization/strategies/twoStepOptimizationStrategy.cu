@@ -8,6 +8,7 @@
 #include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "../../utilities/types.hpp"
+#include "../minimalMemoryCalculator.hpp"
 #include "firstStepSolver.hpp"
 #include "secondStepSolver.hpp"
 #include "strategies.hpp"
@@ -471,6 +472,44 @@ OptimizationOutput TwoStepOptimizationStrategy::run(OptimizationInput &input) {
   if (ConfigurationManager::getConfig().execution.enableDebugOutput) {
     printOptimizationInput(input);
   }
+
+  // ======= MEMORY BOUND FEASIBILITY CHECK =======
+  // Check if the configured memory bound is achievable before starting optimization
+  const double configuredMemoryBoundMiB = ConfigurationManager::getConfig().optimization.maxPeakMemoryUsageInMiB;
+
+  // Only perform check if a memory bound is set (non-zero)
+  if (configuredMemoryBoundMiB > 0) {
+    // Calculate the theoretical minimum memory required
+    MinimalMemoryCalculator calculator;
+    auto minMemResult = calculator.calculateFromOptimizationInput(input);
+
+    // Check if the configured bound is below the theoretical minimum
+    if (configuredMemoryBoundMiB < minMemResult.minimalMemoryMiB) {
+      std::cerr << "\n========================================" << std::endl;
+      std::cerr << "ERROR: MEMORY BOUND INFEASIBLE!" << std::endl;
+      std::cerr << "========================================" << std::endl;
+      std::cerr << "Configured memory bound: " << configuredMemoryBoundMiB << " MiB" << std::endl;
+      std::cerr << "Theoretical minimum memory: " << minMemResult.minimalMemoryMiB << " MiB" << std::endl;
+      std::cerr << "Critical task requiring most memory: Task " << minMemResult.criticalTaskIndex
+                << " (needs " << minMemResult.perTaskMemoryMiB[minMemResult.criticalTaskIndex] << " MiB)" << std::endl;
+      std::cerr << "\nThe configured memory bound is " << (minMemResult.minimalMemoryMiB - configuredMemoryBoundMiB)
+                << " MiB below the theoretical minimum." << std::endl;
+      std::cerr << "No optimization strategy can achieve this memory target." << std::endl;
+      std::cerr << "\nSuggested actions:" << std::endl;
+      std::cerr << "1. Increase maxPeakMemoryUsageInMiB to at least " << minMemResult.minimalMemoryMiB << " MiB" << std::endl;
+      std::cerr << "2. Or set maxPeakMemoryUsageInMiB to 0 to disable the memory constraint" << std::endl;
+      std::cerr << "3. Or reduce the problem size to lower memory requirements" << std::endl;
+      std::cerr << "========================================\n" << std::endl;
+
+      // Exit the program as optimization cannot proceed
+      exit(1);
+    }
+
+    // Memory bound is feasible, print confirmation
+    std::cout << "[MEMORY-BOUND-CHECK] Configured memory bound (" << configuredMemoryBoundMiB
+              << " MiB) is feasible (minimum required: " << minMemResult.minimalMemoryMiB << " MiB)" << std::endl;
+  }
+  // ======= END MEMORY BOUND FEASIBILITY CHECK =======
 
   std::cout << "[DEBUG-OUTPUT-OPTIMIZER] ==================== STARTING STEP 1: TASK SCHEDULING OPTIMIZATION ====================" << std::endl;
   

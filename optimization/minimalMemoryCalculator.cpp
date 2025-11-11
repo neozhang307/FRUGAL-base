@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "../utilities/logger.hpp"
+#include "../profiling/memoryManager.hpp"
 
 namespace memopt {
 
@@ -162,16 +163,17 @@ MinimalMemoryCalculator::convertOptimizationInputToStageInfo(const OptimizationI
         for (void* ptr : taskGroup.dataDependency.inputs) {
             if (pointerToArrayId.find(ptr) == pointerToArrayId.end()) {
                 pointerToArrayId[ptr] = nextArrayId++;
-                // We don't have size information in OptimizationInput
-                // This would need to be obtained from memory manager or profiling data
-                // For now, use a placeholder size
-                arraySizes.push_back(1024 * 1024);  // 1MB placeholder
+                // Get the actual size from MemoryManager
+                size_t actualSize = MemoryManager::getInstance().getSize(ptr);
+                arraySizes.push_back(actualSize);
             }
         }
         for (void* ptr : taskGroup.dataDependency.outputs) {
             if (pointerToArrayId.find(ptr) == pointerToArrayId.end()) {
                 pointerToArrayId[ptr] = nextArrayId++;
-                arraySizes.push_back(1024 * 1024);  // 1MB placeholder
+                // Get the actual size from MemoryManager
+                size_t actualSize = MemoryManager::getInstance().getSize(ptr);
+                arraySizes.push_back(actualSize);
             }
         }
     }
