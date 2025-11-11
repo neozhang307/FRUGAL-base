@@ -16,17 +16,18 @@
 **Focus: Start main performance improvements**
 
 #### Morning (4 hours)
-- [ ] **Minimal memory calculation**
-  - Add `calculateMinimalMemory()` to secondStepSolver.cpp
-  - For each task: sum(memory of required arrays)
-  - Take maximum across all tasks
-  - Export as constraint and metric
-  - **Deliverable**: Theoretical lower bound available
+- [x] **Minimal memory calculation** ✅ COMPLETED (2024-11-11)
+  - Created standalone `MinimalMemoryCalculator` class instead of adding to secondStepSolver
+  - Calculates sum of memory for required arrays per task
+  - Takes maximum across all tasks for theoretical lower bound
+  - Exports detailed metrics (reduction potential, critical task, per-task memory)
+  - **Deliverable**: Theoretical lower bound available and integrated
 
-- [ ] **Metric export system**
+- [ ] **Metric export system** (Partially complete)
   - Modify firstStepSolver: Export data reuse score, timing
   - Modify secondStepSolver: Export memory usage, runtime
   - JSON output format
+  - **Note**: MinimalMemoryCalculator already provides detailed metrics
   - **Deliverable**: Metrics accessible for analysis
 
 #### Afternoon (4 hours)
@@ -193,7 +194,7 @@ python batch_runner.py --experiment beam_search \
 ## Code Modifications Priority List
 
 ### Must Complete (Critical Path):
-1. **Day 1**: Minimal memory calculation
+1. **Day 1**: ✅ Minimal memory calculation (COMPLETED 2024-11-11)
 2. **Day 1-2**: Complete warm start implementation
 3. **Day 2-3**: Gurobi Top-K solution pool
 4. **Day 4**: Multiple ordering generation
