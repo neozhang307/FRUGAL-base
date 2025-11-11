@@ -63,6 +63,10 @@ struct Configuration {
     bool disableLookahead = false;    // Disable offload lookahead constraints
     bool disableLookback = false;     // Disable prefetch lookback constraints
 
+    // Second step solver configuration
+    std::string secondStepSolverType = "MIP";  // "MIP", "GREEDY", or "GREEDY_WARMSTART"
+    std::string greedySchedulerMode = "MIN_MEMORY";  // "MIN_MEMORY" or "MAX_PERFORMANCE"
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(
       Optimization,
       loadExistingPlan,
@@ -93,7 +97,9 @@ struct Configuration {
       gurobiThreads,
       gurobiEnableHeuristics,
       disableLookahead,
-      disableLookback
+      disableLookback,
+      secondStepSolverType,
+      greedySchedulerMode
     );
   } optimization;
 

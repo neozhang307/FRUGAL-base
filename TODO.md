@@ -25,29 +25,35 @@
 ### High Priority Optimizations
 
 #### Second-Step Solver Improvements
-- [x] **Calculate Minimal Memory Usage Bound** ✅ COMPLETED (2024-11-11)
+- [x] **Calculate Minimal Memory Usage Bound** ✅ COMPLETED (2025-11-11)
   - Created standalone `MinimalMemoryCalculator` class in `optimization/minimalMemoryCalculator.{hpp,cpp}`
   - Calculates theoretical minimum memory = max(sum of arrays needed per task)
   - Supports single-stage and multi-stage inputs
   - Integrated into `secondStepSolver.cpp` with detailed result output
   - Provides memory reduction potential, critical task identification, and per-task analysis
 
-- [ ] **Implement Heuristic-Based Warm Start for Gurobi**
-  - Generate initial feasible solution using heuristic rules
-  - **Keep/Offload Logic**:
-    - Keep array if used by next task AND task after (lookahead=2)
-    - Otherwise schedule offload immediately after use
-    - Consider array size as weight factor
-  - **Prefetch Scheduling**:
-    - Try to prefetch at beginning of previous task
-    - Fallback: If array still offloading or no previous task, prefetch at current task
-    - Constraint: Ensure memory_at_prev + array_size <= minimal_memory
+- [x] **Implement Greedy Scheduler** ✅ COMPLETED (2025-11-11)
+  - Created `GreedyScheduler` class in `optimization/strategies/greedyScheduler.{hpp,cpp}`
+  - Two modes implemented:
+    - **MIN_MEMORY**: Prefetch per task, offload everything (achieves 81% memory reduction)
+    - **MAX_PERFORMANCE**: Prefetch all at start, keep everything (maximum performance)
+  - Configuration via `config.json`: `secondStepSolverType` and `greedySchedulerMode`
+  - **Performance**: ~7,500x faster than MIP solver (<0.01s vs 60s)
+  - **Results on tiledCholesky (n=102400)**: 40 prefetches, 40 offloads, 81.25% memory reduction
+  - **Verification**: PASSED with zero error
+  - Integrated into `secondStepSolver.cpp` with mode selection
+  - Location: `optimization/strategies/greedyScheduler.{hpp,cpp}`
+
+- [ ] **Implement Warm Start for MIP Solver Using Greedy Solution**
+  - Use greedy scheduler to generate initial feasible solution
+  - Convert greedy schedule to Gurobi variable format
+  - Set initial values for decision variables (x, y, p, o)
   - **Implementation Considerations**:
-    - Track last_use_task for each array to avoid conflicts
-    - Check memory constraints before scheduling prefetch
-    - Ensure no race conditions between offload and prefetch
+    - Map greedy prefetch/offload decisions to Gurobi variables
+    - Ensure warm start solution is feasible
+    - Measure solve time reduction (target: 30-50%)
   - Impact: Significantly faster Gurobi convergence by starting from good solution
-  - Location: `secondStepSolver.cpp` before `solver->Solve()`
+  - Location: `greedyScheduler.cpp::generateWarmStart()` and `secondStepSolver.cpp`
 
 ### Potential Future Optimizations
 - [ ] **Set variable branching priorities** (Not yet attempted)

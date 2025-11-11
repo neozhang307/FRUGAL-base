@@ -29,6 +29,14 @@ target_link_libraries(
   fmt::fmt
 )
 
+add_library(greedyScheduler STATIC greedyScheduler.cpp)
+target_link_libraries(
+  greedyScheduler
+  PUBLIC
+  utilities
+  fmt::fmt
+)
+
 add_library(secondStepSolver STATIC secondStepSolver.cpp)
 target_link_libraries(
   secondStepSolver
@@ -37,4 +45,5 @@ target_link_libraries(
   fmt::fmt
   ortools::ortools
   minimalMemoryCalculator
+  greedyScheduler
 )

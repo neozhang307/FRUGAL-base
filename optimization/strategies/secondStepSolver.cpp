@@ -13,6 +13,7 @@
 #include "../../utilities/logger.hpp"
 #include "../../utilities/utilities.hpp"
 #include "../minimalMemoryCalculator.hpp"
+#include "greedyScheduler.hpp"
 
 using namespace operations_research;
 
@@ -1662,7 +1663,7 @@ struct IntegerProgrammingSolver {
  * @brief Public solve method for the SecondStepSolver
  * @param input Input parameters with task graph and memory requirements
  * @return Output The optimized memory management strategy
- * 
+ *
  * This public method creates the internal IntegerProgrammingSolver and delegates
  * the optimization work to it. This separation is necessary because NVCC (CUDA compiler)
  * cannot directly compile OR-Tools code.
@@ -1670,11 +1671,48 @@ struct IntegerProgrammingSolver {
 SecondStepSolver::Output SecondStepSolver::solve(SecondStepSolver::Input &&input) {
   LOG_TRACE();  // Log entry point for tracing/profiling
 
-  // Create the internal solver that handles the mixed integer programming
-  IntegerProgrammingSolver solver;
-  
-  // Delegate to the MIP solver and return its results
-  return solver.solve(std::move(input));
+  // Check configuration to determine which solver to use
+  auto& config = ConfigurationManager::getConfig().optimization;
+  std::string solverType = config.secondStepSolverType;
+
+  if (solverType == "GREEDY") {
+    // Use greedy scheduler only (fast, no MIP solver)
+    LOG_TRACE_WITH_INFO("Using GREEDY scheduler (fast heuristic)");
+
+    GreedyScheduler::Config greedyConfig;
+
+    // Parse greedy mode from configuration
+    if (config.greedySchedulerMode == "MIN_MEMORY") {
+      greedyConfig.mode = GreedyScheduler::Mode::MIN_MEMORY;
+    } else if (config.greedySchedulerMode == "MAX_PERFORMANCE") {
+      greedyConfig.mode = GreedyScheduler::Mode::MAX_PERFORMANCE;
+    } else {
+      LOG_TRACE_WITH_INFO("Unknown greedy mode '%s', defaulting to MIN_MEMORY",
+                          config.greedySchedulerMode.c_str());
+      greedyConfig.mode = GreedyScheduler::Mode::MIN_MEMORY;
+    }
+
+    GreedyScheduler greedy(greedyConfig);
+    return greedy.generateSchedule(input);
+
+  } else if (solverType == "GREEDY_WARMSTART") {
+    // Use greedy scheduler to generate warm start, then solve with MIP
+    LOG_TRACE_WITH_INFO("Using GREEDY warm start + MIP solver");
+
+    // TODO: Implement warm start integration
+    // For now, fall back to regular MIP solver
+    LOG_TRACE_WITH_INFO("Warm start not yet implemented, falling back to MIP");
+
+    IntegerProgrammingSolver solver;
+    return solver.solve(std::move(input));
+
+  } else {
+    // Default: Use MIP solver
+    LOG_TRACE_WITH_INFO("Using MIP solver (optimal but slow)");
+
+    IntegerProgrammingSolver solver;
+    return solver.solve(std::move(input));
+  }
 }
 
 }  // namespace memopt

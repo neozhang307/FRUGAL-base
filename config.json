@@ -35,7 +35,9 @@
     "gurobiThreads": 0,
     "gurobiEnableHeuristics": true,
     "disableLookahead": false,
-    "disableLookback": false
+    "disableLookback": false,
+    "secondStepSolverType": "GREEDY",
+    "greedySchedulerMode": "MIN_MEMORY"
   },
   "execution": {
     "useNvlink": false,
