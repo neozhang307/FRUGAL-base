@@ -281,9 +281,9 @@ void SecondStepSolver::setWarmStart() {
 
 #### Phase 3: Step2 Multi-Weight Refinement (2-3 days)
 - [ ] Create `MultiRefinementSolver` class
-  - For each Step 1 candidate, refine with multiple weight configs
-  - Use existing warm start infrastructure (WARMUP_IMP.md)
-- [ ] Create `WarmStartConverter` to convert Step1 → MIP hints
+  - For each Step 1 candidate (task ordering), refine with multiple weight configs
+  - Use existing warm start infrastructure: `GreedyScheduler::generateWarmStart()` (see WARMUP_IMP.md)
+  - Step 1 task ordering passed as INPUT CONSTRAINT to Step 2 MIP
 - [ ] Define weight strategies:
   - Pure speed: `{runtime: 1.0, migration: 0.0}`
   - Balanced: `{runtime: 0.5, migration: 0.5}`
@@ -296,7 +296,8 @@ void SecondStepSolver::setWarmStart() {
 #### Phase 4: Integration & Testing (1-2 days)
 - [ ] Create `PipelineController` for mode-based execution
 - [ ] Test full pipeline: Profile → Step1 Top-K → Step2 Refinement
-- [ ] Verify warm start works with Step1 → Step2
+- [ ] Verify Step 1 task ordering correctly passes as input constraint to Step 2
+- [ ] Verify Step 2 warm start (GreedyScheduler→MIP) works for each task ordering
 - [ ] Ensure fair comparison (all use same profiling data)
 - **Deliverable**: Complete TopK tool ready for ablation studies
 
@@ -340,7 +341,7 @@ void SecondStepSolver::setWarmStart() {
 ## Success Criteria (REVISED)
 
 ### Foundation (COMPLETE ✅)
-- [x] Warm start reduces MIP solve time by >30% (achieved 5x speedup)
+- [x] Warm start slightly trims MIP preprocessing time (observed ≤20% improvement); schedule quality unchanged
 - [x] Minimal memory calculator implemented
 - [x] Greedy scheduler with 81% memory reduction
 

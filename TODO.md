@@ -51,7 +51,7 @@
     - If `maxPeakMemoryUsageInMiB >= totalMemory`: Uses MAX_PERFORMANCE greedy mode
   - Converts greedy schedule to Gurobi variable format (I, p, o, x, y variables)
   - Applies variable hints to MIP solver using OR-Tools SetInteger() API
-  - **Results**: Expected 10-20% speedup in MIP solve time, if any (benchmarking pending)
+  - **Results**: At most ~10-20% reduction in Step 2 preprocessing (MIP solve) time; no change to final schedule quality
   - Greedy provides feasible (not necessarily optimal) solution as starting point
   - Configuration: Set `secondStepSolverType = "GREEDY_WARMSTART"` in config.json
   - Location: `greedyScheduler.cpp::generateWarmStart()` and `secondStepSolver.cpp`
@@ -78,11 +78,12 @@
     2. `Step1Serializer` - Save/load beam search Top-K candidates
     3. `MultiRefinementSolver` - Refine each candidate with multiple weight configs
     4. `PipelineController` - Mode-based execution (PROFILE/STEP1/STEP2)
-    5. `WarmStartConverter` - Convert Step1 → Step2 warm start hints
   - **Architecture**:
     - Stage 0: Profile once, save JSON, reuse forever
-    - Stage 1: Beam search Top-K (fast exploration, ~2s)
+    - Stage 1: Beam search Top-K (fast exploration, ~2s) → produces task orderings
     - Stage 2: Multi-weight refinement per candidate (precise, ~5-10s each)
+      - Step 1 task ordering used as INPUT CONSTRAINT (not warm start)
+      - Warm start from GreedyScheduler::generateWarmStart() (already implemented)
   - **Benefits**:
     - Fair comparisons (same profiling data)
     - Rapid iteration (don't re-run entire pipeline)
@@ -298,9 +299,12 @@
   - **Components Needed** (see "TopK Clean Redesign" above):
     1. **ProfilingSerializer**: Save/load profiling results
     2. **Step1Serializer**: Save/load beam search Top-K
-    3. **MultiRefinementSolver**: Refine with multiple weights
+    3. **MultiRefinementSolver**: Refine with multiple weights (uses existing GreedyScheduler for warm start)
     4. **PipelineController**: Mode-based execution
-    5. **WarmStartConverter**: Step1 → Step2 warm start
+
+  - **Note**: Warm start already implemented via `GreedyScheduler::generateWarmStart()` (see WARMUP_IMP.md)
+    - Step 1 output (task ordering) = CONSTRAINT for Step 2, not warm start source
+    - Warm start = Greedy migration schedule for the given task ordering
 
   - **Enables All Ablation Studies**:
     - Experiment 3: Data reuse validation
