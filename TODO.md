@@ -9,8 +9,8 @@
 - [x] Documented CUDA graph memory management findings
 
 ## ✔️ Resolved/Proven Unnecessary
-- [x] **Phase 1 Optimization** - Solved with Beam Search (configurable width=100 provides fast, good solutions)
-- [x] **Phase 2 Variable Reduction** - Reduced variance by using dependencies as constraints
+- [x] **Phase 1 (Task Ordering)** - Solved with Beam Search (configurable width=100 provides fast, good solutions)
+- [x] **Phase 2 (Migration Scheduling)** - MIP solver improved with variable reduction using dependencies as constraints; Greedy scheduler and warmup MIP alternatives implemented
 - [x] ~~**Tighten big-M constraints**~~ - **PROVEN USELESS**: Tested but showed no improvement
 - [x] ~~**Additional Gurobi parameter tuning**~~ - **PROVEN USELESS**: Current settings (60s timeout, 10% MIP gap) are sufficient
 
@@ -51,12 +51,63 @@
     - If `maxPeakMemoryUsageInMiB >= totalMemory`: Uses MAX_PERFORMANCE greedy mode
   - Converts greedy schedule to Gurobi variable format (I, p, o, x, y variables)
   - Applies variable hints to MIP solver using OR-Tools SetInteger() API
-  - **Note**: Warm start effectiveness needs further evaluation
-    - May help MIP solver converge faster in some cases
-    - Could potentially lead solver away from optimal if greedy solution is poor
-    - Needs benchmarking to measure actual impact on solve time
+  - **Results**: Expected 10-20% speedup in MIP solve time, if any (benchmarking pending)
+  - Greedy provides feasible (not necessarily optimal) solution as starting point
   - Configuration: Set `secondStepSolverType = "GREEDY_WARMSTART"` in config.json
   - Location: `greedyScheduler.cpp::generateWarmStart()` and `secondStepSolver.cpp`
+  - Documentation: See WARMUP_IMP.md
+
+#### Top-K Solution Generation (Ablation Study Tool)
+- [x] **TopK Solution Pool - First Attempt** ❌ FAILED (2025-11-12)
+  - Attempted: Direct Gurobi solution pool integration in Step 2 MIP
+  - Configuration: `PoolSolutions=10`, `PoolSearchMode=2`, `PoolGap=0.50`
+  - **Problem**: Unreliable - returns 1-2 solutions instead of 10
+  - **Root Cause**: Gurobi presolve reduces solution space, non-deterministic results
+  - **Lessons Learned**:
+    - Multi-weight strategy works better than solution pool
+    - Need decoupled pipeline (profile once, iterate rapidly)
+    - Both Step 1 and Step 2 Top-K are valuable
+  - **Status**: Reverted, clean redesign planned
+  - Documentation: See ABLATION.md for detailed failure analysis
+
+- [ ] **TopK Clean Redesign** ⏳ HIGH PRIORITY (For reviewers)
+  - **Why**: Reviewers require ablation studies to validate design decisions
+  - **Approach**: Three-stage decoupled pipeline + multi-weight strategy
+  - **Components Needed**:
+    1. `ProfilingSerializer` - Save/load profiling results
+    2. `Step1Serializer` - Save/load beam search Top-K candidates
+    3. `MultiRefinementSolver` - Refine each candidate with multiple weight configs
+    4. `PipelineController` - Mode-based execution (PROFILE/STEP1/STEP2)
+    5. `WarmStartConverter` - Convert Step1 → Step2 warm start hints
+  - **Architecture**:
+    - Stage 0: Profile once, save JSON, reuse forever
+    - Stage 1: Beam search Top-K (fast exploration, ~2s)
+    - Stage 2: Multi-weight refinement per candidate (precise, ~5-10s each)
+  - **Benefits**:
+    - Fair comparisons (same profiling data)
+    - Rapid iteration (don't re-run entire pipeline)
+    - Reproducible results (no solution pool unreliability)
+  - **Deliverables**: Ablation studies for reviewers
+    - Data reuse metric validation
+    - Beam width analysis
+    - Solution diversity metrics
+  - Documentation: See TOPK.md for complete design
+  - Priority: **HIGH** - blocking paper acceptance
+
+#### Epsilon-Constraint Refinement (Production Feature)
+- [ ] **Epsilon Refinement Implementation** ⏳ Medium Priority (After TopK)
+  - **Why**: Provide users explicit control over runtime-migration tradeoffs
+  - **Problem**: Weight-based approach is hard to tune, discontinuous jumps
+  - **Solution**: Two-step epsilon-constraint optimization
+    1. Minimize runtime → get optimal_runtime
+    2. Add constraint: runtime ≤ (1+ε) × optimal_runtime, minimize migrations
+  - **Components Needed**:
+    - `EpsilonRefiner` class with `refine()` and `refineFromSolution()`
+    - `SecondStepSolver::SolveOptions` for runtime constraints
+    - Configuration: `epsilonRefine.enabled`, `epsilonRefine.epsilon`
+  - **Expected Result**: "Fastest schedule, then fewest migrations within 5% runtime"
+  - Documentation: See EPSILON_REFINE.md for complete design
+  - Priority: Medium - implement after TopK ablation tool
 
 ### Potential Future Optimizations
 - [ ] **Set variable branching priorities** (Not yet attempted)
@@ -164,39 +215,43 @@
 
 ### Design Decision Validation Experiments
 
-#### Core Design Validation
+> **NOTE**: Experiments 3-6 require TopK tool implementation first (see "TopK Clean Redesign" above)
+
+#### Core Design Validation (For Reviewer Responses)
 - [ ] **Experiment 3: Data Reuse Metric Validation**
   - **Objective**: Verify if data reuse is suitable metric to bridge two-stage optimization
+  - **Prerequisites**: ⚠️ Requires TopK tool with Step1 Top-K generation
   - **Methodology**:
-    1. Generate ALL valid topological orderings (for small graphs)
+    1. Use TopK tool to generate multiple task orderings (Step 1 Top-K)
     2. Sort by data reuse metric
-    3. Create optimization plans for each ordering
-    4. Systematically test all plans
+    3. Refine each ordering with Step 2 MIP
+    4. Measure actual execution performance
   - **Analysis**:
     - Plot: Data Reuse Score vs Final Performance
     - Question: Is higher reuse always better? What about order-2 reuse?
-    - Identify if there's a threshold where reuse stops mattering
-  - **Coding Effort**: HIGH
-    - Need to modify firstStepSolver to enumerate all solutions
-    - Create systematic testing framework
-    - ~3-4 days implementation
+    - Identify correlation strength and threshold effects
+  - **Implementation Needs**:
+    - TopK tool with profiling serialization (reuse same profiling data)
+    - Step 1 Top-K candidate generation (beam search output)
+    - Batch execution framework
 
 - [ ] **Experiment 4: Beam Search Effectiveness Analysis**
   - **Objective**: Validate beam search quality vs computational cost
+  - **Prerequisites**: ⚠️ Requires TopK tool with configurable beam width
   - **Methodology**:
-    - Test beam sizes K = [1, 5, 10, 20, 50, 100, 200, 500]
+    - Use TopK tool to test beam sizes K = [1, 5, 10, 20, 50, 100, 200, 500]
     - For each K, measure:
-      - Solution quality (data reuse score)
-      - Optimization time
-      - Final runtime performance
+      - Solution quality (data reuse score, final runtime)
+      - Step 1 optimization time
+      - Step 2 refinement time
   - **Analysis**:
     - Plot: Beam Size vs Solution Quality
     - Plot: Beam Size vs Optimization Time
     - Identify sweet spot for quality/time tradeoff
-  - **Coding Effort**: MEDIUM
-    - Parameterize beam width in config
-    - Add timing instrumentation
-    - ~2 days implementation
+  - **Implementation Needs**:
+    - Configurable beam width in TopK tool
+    - Timing instrumentation at each stage
+    - Decoupled pipeline for fair comparison
 
 - [ ] **Experiment 5: Window Size Impact Study**
   - **Objective**: Understand preprocessing time vs performance tradeoff
@@ -216,36 +271,44 @@
     - May require optimizer modifications
     - ~2-3 days implementation
 
-- [ ] **Experiment 6: Top-K Schedule Analysis**
-  - **Objective**: Explore alternative scheduling solutions
+- [ ] **Experiment 6: Solution Space Diversity Analysis**
+  - **Objective**: Understand diversity of alternative scheduling solutions
+  - **Prerequisites**: ⚠️ Requires TopK tool (Step 2 multi-weight refinement)
   - **Methodology**:
-    - Configure Gurobi to find top-K solutions
+    - Use TopK tool to generate diverse solutions via multi-weight strategy
+    - For each Step 1 candidate, refine with different weight configs:
+      - Pure speed: `{runtime: 1.0, migration: 0.0}`
+      - Balanced: `{runtime: 0.5, migration: 0.5}`
+      - Minimal migration: `{runtime: 0.0, migration: 1.0}`
     - Test each solution's actual performance
-    - Analyze diversity of solutions
+    - Measure diversity: Hamming distance, Pareto frontiers
+  - **Analysis**:
+    - Plot: Runtime vs Migrations (Pareto frontier)
+    - Hamming distance between solutions
+    - Identify solution clusters and trade-off regions
   - **Implementation Needs**:
-    - Gurobi solution pool feature
-    - Multiple solution extraction
-    - Performance testing framework
-  - **Coding Effort**: HIGH
-    - Gurobi API changes for solution pool
-    - Solution management infrastructure
-    - ~3-4 days implementation
+    - TopK tool with multi-weight refinement (see TOPK.md)
+    - NOT Gurobi solution pool (unreliable - see ABLATION.md)
 
 #### Infrastructure Requirements
-- [ ] **Evaluation Framework Development**
-  - **Components Needed**:
-    1. **Solution Enumerator**: Generate all/many task orderings
-    2. **Batch Tester**: Run multiple configurations systematically
-    3. **Metric Collector**: Gather all relevant metrics
-    4. **Analysis Tools**: Generate plots and statistics
+- [x] **Warm Start Infrastructure** ✅ COMPLETED (2025-11-11)
+  - Foundation for TopK tool (see WARMUP_IMP.md)
 
-  - **Current Codebase Limitations**:
-    - No support for enumerating multiple solutions
-    - No batch testing infrastructure
-    - Limited metric export capabilities
-    - Gurobi configured for single solution only
+- [ ] **TopK Tool Development** ⏳ HIGH PRIORITY
+  - **Components Needed** (see "TopK Clean Redesign" above):
+    1. **ProfilingSerializer**: Save/load profiling results
+    2. **Step1Serializer**: Save/load beam search Top-K
+    3. **MultiRefinementSolver**: Refine with multiple weights
+    4. **PipelineController**: Mode-based execution
+    5. **WarmStartConverter**: Step1 → Step2 warm start
 
-  - **Total Estimated Effort**: 10-12 days for complete framework
+  - **Enables All Ablation Studies**:
+    - Experiment 3: Data reuse validation
+    - Experiment 4: Beam search effectiveness
+    - Experiment 6: Solution diversity
+
+  - **Estimated Effort**: 1-2 weeks for complete implementation
+  - Documentation: See TOPK.md for detailed design
 
 ### Benchmarks and Validation
 - [ ] **Add ResNet benchmark**

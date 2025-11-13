@@ -2,8 +2,8 @@
 
 ## Project Status (Updated: November 2024)
 - **Branch**: CGO26/master (main development)
-- **Phase 1 Optimization**: ✅ SOLVED - Beam search with configurable width provides fast solutions
-- **Phase 2 Optimization**: ✅ Improved - Variable reduction using dependencies as constraints
+- **Phase 1 (Task Ordering)**: ✅ SOLVED - Beam search with configurable width provides fast solutions
+- **Phase 2 (Migration Scheduling)**: ✅ IMPROVED - MIP solver with variable reduction optimization; Greedy scheduler and warmup MIP alternatives implemented
 - **Current Focus**: Warm start implementation, Top-K solutions, validation experiments
 
 ## Git Usage Rules (IMPORTANT - ALWAYS FOLLOW)

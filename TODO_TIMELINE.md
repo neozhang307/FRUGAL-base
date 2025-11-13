@@ -1,12 +1,16 @@
-# FRUGAL Development Timeline - Code Implementation Focus (5 Days)
+# FRUGAL Development Timeline - REVISED
+
+**Last Updated**: November 2025
+**Status**: Days 1-2 complete, Days 2-5 REVISED after ablation lessons
 
 ## Overview
-**Goal**: Complete all code modifications within 5 days. Evaluation/data collection can run in parallel on multiple machines afterward.
+**Original Goal**: Complete all code modifications within 5 days
+**Reality**: Day 2 afternoon attempt (Gurobi solution pool) failed - pivot to clean redesign
 
-### Three Development Tracks:
-1. **Track 1**: Minimal Memory & Warm Start (Performance optimization)
-2. **Track 2**: Top-K Solution Support (Gurobi solution pool)
-3. **Track 3**: Design & Model Verification Infrastructure
+### Revised Development Tracks:
+1. **Track 1**: ✅ Minimal Memory & Warm Start (COMPLETE)
+2. **Track 2**: 🔄 Top-K Solution Support (REVISED - multi-weight strategy instead of solution pool)
+3. **Track 3**: ⏳ Design & Model Verification Infrastructure (Depends on Track 2)
 
 ---
 
@@ -63,39 +67,35 @@
   - **Deliverable**: Warm start implementation complete, needs evaluation
 
 #### Afternoon (4 hours)
-- [ ] **Gurobi Top-K solution pool setup**
-  - Add solution pool parameters to config.json:
-    - `poolSolutions`: number of solutions to find
-    - `poolSearchMode`: 0/1/2 (different strategies)
-    - `poolGap`: acceptable suboptimality gap
-  - Modify secondStepSolver initialization
-  - **Deliverable**: Gurobi configured for multiple solutions
+- [x] **Gurobi Top-K solution pool setup** ❌ FAILED (2025-11-12)
+  - Attempted: Direct solution pool integration in Step 2 MIP
+  - Configuration: `PoolSolutions=10`, `PoolSearchMode=2`, `PoolGap=0.50`
+  - **Problem**: Unreliable - returns 1-2 solutions instead of 10
+  - **Root Cause**: Gurobi presolve reduces solution space, non-deterministic
+  - **Decision**: REVERTED - pivot to clean redesign
+  - **Lessons Learned**: See ABLATION.md for detailed analysis
 
 ---
 
-### Day 3: Complete Top-K & Integration
-**Focus: Extract multiple solutions, test warm start**
+### Day 3: Complete Top-K & Integration (ORIGINAL PLAN - OBSOLETE)
+**Status**: ❌ Day 2 afternoon failure requires plan revision
 
-#### Morning (4 hours)
-- [ ] **Top-K solution extraction**
-  - After solve(), extract all solutions from pool:
-    ```cpp
-    for (int i = 0; i < model.get(GRB_IntAttr_SolCount); i++) {
-        model.set(GRB_IntParam_SolutionNumber, i);
-        // Extract and store solution i
-    }
-    ```
-  - Store each solution's decisions
-  - Export to JSON with objective values
-  - **Deliverable**: Can retrieve K solutions
+~~**Focus: Extract multiple solutions, test warm start**~~
 
-#### Afternoon (4 hours)
-- [ ] **Integration testing**
-  - Test warm start with Gurobi
-  - Verify warm start reduces solve time
-  - Test Top-K extraction
-  - Ensure all solutions are valid
-  - **Deliverable**: Warm start + Top-K working together
+**What Happened**:
+- Solution pool approach proved unreliable
+- Discovered need for decoupled pipeline architecture
+- Learned multi-weight strategy is more effective
+
+**New Plan**: See "REVISED TIMELINE" section below
+
+#### Morning (4 hours) - OBSOLETE
+- ~~[ ] **Top-K solution extraction**~~ ❌ Not viable with solution pool
+  - Problem: Can only extract 1-2 solutions, not 10
+  - Cannot build reliable ablation studies on this
+
+#### Afternoon (4 hours) - OBSOLETE
+- ~~[ ] **Integration testing**~~ ❌ Cannot test unreliable feature
 
 ---
 
@@ -254,15 +254,123 @@ void SecondStepSolver::setWarmStart() {
 
 ---
 
-## Success Criteria
-- [ ] Warm start reduces Gurobi solve time by >30%
-- [ ] Can extract and test top-10 solutions
-- [ ] All metrics exported to JSON
-- [ ] Batch runner can execute parameter sweeps
-- [ ] Can generate 100+ valid orderings for testing
+## REVISED TIMELINE (Post-Ablation)
 
-## Risk Mitigation
-- If warm start is complex → Simplify prefetch logic
-- If Top-K has issues → At minimum get top-3 working
-- If batch runner delayed → Use simple shell scripts
-- Focus on getting core features working over perfect implementation
+**Current Status**: Foundation complete (warm start), pivot to clean TopK redesign
+
+### Week 1-2: TopK Tool Implementation (HIGH PRIORITY)
+**Goal**: Enable ablation studies for reviewer responses
+
+#### Phase 1: Profiling Serialization (2-3 days)
+- [ ] Create `ProfilingSerializer` class
+  - Save profiling results (task graph, timings, array metadata) to JSON
+  - Load profiling results from JSON
+  - Ensure reproducibility (same profiling → same optimization results)
+- [ ] Add execution mode: `--mode=PROFILE`
+- [ ] Test: Profile once, reuse across multiple optimization runs
+- **Deliverable**: Can profile once, iterate rapidly on optimization
+
+#### Phase 2: Step1 Top-K Generation (2-3 days)
+- [ ] Modify `BeamSearch` to return Top-K candidates (not just best)
+- [ ] Create `Step1Serializer` class
+  - Save Top-K beam search candidates to JSON
+  - Include: task orderings, data reuse scores, estimated metrics
+- [ ] Add execution mode: `--mode=STEP1 --top-k=10`
+- [ ] Test: Generate 10 diverse candidates from beam search
+- **Deliverable**: Step 1 produces Top-K candidates for exploration
+
+#### Phase 3: Step2 Multi-Weight Refinement (2-3 days)
+- [ ] Create `MultiRefinementSolver` class
+  - For each Step 1 candidate, refine with multiple weight configs
+  - Use existing warm start infrastructure (WARMUP_IMP.md)
+- [ ] Create `WarmStartConverter` to convert Step1 → MIP hints
+- [ ] Define weight strategies:
+  - Pure speed: `{runtime: 1.0, migration: 0.0}`
+  - Balanced: `{runtime: 0.5, migration: 0.5}`
+  - Minimal migration: `{runtime: 0.0, migration: 1.0}`
+  - Memory-aware: `{runtime: 0.8, migration: 0.1, memory: 0.1}`
+- [ ] Add execution mode: `--mode=STEP2 --refine-top=3`
+- [ ] Test: Refine top-3 candidates with 5 weight configs each
+- **Deliverable**: 15 refined solutions (3 × 5) for analysis
+
+#### Phase 4: Integration & Testing (1-2 days)
+- [ ] Create `PipelineController` for mode-based execution
+- [ ] Test full pipeline: Profile → Step1 Top-K → Step2 Refinement
+- [ ] Verify warm start works with Step1 → Step2
+- [ ] Ensure fair comparison (all use same profiling data)
+- **Deliverable**: Complete TopK tool ready for ablation studies
+
+**Documentation**: See TOPK.md for detailed architecture and API specs
+
+---
+
+### Week 3: Run Ablation Studies (Using TopK Tool)
+
+#### Experiment 3: Data Reuse Validation
+- [ ] Generate 50+ orderings with Step1 Top-K
+- [ ] Measure correlation: data reuse score vs actual performance
+- [ ] Create plots for reviewer responses
+
+#### Experiment 4: Beam Width Analysis
+- [ ] Test beam widths: [1, 10, 50, 100, 200, 500]
+- [ ] Plot quality vs speed tradeoff
+- [ ] Justify current beam width choice (100)
+
+#### Experiment 6: Solution Diversity
+- [ ] Generate solutions with multi-weight refinement
+- [ ] Measure Hamming distance, plot Pareto frontiers
+- [ ] Show diversity of solution space
+
+**Deliverable**: Ablation study results for reviewer responses
+
+---
+
+### Week 4+: Epsilon Refinement (Production Feature)
+**Priority**: Medium (after TopK for reviewers)
+
+- [ ] Implement `EpsilonRefiner` class
+- [ ] Add runtime constraint support to MIP solver
+- [ ] Integrate into main workflow
+- **Goal**: Give users explicit control over runtime-migration tradeoff
+
+**Documentation**: See EPSILON_REFINE.md for complete design
+
+---
+
+## Success Criteria (REVISED)
+
+### Foundation (COMPLETE ✅)
+- [x] Warm start reduces MIP solve time by >30% (achieved 5x speedup)
+- [x] Minimal memory calculator implemented
+- [x] Greedy scheduler with 81% memory reduction
+
+### TopK Tool (HIGH PRIORITY ⏳)
+- [ ] Can profile once, reuse across all experiments (fair comparison)
+- [ ] Can generate Step1 Top-K (10+ diverse candidates)
+- [ ] Can refine each candidate with multiple weight strategies
+- [ ] Warm start works for Step1 → Step2
+- [ ] All results exported to JSON with metadata
+
+### Ablation Studies (DEPENDS ON TOPK ⏳)
+- [ ] Data reuse correlation measured and plotted
+- [ ] Beam width tradeoff analysis complete
+- [ ] Solution diversity metrics calculated
+- [ ] Reviewer questions answered with data
+
+### Production Features (AFTER TOPK ⏳)
+- [ ] Epsilon refinement implemented and tested
+
+## Risk Mitigation (UPDATED)
+
+### What We Learned
+- ✅ Solution pool unreliable → Use multi-weight strategy instead
+- ✅ Profiling variability → Save and reuse profiling data
+- ✅ Tight coupling → Decouple stages for rapid iteration
+
+### Current Risks
+- **Risk**: TopK implementation takes longer than 2 weeks
+  - **Mitigation**: Phase 1-2 (profiling + Step1) are simpler, can deliver partial tool
+- **Risk**: Reviewer questions change
+  - **Mitigation**: Modular design allows adding new experiments easily
+- **Risk**: Multi-weight strategy doesn't provide enough diversity
+  - **Mitigation**: Can try more weight combinations (tested approach shows 3 distinct types)
