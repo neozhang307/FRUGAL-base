@@ -10,9 +10,10 @@ This guide explains how to use the TaskManager_v2 and memory optimization compon
 4. [Memory Registration](#memory-registration)
 5. [Execution Modes](#execution-modes)
 6. [Memory Optimization](#memory-optimization)
-7. [Advanced Usage Patterns](#advanced-usage-patterns)
-8. [Configuration Options](#configuration-options)
-9. [Best Practices](#best-practices)
+7. [Graph Profiling and Optimization](#graph-profiling-and-optimization)
+8. [Advanced Usage Patterns](#advanced-usage-patterns)
+9. [Configuration Options](#configuration-options)
+10. [Best Practices](#best-practices)
 
 ## Introduction
 
@@ -138,6 +139,100 @@ executeOptimizedGraph(
     memManager
 );
 ```
+
+## Graph Profiling and Optimization
+
+### Understanding Dummy Kernels and ProfilingContext
+
+When profiling CUDA graphs, the framework uses special "dummy kernels" as markers to identify task boundaries and stage separators. These are managed through the ProfilingContext RAII class.
+
+#### What are Dummy Kernels?
+
+Dummy kernels are special marker nodes inserted into CUDA graphs:
+- **Annotation Kernels**: Mark task boundaries and carry metadata (inputs, outputs, task IDs)
+- **Stage Separator Kernels**: Mark boundaries between optimization stages
+
+```
+Regular Graph:           [Kernel A] → [Kernel B] → [Kernel C]
+Annotated Graph:        [Annotation] → [Kernel A] → [Kernel B] → [Stage Sep] → [Annotation] → [Kernel C]
+```
+
+#### ProfilingContext Usage
+
+The ProfilingContext class manages the lifecycle of dummy kernel handles using RAII:
+
+```cpp
+#include "optimization/profilingContext.hpp"
+
+// ProfilingContext automatically registers dummy kernels on creation
+// and cleans them up on destruction
+{
+    memopt::ProfilingContext ctx;  // Registers dummy kernel handles
+
+    // Now you can profile graphs - the handles exist
+    auto optimizer = memopt::Optimizer::getInstance();
+    auto input = optimizer->profileGraph(graph);
+    auto output = optimizer->optimizeGraph(input);
+
+}  // Automatically cleans up handles when ctx goes out of scope
+```
+
+**Important**: Only one ProfilingContext should exist at a time to avoid double registration errors.
+
+### Separating Profiling and Optimization
+
+For advanced use cases (like offline optimization), you can separate the profiling and optimization phases:
+
+```cpp
+// Step 1: Profile with CUDA (requires GPU)
+{
+    memopt::ProfilingContext ctx;  // Create context for profiling
+    auto optimizer = memopt::Optimizer::getInstance();
+    auto input = optimizer->profileGraph(graph);
+
+    // Save profiling data for offline optimization
+    saveOptimizationInput(input, "profile.json");
+}
+
+// Step 2: Optimize offline (no GPU needed!)
+{
+    // No ProfilingContext needed for optimization
+    auto input = loadOptimizationInput("profile.json");
+    auto optimizer = memopt::Optimizer::getInstance();
+    auto output = optimizer->optimizeGraph(input);
+
+    // Save the optimized plan
+    writeOptimizationOutputToFile(output, "plan.json");
+}
+```
+
+### Why ProfilingContext is Necessary
+
+The `profileGraph()` function needs to identify special nodes in the graph:
+
+```cpp
+// Inside profileGraph, it needs to compare nodes against dummy kernel handles
+if (compareKernelNodeFunctionHandle(node, dummyKernelForAnnotationHandle)) {
+    // This is an annotation node - extract metadata
+}
+
+if (compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
+    // This is a stage boundary
+}
+```
+
+Without ProfilingContext:
+- Dummy kernel handles would be NULL or invalid
+- Cannot identify annotation nodes → cannot extract task metadata
+- Cannot detect multi-stage graphs
+- Profiling would fail or produce incorrect results
+
+### Best Practices for ProfilingContext
+
+1. **Create at the highest scope needed** - Don't create multiple contexts in nested functions
+2. **Let RAII handle cleanup** - Don't manually manage registration/cleanup
+3. **One context at a time** - Never create overlapping ProfilingContext instances
+4. **Not needed for optimization** - Only profiling requires the context
 
 ## Advanced Usage Patterns
 
