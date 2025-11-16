@@ -70,12 +70,21 @@ struct OptimizationInput {
 
   /**
    * @brief The execution stage this optimization input represents
-   * 
+   *
    * For multi-stage applications (separated by stage separator nodes),
    * this identifies which stage this OptimizationInput structure corresponds to.
    * Each stage is optimized independently and later merged into a unified execution plan.
    */
   int stageIndex;
+
+  /**
+   * @brief Pre-computed array sizes from profiling phase
+   *
+   * Maps memory buffer pointers to their sizes in bytes. This data is collected
+   * during the profiling phase when GPU access is available, allowing offline
+   * optimization without requiring MemoryManager access.
+   */
+  std::map<void*, size_t> arraySizes;
 };
 
 }  // namespace memopt

@@ -95,14 +95,35 @@ void saveOptimizationInput(const OptimizationInput& input, const std::string& pa
         j["taskGroupEdges"][std::to_string(from)] = toList;
     }
 
-    // Serialize array information from MemoryManager
+    // Serialize array information
     j["arrays"] = nlohmann::json::array();
-    const auto& addressToIndexMap = memManager.getAddressToIndexMap();
-    for (const auto& [ptr, arrayId] : addressToIndexMap) {
-        nlohmann::json arr;
-        arr["id"] = arrayId;
-        arr["size"] = memManager.getSize(ptr);
-        j["arrays"].push_back(arr);
+
+    // If arraySizes is populated (new path), use it
+    if (!input.arraySizes.empty()) {
+        // Build array list from arraySizes map
+        std::map<ArrayId, size_t> arrayIdToSize;
+        for (const auto& [ptr, size] : input.arraySizes) {
+            ArrayId arrayId = memManager.getArrayId(ptr);
+            if (arrayId >= 0) {
+                arrayIdToSize[arrayId] = size;
+            }
+        }
+
+        for (const auto& [arrayId, size] : arrayIdToSize) {
+            nlohmann::json arr;
+            arr["id"] = arrayId;
+            arr["size"] = size;
+            j["arrays"].push_back(arr);
+        }
+    } else {
+        // Fallback to old path using MemoryManager (for backward compatibility)
+        const auto& addressToIndexMap = memManager.getAddressToIndexMap();
+        for (const auto& [ptr, arrayId] : addressToIndexMap) {
+            nlohmann::json arr;
+            arr["id"] = arrayId;
+            arr["size"] = memManager.getSize(ptr);
+            j["arrays"].push_back(arr);
+        }
     }
 
     // Serialize application inputs/outputs
@@ -144,7 +165,9 @@ void saveOptimizationInput(const OptimizationInput& input, const std::string& pa
     LOG_TRACE_WITH_INFO("Saved OptimizationInput to %s", path.c_str());
     printf("Profiling data saved to: %s\n", path.c_str());
     printf("  Task groups: %zu\n", input.nodes.size());
-    printf("  Arrays: %zu\n", addressToIndexMap.size());
+    // Count arrays based on what we serialized
+    size_t numArrays = j["arrays"].size();
+    printf("  Arrays: %zu\n", numArrays);
 }
 
 /**
@@ -216,6 +239,7 @@ OptimizationInput loadOptimizationInput(const std::string& path) {
 
     // CRITICAL FIX: Register arrays with MemoryManager for standalone mode
     // This allows the optimization to work without actual memory pointers
+    // Also populate arraySizes map in OptimizationInput
     if (j.contains("arrays")) {
         auto& memManager = MemoryManager::getInstance();
         for (const auto& arr : j["arrays"]) {
@@ -225,6 +249,9 @@ OptimizationInput loadOptimizationInput(const std::string& path) {
             // The actual address doesn't matter since we won't dereference it
             void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
             memManager.registerManagedMemoryAddress(fakePtr, size);
+
+            // NEW: Populate arraySizes map for offline optimization
+            input.arraySizes[fakePtr] = size;
         }
     }
 
@@ -269,6 +296,10 @@ void saveOptimizationOutput(const OptimizationOutput& output, const std::string&
     for (auto i : output.nodes) {
         SerializableOptimizationOutputNode node;
         node.nodeId = i;
+        // Initialize all fields to avoid undefined behavior with uninitialized memory
+        node.taskId = -1;
+        node.arrayId = -1;
+        node.direction = OptimizationOutput::DataMovement::Direction::hostToDevice;
 
         // Get edges if they exist
         auto edgeIt = output.edges.find(i);

@@ -689,24 +689,38 @@ OptimizationInput constructOptimizationInput(
   // Set stage index (0 for single-stage graphs)
   optimizationInput.stageIndex = 0;
 
+  //---------- POPULATE ARRAY SIZES FOR OFFLINE OPTIMIZATION ----------
+  // Store ALL array sizes from MemoryManager, not just the ones used by task groups
+  // This is crucial because the optimizer uses array indices (0,1,2...) which must
+  // map to the correct array IDs (which may have gaps like 0,1,2,3,5,6,7,10,11,15)
+  auto& memManager = MemoryManager::getInstance();
+
+  // Get ALL managed addresses, including unused ones
+  const auto& addressToIndexMap = memManager.getAddressToIndexMap();
+  for (const auto& [ptr, arrayId] : addressToIndexMap) {
+    optimizationInput.arraySizes[ptr] = memManager.getSize(ptr);
+  }
+
+  LOG_TRACE_WITH_INFO("Populated %zu array sizes for offline optimization (all arrays)", optimizationInput.arraySizes.size());
+
   //---------- CALCULATE PERFORMANCE STATISTICS ----------
-  
+
   double averageTaskGroupRunningTime = 0.0;
   double averageTaskGroupDataDependencySizeInGiB = 0.0;
   double averageTaskGroupProcessingSpeed = 0.0;
-  
+
   // Process each task group
   for (const auto &tg : optimizationInput.nodes) {
     averageTaskGroupRunningTime += tg.runningTime;
 
     // Calculate total memory accessed by this task group
     size_t s = 0;
-    auto &memManager = MemoryManager::getInstance();
+    // Use arraySizes map instead of MemoryManager for size lookup
     for (auto p : tg.dataDependency.inputs) {
-      s += memManager.getSize(p);
+      s += optimizationInput.arraySizes[p];
     }
     for (auto p : tg.dataDependency.outputs) {
-      s += memManager.getSize(p);
+      s += optimizationInput.arraySizes[p];
     }
 
     // Convert bytes to GiB and accumulate statistics
@@ -744,14 +758,12 @@ OptimizationInput constructOptimizationInput(
  */
 void writeTaskGraphToDot(const OptimizationInput &optimizationInput, const std::string &outputPath) {
   LOG_TRACE_WITH_INFO("Writing task graph to DOT file: %s", outputPath.c_str());
-  
+
   std::ofstream dotFile(outputPath);
   if (!dotFile.is_open()) {
     LOG_TRACE_WITH_INFO("Failed to open DOT output file: %s", outputPath.c_str());
     return;
   }
-
-  auto &memManager = MemoryManager::getInstance();
   
   dotFile << "digraph TaskGraph {\n";
   dotFile << "  rankdir=TB;\n";
@@ -796,15 +808,27 @@ void writeTaskGraphToDot(const OptimizationInput &optimizationInput, const std::
     // Process input arrays
     for (auto ptr : taskGroup.dataDependency.inputs) {
       if (uniqueArrays.find(ptr) == uniqueArrays.end()) {
-        uniqueArrays[ptr] = memManager.getSize(ptr);
+        // Use arraySizes from OptimizationInput for size lookup
+        size_t size = 0;
+        auto it = optimizationInput.arraySizes.find(ptr);
+        if (it != optimizationInput.arraySizes.end()) {
+          size = it->second;
+        }
+        uniqueArrays[ptr] = size;
         arrayLabels[ptr] = "array_" + std::to_string(arrayCounter++);
       }
     }
-    
+
     // Process output arrays
     for (auto ptr : taskGroup.dataDependency.outputs) {
       if (uniqueArrays.find(ptr) == uniqueArrays.end()) {
-        uniqueArrays[ptr] = memManager.getSize(ptr);
+        // Use arraySizes from OptimizationInput for size lookup
+        size_t size = 0;
+        auto it = optimizationInput.arraySizes.find(ptr);
+        if (it != optimizationInput.arraySizes.end()) {
+          size = it->second;
+        }
+        uniqueArrays[ptr] = size;
         arrayLabels[ptr] = "array_" + std::to_string(arrayCounter++);
       }
     }
