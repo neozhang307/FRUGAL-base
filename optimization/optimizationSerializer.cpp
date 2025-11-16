@@ -435,4 +435,42 @@ OptimizationOutput loadOptimizationOutput(const std::string& path) {
     return output;
 }
 
+// ========== FirstStepSolver::Output Serialization Implementation ==========
+
+void saveFirstStepOutput(const FirstStepSolver::Output& output, const std::string& path) {
+    nlohmann::json j;
+    j["taskGroupExecutionOrder"] = output.taskGroupExecutionOrder;
+
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file for writing: " + path);
+    }
+    file << j.dump(2);
+    file.close();
+
+    LOG_TRACE_WITH_INFO("Saved FirstStepOutput to %s", path.c_str());
+    printf("Saved FirstStepOutput to %s (tasks: %zu)\n", path.c_str(),
+           output.taskGroupExecutionOrder.size());
+}
+
+FirstStepSolver::Output loadFirstStepOutput(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file for reading: " + path);
+    }
+
+    nlohmann::json j;
+    file >> j;
+    file.close();
+
+    FirstStepSolver::Output output;
+    output.taskGroupExecutionOrder = j["taskGroupExecutionOrder"].get<std::vector<TaskGroupId>>();
+
+    LOG_TRACE_WITH_INFO("Loaded FirstStepOutput from %s", path.c_str());
+    printf("Loaded FirstStepOutput from %s (tasks: %zu)\n", path.c_str(),
+           output.taskGroupExecutionOrder.size());
+
+    return output;
+}
+
 }  // namespace memopt

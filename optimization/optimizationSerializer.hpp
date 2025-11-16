@@ -3,6 +3,7 @@
 #include <string>
 #include "optimizationInput.hpp"
 #include "optimizationOutput.hpp"
+#include "strategies/firstStepSolver.hpp"
 
 namespace memopt {
 
@@ -54,5 +55,30 @@ void saveOptimizationOutput(const OptimizationOutput& output, const std::string&
  * @return OptimizationOutput The loaded optimized execution plan
  */
 OptimizationOutput loadOptimizationOutput(const std::string& path);
+
+// ========== FirstStepSolver::Output Serialization ==========
+
+/**
+ * @brief Save FirstStepSolver::Output to JSON file
+ *
+ * This function serializes the task scheduling results from the first
+ * optimization step, allowing it to be reused in subsequent runs.
+ *
+ * @param output The first step output containing task execution order
+ * @param path Path to the output JSON file
+ */
+void saveFirstStepOutput(const FirstStepSolver::Output& output, const std::string& path);
+
+/**
+ * @brief Load FirstStepSolver::Output from JSON file
+ *
+ * This function deserializes task scheduling results from a JSON file
+ * created by saveFirstStepOutput, allowing the second optimization step
+ * to run with a pre-computed task order.
+ *
+ * @param path Path to the input JSON file
+ * @return FirstStepSolver::Output The loaded task scheduling results
+ */
+FirstStepSolver::Output loadFirstStepOutput(const std::string& path);
 
 }  // namespace memopt

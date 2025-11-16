@@ -8,13 +8,11 @@
  */
 
 #include <iostream>
-#include <fstream>
 #include <string>
 #include <cstdlib>
 #include <fmt/core.h>
 
 #include "../include/argh.h"
-#include "../include/json.hpp"
 #include "../optimization/optimizationSerializer.hpp"
 #include "../optimization/optimizationInput.hpp"
 #include "../optimization/optimizationOutput.hpp"
@@ -41,38 +39,6 @@ namespace memopt {
 }
 
 using namespace memopt;
-
-// Local serialization functions for FirstStepSolver::Output
-void saveFirstStepOutput(const FirstStepSolver::Output& output, const std::string& path) {
-    nlohmann::json j;
-    j["taskGroupExecutionOrder"] = output.taskGroupExecutionOrder;
-
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file for writing: " + path);
-    }
-    file << j.dump(2);
-    file.close();
-
-    fmt::print("Saved FirstStepOutput to {} (tasks: {})\n", path, output.taskGroupExecutionOrder.size());
-}
-
-FirstStepSolver::Output loadFirstStepOutput(const std::string& path) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file for reading: " + path);
-    }
-
-    nlohmann::json j;
-    file >> j;
-    file.close();
-
-    FirstStepSolver::Output output;
-    output.taskGroupExecutionOrder = j["taskGroupExecutionOrder"].get<std::vector<TaskGroupId>>();
-
-    fmt::print("Loaded FirstStepOutput from {} (tasks: {})\n", path, output.taskGroupExecutionOrder.size());
-    return output;
-}
 
 void printUsage(const char* programName) {
     fmt::print("Usage: {} <input_profile.json> <output_plan.json> [options]\n", programName);
