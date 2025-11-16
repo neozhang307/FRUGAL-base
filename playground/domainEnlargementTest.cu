@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cstdlib>
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 
 using namespace memopt;
 

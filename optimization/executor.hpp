@@ -6,7 +6,7 @@
 #include <queue>
 #include <vector>
 
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../utilities/utilities.hpp"
 #include "optimizationOutput.hpp"
 

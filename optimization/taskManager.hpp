@@ -9,7 +9,7 @@
 #include <vector>
 #include <iostream> // For debugging
 
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../utilities/types.hpp"
 
 namespace memopt {

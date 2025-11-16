@@ -10,7 +10,7 @@
 
 #include "../profiling/annotation.hpp"
 #include "../profiling/cudaGraphExecutionTimelineProfiler.hpp"
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../profiling/memred.hpp"
 #include "../utilities/configurationManager.hpp"
 #include "../utilities/cudaGraphUtilities.hpp"

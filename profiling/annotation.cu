@@ -3,7 +3,7 @@
 #include <functional>
 
 #include "annotation.hpp"
-#include "memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 
 namespace memopt {
 

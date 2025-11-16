@@ -15,7 +15,7 @@
 #include <type_traits>
 
 #include "../profiling/annotation.hpp"
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../utilities/configurationManager.hpp"
 #include "../utilities/types.hpp"
 #include "../utilities/cudaGraphConstructor.hpp"

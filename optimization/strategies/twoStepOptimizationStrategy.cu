@@ -4,7 +4,7 @@
 #include <queue>
 #include <utility>
 
-#include "../../profiling/memoryManager.hpp"
+#include "../../memory/memoryManager.hpp"
 #include "../../utilities/configurationManager.hpp"
 #include "../../utilities/logger.hpp"
 #include "../../utilities/types.hpp"

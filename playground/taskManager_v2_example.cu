@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../optimization/taskManager_v2.hpp"
 #include "../utilities/cudaUtilities.hpp"
 #include "../utilities/configurationManager.hpp"

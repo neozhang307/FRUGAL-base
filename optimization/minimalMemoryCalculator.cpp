@@ -6,7 +6,7 @@
 #include <iostream>
 
 #include "../utilities/logger.hpp"
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 
 namespace memopt {
 

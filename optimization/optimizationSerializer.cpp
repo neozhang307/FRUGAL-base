@@ -5,7 +5,7 @@
 #include <ctime>
 #include "../include/json.hpp"
 
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../utilities/logger.hpp"
 
 namespace memopt {
@@ -182,10 +182,20 @@ OptimizationInput loadOptimizationInput(const std::string& path) {
             }
         }
 
-        // Note: We don't populate dataDependency.inputs/outputs (void* pointers)
-        // because they're not available in offline mode and not needed by solvers
-        // The ArrayId-based information will be used directly when constructing
-        // SecondStepSolver::Input
+        // Populate dataDependency with fake pointers based on array IDs
+        // This allows the existing optimization code to work unchanged
+        if (tg.contains("inputArrays")) {
+            for (ArrayId id : tg["inputArrays"].get<std::vector<ArrayId>>()) {
+                void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
+                taskGroup.dataDependency.inputs.insert(fakePtr);
+            }
+        }
+        if (tg.contains("outputArrays")) {
+            for (ArrayId id : tg["outputArrays"].get<std::vector<ArrayId>>()) {
+                void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
+                taskGroup.dataDependency.outputs.insert(fakePtr);
+            }
+        }
 
         input.nodes.push_back(taskGroup);
     }
@@ -203,6 +213,36 @@ OptimizationInput loadOptimizationInput(const std::string& path) {
     input.forceAllArraysToResideOnHostInitiallyAndFinally =
         j["metadata"]["forceAllArraysToResideOnHostInitiallyAndFinally"];
     input.stageIndex = j["metadata"]["stageIndex"];
+
+    // CRITICAL FIX: Register arrays with MemoryManager for standalone mode
+    // This allows the optimization to work without actual memory pointers
+    if (j.contains("arrays")) {
+        auto& memManager = MemoryManager::getInstance();
+        for (const auto& arr : j["arrays"]) {
+            ArrayId id = arr["id"];
+            size_t size = arr["size"];
+            // Create a fake pointer for this array ID
+            // The actual address doesn't matter since we won't dereference it
+            void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
+            memManager.registerManagedMemoryAddress(fakePtr, size);
+        }
+    }
+
+    // Register application inputs/outputs with MemoryManager
+    if (j.contains("applicationInputArrays")) {
+        auto& memManager = MemoryManager::getInstance();
+        for (ArrayId id : j["applicationInputArrays"].get<std::vector<ArrayId>>()) {
+            void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
+            memManager.registerApplicationInput(fakePtr);
+        }
+    }
+    if (j.contains("applicationOutputArrays")) {
+        auto& memManager = MemoryManager::getInstance();
+        for (ArrayId id : j["applicationOutputArrays"].get<std::vector<ArrayId>>()) {
+            void* fakePtr = reinterpret_cast<void*>(static_cast<uintptr_t>(0x1000000 + id * 0x1000));
+            memManager.registerApplicationOutput(fakePtr);
+        }
+    }
 
     LOG_TRACE_WITH_INFO("Loaded OptimizationInput from %s", path.c_str());
     printf("Profiling data loaded from: %s\n", path.c_str());

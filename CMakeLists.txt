@@ -27,6 +27,7 @@ find_package(fmt REQUIRED)
 find_package(ortools REQUIRED)
 
 add_subdirectory(utilities)
+add_subdirectory(memory)
 add_subdirectory(profiling)
 add_subdirectory(optimization)
 add_subdirectory(public)

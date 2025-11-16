@@ -2,7 +2,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <vector>
-#include "../profiling/memoryManager.hpp"
+#include "../memory/memoryManager.hpp"
 #include "../optimization/executor.hpp"
 #include "../optimization/optimizationOutput.hpp"
 #include "../utilities/configurationManager.hpp"
