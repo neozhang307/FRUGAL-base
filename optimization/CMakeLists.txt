@@ -3,6 +3,7 @@ add_library(
   STATIC
   optimization.cu
   optimizer.cu
+  profilingContext.cpp
   executor.cu
   executor_v2.cu
 )

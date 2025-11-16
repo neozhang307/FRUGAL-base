@@ -32,6 +32,29 @@ class Optimizer {
   // Warning: the graph is executed once during profiling.
   OptimizationOutput profileAndOptimize(cudaGraph_t originalGraph);
 
+  /**
+   * @brief Profile a CUDA graph to extract optimization input data
+   *
+   * This method performs only the profiling phase, extracting task groups,
+   * dependencies, and timing information without running optimization.
+   * The resulting OptimizationInput can be saved for offline optimization.
+   *
+   * @param originalGraph The CUDA graph to profile
+   * @return OptimizationInput Profiling data suitable for optimization
+   */
+  OptimizationInput profileGraph(cudaGraph_t originalGraph);
+
+  /**
+   * @brief Optimize a profiled graph to generate execution plan
+   *
+   * This method performs only the optimization phase, taking profiling data
+   * and generating an optimized execution plan with memory management.
+   *
+   * @param optimizationInput The profiling data to optimize
+   * @return OptimizationOutput The optimized execution plan
+   */
+  OptimizationOutput optimizeGraph(const OptimizationInput& optimizationInput);
+
  protected:
   Optimizer() = default;
   static Optimizer *instance;

@@ -19,6 +19,7 @@
 #include "../utilities/logger.hpp"
 #include "../utilities/utilities.hpp"
 #include "optimizer.hpp"
+#include "profilingContext.hpp"
 #include "strategies/strategies.hpp"
 
 namespace memopt {
@@ -1039,6 +1040,182 @@ Optimizer *Optimizer::getInstance() {
 }
 
 /**
+ * @brief Profile a CUDA graph to extract optimization input data
+ *
+ * This method performs the profiling phase, extracting task groups,
+ * dependencies, and timing information from the CUDA graph.
+ * Extracted from profileAndOptimize for better modularity and testability.
+ *
+ * @param originalGraph The CUDA graph to profile
+ * @return OptimizationInput Profiling data suitable for optimization
+ */
+OptimizationInput Optimizer::profileGraph(cudaGraph_t originalGraph) {
+  // NOTE: Caller must create ProfilingContext before calling this function
+  // ProfilingContext manages dummy kernel handle lifecycle via RAII
+  // This allows profileAndOptimize to use this function without double registration
+
+  //---------- PROFILING PHASE ----------
+  SystemWallClock profilingClock;
+  profilingClock.start();
+
+  // Execute the graph once to capture its execution timeline
+  auto timeline = getCudaGraphExecutionTimeline(originalGraph);
+
+  profilingClock.end();
+  LOG_TRACE_WITH_INFO("Profiling phase completed in %.3f seconds", profilingClock.getTimeInSeconds());
+  printf("[TIMING] Profiling phase: %.3f seconds\n", profilingClock.getTimeInSeconds());
+
+  //---------- GRAPH ANALYSIS PHASE ----------
+  SystemWallClock graphAnalysisClock;
+  graphAnalysisClock.start();
+
+  // Extract the graph structure (nodes and edges)
+  std::vector<cudaGraphNode_t> nodes;
+  std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> edges;
+  extractGraphNodesAndEdges(originalGraph, nodes, edges);
+
+  // Map each node to its corresponding annotation node (containing metadata)
+  std::map<cudaGraphNode_t, cudaGraphNode_t> nodeToAnnotationMap;
+  mapNodeToAnnotation(originalGraph, edges, nodeToAnnotationMap);
+
+  // Initialize disjoint set for grouping "task" related nodes
+  DisjointSet<cudaGraphNode_t> disjointSet;
+
+  // Merge nodes that share the same annotation (same logical task)
+  mergeNodesWithSameAnnotation(nodes, nodeToAnnotationMap, disjointSet);
+
+  // Print the number of task groups after merging nodes with same annotation
+  size_t numSets = disjointSet.getNumSets();
+  std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Number of task groups after annotation merge: "
+            << numSets << std::endl;
+
+  // Get the configured maximum task group amount (0 means no limit)
+  int maxTaskGroupAmount = ConfigurationManager::getConfig().optimization.maxTaskGroupAmount;
+  bool shouldMerge = ConfigurationManager::getConfig().optimization.mergeConcurrentCudaGraphNodes;
+
+  // Skip merging if number of sets is already small enough (< 100)
+  if (numSets < 100) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Skipping concurrent node merging since task groups < 100" << std::endl;
+  }
+  // Check if we need to merge due to maxTaskGroupAmount constraint
+  else if (maxTaskGroupAmount > 0 && numSets > static_cast<size_t>(maxTaskGroupAmount)) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Task groups (" << numSets
+              << ") exceed maxTaskGroupAmount (" << maxTaskGroupAmount
+              << "), performing gradual merging" << std::endl;
+
+    // Start with a small limit and gradually increase until we meet the target
+    int nodeLimit = 2; // Start with merging small groups
+    size_t previousNumSets = numSets;
+
+    while (numSets > static_cast<size_t>(maxTaskGroupAmount)) {
+      mergeConcurrentCudaGraphNodes(timeline, disjointSet, nodeLimit);
+
+      size_t newNumSets = disjointSet.getNumSets();
+      std::cout << "[DEBUG-OUTPUT-OPTIMIZER] After merging with limit " << nodeLimit
+                << ", task groups: " << newNumSets << std::endl;
+
+      // If increasing the limit didn't reduce the count, stop merging
+      if (newNumSets >= previousNumSets && nodeLimit > 100) {
+        std::cout << "[DEBUG-OUTPUT-OPTIMIZER] No further reduction possible with limit "
+                  << nodeLimit << std::endl;
+        break;
+      }
+
+      previousNumSets = newNumSets;
+      numSets = newNumSets;
+
+      // Increase the node limit for the next iteration
+      nodeLimit = nodeLimit * 2;
+    }
+  }
+  // Standard merging as configured
+  else if (shouldMerge) {
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Performing standard concurrent node merging" << std::endl;
+    mergeConcurrentCudaGraphNodes(timeline, disjointSet, std::numeric_limits<int>::max());
+
+    // Print the number of task groups after merging concurrent nodes
+    std::cout << "[DEBUG-OUTPUT-OPTIMIZER] Number of task groups after concurrent merge: "
+              << disjointSet.getNumSets() << std::endl;
+  }
+
+  // Extract data dependencies for each task from their annotations
+  std::map<TaskId, OptimizationInput::TaskGroup::DataDependency> taskIdToDataDependencyMap;
+  getTaskDataDependencies(nodes, nodeToAnnotationMap, taskIdToDataDependencyMap);
+
+  //---------- STAGE ANALYSIS ----------
+
+  // Detect if the graph is divided into multiple optimization stages
+  bool hasOnlyOneStage = true;
+  for (auto node : nodes) {
+    if (compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
+      hasOnlyOneStage = false;
+      break;
+    }
+  }
+
+  // If multiple stages exist, map each node to its corresponding stage index
+  std::map<cudaGraphNode_t, int> nodeToStageIndexMap;
+  if (!hasOnlyOneStage) {
+    mapNodeToStage(originalGraph, edges, nodeToStageIndexMap);
+  }
+
+  // Complete graph analysis timing
+  graphAnalysisClock.end();
+  LOG_TRACE_WITH_INFO("Graph analysis phase completed in %.3f seconds", graphAnalysisClock.getTimeInSeconds());
+  printf("[TIMING] Graph analysis phase: %.3f seconds\n", graphAnalysisClock.getTimeInSeconds());
+
+  //---------- CONSTRUCT OPTIMIZATION INPUT ----------
+  OptimizationInput optimizationInput;
+
+  if (hasOnlyOneStage) {
+    // Single-stage optimization - construct input from entire graph
+    optimizationInput = constructOptimizationInput(originalGraph, nodes, edges, timeline, disjointSet, nodeToAnnotationMap, taskIdToDataDependencyMap);
+
+    // Generate DOT visualization of the task graph
+    writeTaskGraphToDot(optimizationInput, "task_graph.dot");
+  } else {
+    // Multi-stage optimization - for now, throw an error as profileGraph doesn't support it yet
+    LOG_TRACE_WITH_INFO("Multi-stage graphs not yet supported in profileGraph");
+    throw std::runtime_error("profileGraph does not yet support multi-stage graphs");
+  }
+
+  return optimizationInput;
+}
+
+/**
+ * @brief Optimize a profiled graph to generate execution plan
+ *
+ * This method performs the optimization phase, taking profiling data
+ * and generating an optimized execution plan with memory management.
+ * Extracted from profileAndOptimize for better modularity.
+ *
+ * @param optimizationInput The profiling data to optimize
+ * @return OptimizationOutput The optimized execution plan
+ */
+OptimizationOutput Optimizer::optimizeGraph(const OptimizationInput& optimizationInput) {
+  SystemWallClock optimizationClock;
+  optimizationClock.start();
+
+  // Apply the two-step optimization strategy to generate a complete execution plan
+  auto optimizationOutput = this->optimize<TwoStepOptimizationStrategy>(const_cast<OptimizationInput&>(optimizationInput));
+
+  // Check if optimization succeeded (a feasible plan was found)
+  if (optimizationOutput.optimal) {
+    // Save the plan to file for potential reuse in future runs
+    writeOptimizationOutputToFile(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+
+    optimizationClock.end();
+    LOG_TRACE_WITH_INFO("Optimization phase completed in %.3f seconds", optimizationClock.getTimeInSeconds());
+    printf("[TIMING] Optimization phase: %.3f seconds\n", optimizationClock.getTimeInSeconds());
+
+    return optimizationOutput;
+  } else {
+    LOG_TRACE_WITH_INFO("Could not find any feasible solution");
+    exit(-1);
+  }
+}
+
+/**
  * @brief Profile a CUDA graph execution and generate an optimized execution plan with memory management
  * 
  * This function is the core of the memory optimization system. It performs the following steps:
@@ -1065,17 +1242,43 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     return loadOptimizationOutput(ConfigurationManager::getConfig().optimization.planPath);
   }
 
-  // Register handles for annotation and stage separator dummy kernels
-  registerDummyKernelHandles();
-  ScopeGuard scopeGuard([]() -> void { cleanUpDummyKernelFuncHandleRegistrations(); });
+  // Create ProfilingContext to manage dummy kernel handles via RAII
+  ProfilingContext profilingCtx;
+
+  // Quick check for multi-stage graphs
+  std::vector<cudaGraphNode_t> nodes;
+  std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> edges;
+  extractGraphNodesAndEdges(originalGraph, nodes, edges);
+
+  bool hasOnlyOneStage = true;
+  for (auto node : nodes) {
+    if (compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
+      hasOnlyOneStage = false;
+      break;
+    }
+  }
+
+  if (hasOnlyOneStage) {
+    // Single-stage optimization - now we can cleanly use the separated functions!
+    auto optimizationInput = profileGraph(originalGraph);
+    auto optimizationOutput = optimizeGraph(optimizationInput);
+
+    clock.end();
+    printf("[TIMING] Total profileAndOptimize time: %.3f seconds\n", clock.getTimeInSeconds());
+
+    return optimizationOutput;
+  }
+
+  // Multi-stage optimization - keep the existing code for now
+  // (profileGraph doesn't support multi-stage yet)
 
   //---------- PROFILING PHASE ----------
   SystemWallClock profilingClock;
   profilingClock.start();
-  
+
   // Execute the graph once to capture its execution timeline
   auto timeline = getCudaGraphExecutionTimeline(originalGraph);
-  
+
   profilingClock.end();
   LOG_TRACE_WITH_INFO("Profiling phase completed in %.3f seconds", profilingClock.getTimeInSeconds());
   printf("[TIMING] Profiling phase: %.3f seconds\n", profilingClock.getTimeInSeconds());
@@ -1084,9 +1287,10 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
   SystemWallClock graphAnalysisClock;
   graphAnalysisClock.start();
 
-  // Extract the graph structure (nodes and edges)
-  std::vector<cudaGraphNode_t> nodes;
-  std::map<cudaGraphNode_t, std::vector<cudaGraphNode_t>> edges;
+  // nodes and edges already extracted earlier for stage detection
+  // Clear and re-extract for complete analysis
+  nodes.clear();
+  edges.clear();
   extractGraphNodesAndEdges(originalGraph, nodes, edges);
 
   // Map each node to its corresponding annotation node (containing metadata)
@@ -1165,20 +1369,15 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
   
   /**
    * Detect if the graph is divided into multiple optimization stages
-   * 
+   *
    * Stages are user-defined segments of computation separated by special marker nodes
    * (dummyKernelForStageSeparator). Each stage can be independently optimized, which:
    * 1. Simplifies the optimization problem by breaking it into smaller chunks
    * 2. Allows complete memory resets between stages
    * 3. Enables different optimization strategies for different execution phases
+   *
+   * Note: hasOnlyOneStage was already computed earlier, so we don't redeclare it
    */
-  bool hasOnlyOneStage = true;
-  for (auto node : nodes) {
-    if (compareKernelNodeFunctionHandle(node, dummyKernelForStageSeparatorHandle)) {
-      hasOnlyOneStage = false;
-      break;
-    }
-  }
 
   // If multiple stages exist, map each node to its corresponding stage index
   std::map<cudaGraphNode_t, int> nodeToStageIndexMap;
