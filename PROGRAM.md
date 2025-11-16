@@ -12,8 +12,9 @@ This guide explains how to use the TaskManager_v2 and memory optimization compon
 6. [Memory Optimization](#memory-optimization)
 7. [Graph Profiling and Optimization](#graph-profiling-and-optimization)
 8. [Advanced Usage Patterns](#advanced-usage-patterns)
-9. [Configuration Options](#configuration-options)
-10. [Best Practices](#best-practices)
+9. [Offline Optimization Workflow](#offline-optimization-workflow)
+10. [Configuration Options](#configuration-options)
+11. [Best Practices](#best-practices)
 
 ## Introduction
 
@@ -257,6 +258,91 @@ For better performance, you can use explicit prefetching:
 // Prefetch all data to the device
 MemoryManager::getInstance().prefetchAllDataToDevice();
 ```
+
+## Offline Optimization Workflow
+
+The framework supports offline optimization where profiling and optimization can be performed separately. This is useful for:
+- Running optimization on different machines (e.g., profile on GPU machine, optimize on CPU-only machine)
+- Reusing profiling data with different optimization parameters
+- Implementing ablation studies by separating optimization steps
+
+### Three Execution Modes
+
+1. **Profile-Only Mode**: Collect profiling data and save to JSON
+2. **Offline Optimization**: Load profiling data and generate optimized plan without GPU
+3. **Run-Plan Mode**: Execute a pre-optimized plan without re-profiling or re-optimizing
+
+### Using tiledCholeskyAblation
+
+```cpp
+// 1. Profile only - saves profiling data to JSON
+./tiledCholeskyAblation --N=2048 --T=8 --profile-only --save-profile=profile.json
+
+// 2. Run pre-optimized plan
+./tiledCholeskyAblation --N=2048 --T=8 --run-plan --load-plan=optimized.json
+```
+
+### Using standaloneOptimizer
+
+The standalone optimizer allows CPU-only optimization of profiling data:
+
+```cpp
+// Basic optimization
+./standaloneOptimizer profile.json optimized.json
+
+// With custom parameters
+./standaloneOptimizer profile.json optimized.json --memory-bound=1000 --solver=GREEDY
+
+// Save first step (task scheduling) for reuse
+./standaloneOptimizer profile.json optimized.json --save-first-step=step1.json
+
+// Load first step and run only memory optimization
+./standaloneOptimizer profile.json optimized.json --load-first-step=step1.json
+```
+
+### Serialization Functions
+
+The framework provides serialization for all optimization data structures:
+
+```cpp
+#include "optimization/optimizationSerializer.hpp"
+
+// Save/load profiling data (OptimizationInput)
+saveOptimizationInput(input, "profile.json");
+auto input = loadOptimizationInput("profile.json");
+
+// Save/load optimized plans (OptimizationOutput)
+saveOptimizationOutput(output, "plan.json");
+auto output = loadOptimizationOutput("plan.json");
+
+// Save/load first step results (for ablation studies)
+saveFirstStepOutput(firstStep, "step1.json");
+auto firstStep = loadFirstStepOutput("step1.json");
+```
+
+### Ablation Study Support
+
+The framework supports breaking down the two-step optimization for independent analysis:
+
+1. **First Step Only**: Run task scheduling optimization, save results
+2. **Second Step Only**: Load task scheduling, run memory optimization with different parameters
+3. **Skip First Step**: Use original task order, run only memory optimization
+4. **Skip Second Step**: Run task scheduling, use greedy memory management
+
+This enables detailed analysis of how each optimization step contributes to overall performance.
+
+## Configuration Options
+
+Key configuration parameters for optimization:
+
+- `maxPeakMemoryUsageInMiB`: Memory constraint for optimization (0 = unlimited)
+- `firstStepSolverType`: Algorithm for task scheduling (BEAM_SEARCH recommended)
+- `secondStepSolverType`: Algorithm for memory management (MIP, GREEDY, GREEDY_WARMSTART)
+- `beamWidth`: Beam width for first step solver (default: 100)
+- `gurobiTimeLimitSeconds`: Timeout for MIP solver (default: 60)
+- `weightOfPeakMemoryUsage`: Weight for memory in optimization (0 = optimize runtime only)
+- `weightOfTotalRunningTime`: Weight for runtime in optimization
+- `weightOfNumberOfMigrations`: Weight for migration count
 
 ## Best Practices
 

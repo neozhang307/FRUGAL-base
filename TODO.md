@@ -1,12 +1,40 @@
 # FRUGAL Optimization - TODO List
 
-## ✅ Completed Tasks
+## ✅ Completed Tasks (November 2024)
+
+### Infrastructure & Memory Management
 - [x] Fixed CUDA graph memory leak (21GB) using cudaDeviceGraphMemTrim
 - [x] Fixed iterator bug in memoryManager_v2.cu (reference vs copy issue)
 - [x] Fixed missing executeGraph call in executor_v2.cu
 - [x] Merged LU decomposition branch with task graph visualization
 - [x] Created playground test for CUDA graph memory behavior
 - [x] Documented CUDA graph memory management findings
+- [x] **Restructured memory management code** (2024-11-17)
+  - Moved MemoryManager from profiling/ to dedicated memory/ folder
+  - Better architectural organization
+
+### Offline Optimization Workflow
+- [x] **Implemented complete offline optimization workflow** (2024-11-17)
+  - Created `standaloneOptimizer` tool for CPU-only optimization
+  - Implemented `tiledCholeskyAblation` with three modes:
+    - Profile-only mode (saves to JSON)
+    - Run-plan mode (loads and executes)
+    - Normal mode (profile + optimize + execute)
+  - Added `ProfilingContext` for managing dummy kernel handles
+
+### Serialization Infrastructure
+- [x] **Implemented comprehensive serialization** (2024-11-17)
+  - `OptimizationInput` serialization (profiling data)
+  - `OptimizationOutput` serialization (execution plans)
+  - `FirstStepSolver::Output` serialization (task scheduling results)
+  - All serialization functions in `optimizationSerializer.{hpp,cpp}`
+
+### Ablation Study Support
+- [x] **Enabled first/second step separation** (2024-11-17)
+  - `--save-first-step=<path>` to save task scheduling
+  - `--load-first-step=<path>` to skip task scheduling
+  - Inline optimization in standaloneOptimizer (avoids linking issues)
+  - Fixed argh command-line parsing (requires `--option=value` syntax)
 
 ## ✔️ Resolved/Proven Unnecessary
 - [x] **Phase 1 (Task Ordering)** - Solved with Beam Search (configurable width=100 provides fast, good solutions)
@@ -15,6 +43,13 @@
 - [x] ~~**Additional Gurobi parameter tuning**~~ - **PROVEN USELESS**: Current settings (60s timeout, 10% MIP gap) are sufficient
 
 ## 🔧 Pending Tasks
+
+### High Priority - Next Implementation
+- [ ] **Top-K Solutions Support** 🎯 NEXT
+  - Generate multiple alternative schedules from beam search
+  - Refine each with different weight configurations
+  - Enable solution diversity analysis
+  - See TOPK.md for detailed design
 
 ### Code Quality & Maintenance
 - [ ] **Reorganize tiledCholesky applications**
