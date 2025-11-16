@@ -979,7 +979,7 @@ struct SerializableOptimizationOutputNode {
   );
 };
 
-void writeOptimizationOutputToFile(OptimizationOutput &output, const std::string &path) {
+static void writeOptimizationOutputToFileInternal(OptimizationOutput &output, const std::string &path) {
   LOG_TRACE_WITH_INFO("Printing optimization plan to %s", path.c_str());
 
   std::vector<SerializableOptimizationOutputNode> serializableNodes;
@@ -1001,12 +1001,18 @@ void writeOptimizationOutputToFile(OptimizationOutput &output, const std::string
   nlohmann::json j;
   j["nodes"] = serializableNodes;
   j["arraysInitiallyAllocatedOnDevice"] = output.arraysInitiallyAllocatedOnDevice;
+
+  // Add memory usage information
+  j["originalMemoryUsage"] = output.originalMemoryUsage;
+  j["anticipatedPeakMemoryUsage"] = output.anticipatedPeakMemoryUsage;
+  j["optimal"] = output.optimal;
+
   std::string s = j.dump(2);
   std::ofstream f(path);
   f << s << std::endl;
 }
 
-OptimizationOutput loadOptimizationOutput(const std::string &path) {
+static OptimizationOutput loadOptimizationOutputInternal(const std::string &path) {
   LOG_TRACE_WITH_INFO("Loading optimization plan from %s", path.c_str());
 
   std::ifstream f(path);
@@ -1014,6 +1020,12 @@ OptimizationOutput loadOptimizationOutput(const std::string &path) {
   auto serializableNodes = j.at("nodes").get<std::vector<SerializableOptimizationOutputNode>>();
 
   OptimizationOutput output;
+
+  // Initialize memory fields to defaults
+  output.optimal = false;
+  output.originalMemoryUsage = 0.0;
+  output.anticipatedPeakMemoryUsage = 0.0;
+
   for (const auto &node : serializableNodes) {
     output.nodes.push_back(node.nodeId);
     output.edges[node.nodeId] = node.edges;
@@ -1026,6 +1038,17 @@ OptimizationOutput loadOptimizationOutput(const std::string &path) {
   }
 
   output.arraysInitiallyAllocatedOnDevice = j.at("arraysInitiallyAllocatedOnDevice").get<std::vector<ArrayId>>();
+
+  // Load memory usage information if available
+  if (j.contains("originalMemoryUsage")) {
+    output.originalMemoryUsage = j["originalMemoryUsage"];
+  }
+  if (j.contains("anticipatedPeakMemoryUsage")) {
+    output.anticipatedPeakMemoryUsage = j["anticipatedPeakMemoryUsage"];
+  }
+  if (j.contains("optimal")) {
+    output.optimal = j["optimal"];
+  }
 
   return output;
 }
@@ -1202,7 +1225,7 @@ OptimizationOutput Optimizer::optimizeGraph(const OptimizationInput& optimizatio
   // Check if optimization succeeded (a feasible plan was found)
   if (optimizationOutput.optimal) {
     // Save the plan to file for potential reuse in future runs
-    writeOptimizationOutputToFile(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+    writeOptimizationOutputToFileInternal(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
 
     optimizationClock.end();
     LOG_TRACE_WITH_INFO("Optimization phase completed in %.3f seconds", optimizationClock.getTimeInSeconds());
@@ -1239,7 +1262,7 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
 
   // Check if we should load an existing plan instead of recomputing
   if (ConfigurationManager::getConfig().optimization.loadExistingPlan) {
-    return loadOptimizationOutput(ConfigurationManager::getConfig().optimization.planPath);
+    return loadOptimizationOutputInternal(ConfigurationManager::getConfig().optimization.planPath);
   }
 
   // Create ProfilingContext to manage dummy kernel handles via RAII
@@ -1258,16 +1281,16 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     }
   }
 
-  if (hasOnlyOneStage) {
-    // Single-stage optimization - now we can cleanly use the separated functions!
-    auto optimizationInput = profileGraph(originalGraph);
-    auto optimizationOutput = optimizeGraph(optimizationInput);
+  // if (hasOnlyOneStage) {
+  //   // Single-stage optimization - now we can cleanly use the separated functions!
+  //   auto optimizationInput = profileGraph(originalGraph);
+  //   auto optimizationOutput = optimizeGraph(optimizationInput);
 
-    clock.end();
-    printf("[TIMING] Total profileAndOptimize time: %.3f seconds\n", clock.getTimeInSeconds());
+  //   clock.end();
+  //   printf("[TIMING] Total profileAndOptimize time: %.3f seconds\n", clock.getTimeInSeconds());
 
-    return optimizationOutput;
-  }
+  //   return optimizationOutput;
+  // }
 
   // Multi-stage optimization - keep the existing code for now
   // (profileGraph doesn't support multi-stage yet)
@@ -1421,7 +1444,7 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     // Check if optimization succeeded (a feasible plan was found)
     if (optimizationOutput.optimal) {
       // Save the plan to file for potential reuse in future runs
-      writeOptimizationOutputToFile(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+      writeOptimizationOutputToFileInternal(optimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
       
       optimizationClock.end();
       LOG_TRACE_WITH_INFO("Optimization phase completed in %.3f seconds", optimizationClock.getTimeInSeconds());
@@ -1479,7 +1502,7 @@ OptimizationOutput Optimizer::profileAndOptimize(cudaGraph_t originalGraph) {
     // Merge the individual stage plans into a single cohesive execution plan
     // This creates a unified plan that properly transitions between stages
     auto mergedOptimizationOutput = mergeOptimizationOutputs(optimizationOutputs);
-    writeOptimizationOutputToFile(mergedOptimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
+    writeOptimizationOutputToFileInternal(mergedOptimizationOutput, ConfigurationManager::getConfig().optimization.planPath);
     
     optimizationClock.end();
     LOG_TRACE_WITH_INFO("Optimization phase (multi-stage) completed in %.3f seconds", optimizationClock.getTimeInSeconds());

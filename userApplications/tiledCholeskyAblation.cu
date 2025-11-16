@@ -24,7 +24,7 @@
 #include "memopt.hpp"
 #include "../optimization/profilingContext.hpp"
 #include "../optimization/optimizer.hpp"
-#include "../optimization/optimizationInputSerializer.hpp"
+#include "../optimization/optimizationSerializer.hpp"
 
 using namespace memopt;
 
@@ -38,7 +38,9 @@ const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 
 // Ablation study flags (used by tiledCholeskyNaiveGraph function)
 bool g_profileOnly = false;
+bool g_runPlanOnly = false;
 std::string g_profileOutputPath = "optimization_input.json";
+std::string g_planInputPath = "ablation_optimized_plan.json";
 
 // Kernels from original
 __global__ void makeMatrixSymmetric(double *d_matrix, size_t n) {
@@ -355,45 +357,64 @@ void tiledCholeskyNaiveGraph() {
   // Initialize data before optimization 
   initializeDeviceData(h_matrix, d_tiles);
   
-  // Use separated profiling and optimization functions
-  fmt::print("Profiling and optimizing naive CUDA graph (using separated functions)...\n");
-
-  // Create ProfilingContext to manage dummy kernel handles
-  ProfilingContext profilingCtx;
-  auto optimizer = Optimizer::getInstance();
-
-  // Profile
-  auto optimizationInput = optimizer->profileGraph(graph);
-
-  // Check if we're in profile-only mode (will be set in main)
+  // Check for different execution modes
   extern bool g_profileOnly;
+  extern bool g_runPlanOnly;
   extern std::string g_profileOutputPath;
+  extern std::string g_planInputPath;
 
-  if (g_profileOnly) {
-    fmt::print("\n=== Profile-only mode: Saving profiling data ===\n");
-    fmt::print("Saving to: {}\n", g_profileOutputPath);
-    saveOptimizationInput(optimizationInput, g_profileOutputPath);
-    fmt::print("✅ Profiling data saved successfully!\n");
+  OptimizationOutput optimizedGraph;
 
-    // Clean up and exit early
-    for (auto ptr : d_tiles) {
-      cudaFree(ptr);
+  if (g_runPlanOnly) {
+    // RUN-PLAN MODE: Skip profiling and optimization, load existing plan
+    fmt::print("Loading existing optimization plan from: {}\n", g_planInputPath);
+
+    // Note: loadExistingPlan was already set in main, so profileAndOptimize will just load the plan
+    // But since we're using separated functions, we need to handle this differently
+    optimizedGraph = loadOptimizationOutput(g_planInputPath);
+
+    fmt::print("Loaded plan successfully.\n");
+    fmt::print("Original memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
+    fmt::print("Anticipated peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
+
+  } else {
+    // NORMAL or PROFILE-ONLY MODE: Need to profile first
+    fmt::print("Profiling and optimizing naive CUDA graph (using separated functions)...\n");
+
+    // Create ProfilingContext to manage dummy kernel handles
+    ProfilingContext profilingCtx;
+    auto optimizer = Optimizer::getInstance();
+
+    // Profile
+    auto optimizationInput = optimizer->profileGraph(graph);
+
+    if (g_profileOnly) {
+      // PROFILE-ONLY MODE: Save profiling data and exit
+      fmt::print("\n=== Profile-only mode: Saving profiling data ===\n");
+      fmt::print("Saving to: {}\n", g_profileOutputPath);
+      saveOptimizationInput(optimizationInput, g_profileOutputPath);
+      fmt::print("✅ Profiling data saved successfully!\n");
+
+      // Clean up and exit early
+      for (auto ptr : d_tiles) {
+        cudaFree(ptr);
+      }
+      cudaFree(one);
+      cudaFree(minusOne);
+      cudaFreeHost(h_workspace);
+      cudaFree(d_workspace);
+      cudaFree(d_info);
+      cusolverDnDestroy(cusolverDnHandle);
+      cusolverDnDestroyParams(cusolverDnParams);
+      cublasDestroy(cublasHandle);
+      cudaStreamDestroy(s);
+      cudaFreeHost(h_matrix);
+      return;
     }
-    cudaFree(one);
-    cudaFree(minusOne);
-    cudaFreeHost(h_workspace);
-    cudaFree(d_workspace);
-    cudaFree(d_info);
-    cusolverDnDestroy(cusolverDnHandle);
-    cusolverDnDestroyParams(cusolverDnParams);
-    cublasDestroy(cublasHandle);
-    cudaStreamDestroy(s);
-    cudaFreeHost(h_matrix);
-    return;
-  }
 
-  // Continue with optimization if not in profile-only mode
-  auto optimizedGraph = optimizer->optimizeGraph(optimizationInput);
+    // NORMAL MODE: Continue with optimization
+    optimizedGraph = optimizer->optimizeGraph(optimizationInput);
+  }
   
   fmt::print("Original peak memory usage (MiB): {:.2f}\n", optimizedGraph.originalMemoryUsage);
   fmt::print("Optimized peak memory usage (MiB): {:.2f}\n", optimizedGraph.anticipatedPeakMemoryUsage);
@@ -604,12 +625,16 @@ int main(int argc, char *argv[]) {
     fmt::print("  --T=<tiles>             Number of tiles (default: 4)\n");
     fmt::print("  --profile-only          Only profile and save data, don't optimize/execute\n");
     fmt::print("  --save-profile=<path>   Path to save profiling data (default: optimization_input.json)\n");
+    fmt::print("  --run-plan              Load and execute existing plan, skip profile/optimize\n");
+    fmt::print("  --load-plan=<path>      Path to load optimization plan (default: ablation_optimized_plan.json)\n");
     fmt::print("  --help, -h              Show this help message\n");
     fmt::print("\nExamples:\n");
-    fmt::print("  # Normal execution\n");
+    fmt::print("  # Normal execution (profile, optimize, execute)\n");
     fmt::print("  {} --N=2048 --T=8\n", argv[0]);
     fmt::print("  # Profile only mode\n");
     fmt::print("  {} --N=2048 --T=8 --profile-only --save-profile=profile_2048.json\n", argv[0]);
+    fmt::print("  # Execute existing plan\n");
+    fmt::print("  {} --N=2048 --T=8 --run-plan --load-plan=optimized_plan.json\n", argv[0]);
     return 0;
   }
 
@@ -628,7 +653,15 @@ int main(int argc, char *argv[]) {
 
   // Check for ablation study flags
   g_profileOnly = cmdl["--profile-only"];
+  g_runPlanOnly = cmdl["--run-plan"];
   cmdl("--save-profile", g_profileOutputPath) >> g_profileOutputPath;
+  cmdl("--load-plan", g_planInputPath) >> g_planInputPath;
+
+  // Validate conflicting modes
+  if (g_profileOnly && g_runPlanOnly) {
+    fmt::print("ERROR: Cannot use --profile-only and --run-plan together\n");
+    return -1;
+  }
 
   // Load configuration
   ConfigurationManager::exportDefaultConfiguration();
@@ -639,9 +672,17 @@ int main(int argc, char *argv[]) {
   if (g_profileOnly) {
     fmt::print("=== PROFILE-ONLY MODE ===\n");
     fmt::print("Profile will be saved to: {}\n", g_profileOutputPath);
+  } else if (g_runPlanOnly) {
+    fmt::print("=== RUN-PLAN MODE ===\n");
+    fmt::print("Loading plan from: {}\n", g_planInputPath);
+
+    // Set config to load existing plan
+    auto& config = const_cast<Configuration&>(ConfigurationManager::getConfig());
+    config.optimization.loadExistingPlan = true;
+    config.optimization.planPath = g_planInputPath;
   }
 
-  // Run the naive graph version (modified to support profile-only)
+  // Run the naive graph version (modified to support different modes)
   tiledCholeskyNaiveGraph();
 
   return 0;

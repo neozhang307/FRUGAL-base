@@ -4,7 +4,7 @@ add_library(
   optimization.cu
   optimizer.cu
   profilingContext.cpp
-  optimizationInputSerializer.cpp
+  optimizationSerializer.cpp
   executor.cu
   executor_v2.cu
 )
