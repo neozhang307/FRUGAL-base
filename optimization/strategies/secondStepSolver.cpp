@@ -1608,12 +1608,17 @@ struct IntegerProgrammingSolver {
     // Try to enable solution pool (may not work with all solver backends)
     // This requests Gurobi to find multiple solutions if possible
     if (enableSolutionPool) {
+      // Use more aggressive pool parameters to find diverse solutions
       std::string poolParams = fmt::format(
-        "PoolSolutions {} PoolSearchMode 2 PoolGap {}",
-        poolSolutions, mipGap * 2
+        "PoolSolutions {} "
+        "PoolSearchMode 2 "  // Systematic search for n-best
+        "PoolGap 0.5 "       // Accept solutions within 50% of optimal (more diverse)
+        "PoolGapAbs 1e6 "    // Also use absolute gap
+        "Heuristics 0.5",    // Spend more time on heuristics
+        poolSolutions
       );
       solver->SetSolverSpecificParametersAsString(poolParams);
-      LOG_TRACE_WITH_INFO("Requested %d solutions from solver pool", poolSolutions);
+      LOG_TRACE_WITH_INFO("Requested %d solutions from solver pool with relaxed gap", poolSolutions);
     }
 
     // Set number of threads (0 = auto, use all available)
