@@ -198,6 +198,24 @@ int main(int argc, char* argv[]) {
         std::string loadTopKPath = "";
         cmdl("--load-topk", loadTopKPath) >> loadTopKPath;
 
+        // Optimization weight parameters (override config file if provided)
+        double weightMemory = -1.0;  // -1 means use config value
+        cmdl("--weight-memory", -1.0) >> weightMemory;
+
+        double weightRuntime = -1.0;
+        cmdl("--weight-runtime", -1.0) >> weightRuntime;
+
+        double weightMigrations = -1.0;
+        cmdl("--weight-migrations", -1.0) >> weightMigrations;
+
+        // Memory constraint parameter
+        double maxPeakMemoryMiB = -1.0;
+        cmdl("--max-memory", -1.0) >> maxPeakMemoryMiB;
+
+        // Lookahead/lookback window size (same value for both prefetch and offload)
+        int lookWindowSize = -1;
+        cmdl("--look-window-size", -1) >> lookWindowSize;
+
         if (!saveFirstStepPath.empty()) {
             fmt::print("Will save first step output to: {}\n", saveFirstStepPath);
         }
@@ -216,6 +234,34 @@ int main(int argc, char* argv[]) {
 
         if (!loadTopKPath.empty()) {
             fmt::print("Will load top-K solutions from: {} (using solution index {})\n", loadTopKPath, solutionIndex);
+        }
+
+        // Apply command-line parameter overrides to config
+        if (weightMemory >= 0.0) {
+            config.optimization.weightOfPeakMemoryUsage = weightMemory;
+            fmt::print("Overriding weight-memory to: {:.6f}\n", weightMemory);
+        }
+
+        if (weightRuntime >= 0.0) {
+            config.optimization.weightOfTotalRunningTime = weightRuntime;
+            fmt::print("Overriding weight-runtime to: {:.6f}\n", weightRuntime);
+        }
+
+        if (weightMigrations >= 0.0) {
+            config.optimization.weightOfNumberOfMigrations = weightMigrations;
+            fmt::print("Overriding weight-migrations to: {:.6f}\n", weightMigrations);
+        }
+
+        if (maxPeakMemoryMiB >= 0.0) {
+            config.optimization.maxPeakMemoryUsageInMiB = maxPeakMemoryMiB;
+            fmt::print("Overriding max-memory to: {:.2f} MiB\n", maxPeakMemoryMiB);
+        }
+
+        if (lookWindowSize >= 0) {
+            // Set same value for both prefetch lookback and offload lookahead
+            config.optimization.prefetchLookbackDistanceLimit = lookWindowSize;
+            config.optimization.offloadLookaheadDistanceLimit = lookWindowSize;
+            fmt::print("Overriding look-window-size to: {} (both prefetch and offload)\n", lookWindowSize);
         }
 
         // Instead of calling optimizer->optimizeGraph, inline the TwoStepOptimizationStrategy::run code
