@@ -76,17 +76,38 @@ int main(int argc, char* argv[]) {
     auto cmdl = argh::parser(argc, argv);
 
     // Check for help
-    if (cmdl["-h"] || cmdl["--help"] || argc < 3) {
+    if (cmdl["-h"] || cmdl["--help"]) {
         printUsage(argv[0]);
-        return (cmdl["-h"] || cmdl["--help"]) ? 0 : 1;
+        return 0;
+    }
+
+    // Check for first-step-only mode which doesn't require output file
+    bool firstStepOnlyMode = cmdl[{"--first-step-only"}];
+
+    // Check minimum arguments
+    if (argc < 3 && !firstStepOnlyMode) {
+        fmt::print(stderr, "Error: Missing required arguments\n");
+        printUsage(argv[0]);
+        return 1;
     }
 
     // Get positional arguments
     std::string inputPath, outputPath;
-    if (!(cmdl(1) >> inputPath) || !(cmdl(2) >> outputPath)) {
-        fmt::print(stderr, "Error: Missing required arguments\n");
+    if (!(cmdl(1) >> inputPath)) {
+        fmt::print(stderr, "Error: Missing input profile file\n");
         printUsage(argv[0]);
         return 1;
+    }
+
+    // Output path is optional for first-step-only mode
+    if (!firstStepOnlyMode) {
+        if (!(cmdl(2) >> outputPath)) {
+            fmt::print(stderr, "Error: Missing output plan file\n");
+            printUsage(argv[0]);
+            return 1;
+        }
+    } else {
+        outputPath = "dummy_output.json";  // Not used, but needed for compatibility
     }
 
     // Load configuration
@@ -95,7 +116,9 @@ int main(int argc, char* argv[]) {
 
     fmt::print("=== FRUGAL Standalone Optimizer ===\n");
     fmt::print("Input profile: {}\n", inputPath);
-    fmt::print("Output plan: {}\n", outputPath);
+    if (!firstStepOnlyMode) {
+        fmt::print("Output plan: {}\n", outputPath);
+    }
     fmt::print("Config file: {}\n", configPath);
 
     try {
@@ -215,6 +238,10 @@ int main(int argc, char* argv[]) {
         // Lookahead/lookback window size (same value for both prefetch and offload)
         int lookWindowSize = -1;
         cmdl("--look-window-size", -1) >> lookWindowSize;
+
+        // Options to run only first or second step
+        bool firstStepOnly = cmdl[{"--first-step-only"}];
+        bool secondStepOnly = cmdl[{"--second-step-only"}];
 
         if (!saveFirstStepPath.empty()) {
             fmt::print("Will save first step output to: {}\n", saveFirstStepPath);
@@ -387,6 +414,28 @@ int main(int argc, char* argv[]) {
                     saveFirstStepOutput(firstStepOutput, saveFirstStepPath);
                 }
             }
+        }
+
+        // If first-step-only, exit here
+        if (firstStepOnly) {
+            fmt::print("\n--- First Step Only Mode ---\n");
+            fmt::print("First step completed successfully\n");
+
+            if (topK > 1 && !saveTopKPath.empty()) {
+                fmt::print("Top-K solutions saved to: {}\n", saveTopKPath);
+            } else if (!saveFirstStepPath.empty()) {
+                fmt::print("First step output saved to: {}\n", saveFirstStepPath);
+            } else {
+                fmt::print("Warning: No output file saved. Consider using --save-first-step or --save-topk\n");
+            }
+
+            return 0;
+        }
+
+        // Skip second step if only loading first step for second-step-only mode
+        if (secondStepOnly && (loadFirstStepPath.empty() && loadTopKPath.empty())) {
+            fmt::print("Error: --second-step-only requires --load-first-step or --load-topk\n");
+            return 1;
         }
 
         fmt::print("[DEBUG-OUTPUT-OPTIMIZER] ==================== STARTING STEP 2: MEMORY MANAGEMENT OPTIMIZATION ====================\n");
