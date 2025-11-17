@@ -57,6 +57,7 @@ void printUsage(const char* programName) {
     fmt::print("  --timeout=<seconds>   Gurobi solver timeout in seconds (default: from config)\n");
     fmt::print("  --save-first-step=<path>  Save first step output to file\n");
     fmt::print("  --load-first-step=<path>  Load first step output and run only second step\n");
+    fmt::print("  --use-pool            Try to get multiple solutions from Gurobi solution pool\n");
     fmt::print("  --help, -h            Show this help message\n");
     fmt::print("\nExamples:\n");
     fmt::print("  # Basic usage with default config\n");
@@ -443,7 +444,47 @@ int main(int argc, char* argv[]) {
         // STEP 2: Memory Management Optimization
         auto secondStepInput = convertToSecondStepInput(optimizationInput, firstStepOutput);
         SecondStepSolver secondStepSolver;
-        auto secondStepOutput = secondStepSolver.solve(std::move(secondStepInput));
+
+        // Check if we should try solution pool (add a command line option for this)
+        bool usePool = cmdl[{"--use-pool"}];
+        SecondStepSolver::Output secondStepOutput;
+
+        if (usePool) {
+            fmt::print("Using solution pool to find multiple solutions\n");
+            auto allSolutions = secondStepSolver.solveWithPool(std::move(secondStepInput), 10);
+
+            if (allSolutions.empty()) {
+                fmt::print(stderr, "Error: No solutions found\n");
+                return 1;
+            }
+
+            fmt::print("Found {} solution(s) in pool\n", allSolutions.size());
+
+            // Save all solutions as separate files
+            if (allSolutions.size() > 1) {
+                for (size_t i = 0; i < allSolutions.size(); i++) {
+                    // Create filename with solution index
+                    size_t lastDot = outputPath.find_last_of('.');
+                    std::string baseName = outputPath.substr(0, lastDot);
+                    std::string extension = outputPath.substr(lastDot);
+                    std::string solutionPath = fmt::format("{}_sol{}{}", baseName, i, extension);
+
+                    // Create optimization output for this solution
+                    auto solutionOutput = convertToOptimizationOutput(optimizationInput, firstStepOutput, allSolutions[i]);
+                    solutionOutput.optimal = true;
+
+                    // Save this solution
+                    saveOptimizationOutput(solutionOutput, solutionPath);
+                    fmt::print("  Solution {} saved to: {}\n", i, solutionPath);
+                }
+            }
+
+            // Use the first (best) solution as the main output
+            secondStepOutput = allSolutions[0];
+        } else {
+            // Regular single solution
+            secondStepOutput = secondStepSolver.solve(std::move(secondStepInput));
+        }
 
         fmt::print("[DEBUG-OUTPUT-OPTIMIZER] ==================== COMPLETED STEP 2: FINALIZING OPTIMIZATION ====================\n");
 

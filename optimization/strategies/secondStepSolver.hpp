@@ -73,12 +73,22 @@ class SecondStepSolver {
    * @brief Solves the memory management optimization problem
    * @param input The optimization parameters (moved for efficiency)
    * @return Output The complete memory management strategy
-   * 
+   *
    * Uses mixed integer programming to solve for the optimal placement and
    * movement of memory arrays to minimize peak GPU memory usage while
    * respecting performance constraints.
    */
   Output solve(Input &&input);
+
+  /**
+   * @brief Solves and returns all solutions found in the pool
+   * @param input The optimization parameters (moved for efficiency)
+   * @param requestPoolSize Number of solutions to request from Gurobi (default 10)
+   * @return Vector of all solutions found (may be 1 if pool doesn't find more)
+   *
+   * Note: This only works with Gurobi backend. Other solvers will return single solution.
+   */
+  std::vector<Output> solveWithPool(Input &&input, int requestPoolSize = 10);
 };
 
 }  // namespace memopt

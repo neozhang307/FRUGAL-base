@@ -59,6 +59,7 @@ struct IntegerProgrammingSolver {
   // Solution pool support
   bool enableSolutionPool = false;  // Whether to enable solution pool
   int poolSolutions = 10;           // Number of solutions to request
+  std::vector<SecondStepSolver::Output> pooledSolutions;  // All solutions found in pool
 
   // Decision variables for the integer programming problem
   
@@ -1711,27 +1712,36 @@ struct IntegerProgrammingSolver {
       output.optimal = false;
     }
 
-    // Try to get additional solutions from pool if enabled
-    // Note: NextSolution() only works with Gurobi backend in OR-Tools
-    if (enableSolutionPool && (resultStatus == MPSolver::OPTIMAL || resultStatus == MPSolver::FEASIBLE)) {
-      LOG_TRACE_WITH_INFO("Checking for additional solutions in pool");
+    // Store all solutions if pool is enabled
+    std::vector<SecondStepSolver::Output> allSolutions;
 
-      int solutionCount = 1;  // We already have the first solution
+    if (resultStatus == MPSolver::OPTIMAL || resultStatus == MPSolver::FEASIBLE) {
+      // First solution is already extracted in 'output'
+      allSolutions.push_back(output);
 
-      // Try to get additional solutions using NextSolution()
-      // This only works with Gurobi backend
-      while (solver->NextSolution() && solutionCount < poolSolutions) {
-        solutionCount++;
-        LOG_TRACE_WITH_INFO("Found solution %d in pool", solutionCount);
+      // Try to get additional solutions from pool if enabled
+      // Note: NextSolution() only works with Gurobi backend in OR-Tools
+      if (enableSolutionPool) {
+        LOG_TRACE_WITH_INFO("Checking for additional solutions in pool");
 
-        // Here we could extract each solution
-        // For now, just count them
+        int solutionCount = 1;  // We already have the first solution
+
+        // Try to get additional solutions using NextSolution()
+        // This only works with Gurobi backend
+        while (solver->NextSolution() && solutionCount < poolSolutions) {
+          solutionCount++;
+          LOG_TRACE_WITH_INFO("Found solution %d in pool, extracting it", solutionCount);
+
+          // Extract this solution
+          SecondStepSolver::Output additionalSolution = extractSolution();
+          allSolutions.push_back(additionalSolution);
+        }
+
+        LOG_TRACE_WITH_INFO("Total solutions found: %d (requested: %d)", solutionCount, poolSolutions);
+
+        // Store all solutions in a member variable for later retrieval
+        this->pooledSolutions = allSolutions;
       }
-
-      LOG_TRACE_WITH_INFO("Total solutions found: %d (requested: %d)", solutionCount, poolSolutions);
-
-      // Note: Currently we only return the best solution
-      // Future enhancement: store all solutions and return them
     }
 
     return output;
@@ -1837,6 +1847,47 @@ SecondStepSolver::Output SecondStepSolver::solve(SecondStepSolver::Input &&input
 
     IntegerProgrammingSolver solver;
     return solver.solve(std::move(input));
+  }
+}
+
+/**
+ * @brief Public solveWithPool method that returns all solutions found
+ * @param input Input parameters with task graph and memory requirements
+ * @param requestPoolSize Number of solutions to request from Gurobi
+ * @return Vector of all solutions found in the pool
+ */
+std::vector<SecondStepSolver::Output> SecondStepSolver::solveWithPool(Input &&input, int requestPoolSize) {
+  LOG_TRACE_WITH_INFO("SecondStepSolver::solveWithPool called with pool size %d", requestPoolSize);
+
+  // Check configuration to determine which solver to use
+  auto& config = ConfigurationManager::getConfig().optimization;
+  std::string solverType = config.secondStepSolverType;
+
+  if (solverType == "GREEDY" || solverType == "GREEDY_WARMSTART") {
+    LOG_TRACE_WITH_INFO("Solution pool not supported for greedy solver, using single solution");
+    std::vector<Output> results;
+    results.push_back(solve(std::move(input)));
+    return results;
+  }
+
+  // Use MIP solver with solution pool enabled
+  LOG_TRACE_WITH_INFO("Using MIP solver with solution pool");
+
+  IntegerProgrammingSolver solver;
+  solver.enableSolutionPool = true;
+  solver.poolSolutions = requestPoolSize;
+
+  // Solve and get all solutions
+  solver.solve(std::move(input));
+
+  // Return all solutions found (stored in pooledSolutions)
+  if (!solver.pooledSolutions.empty()) {
+    LOG_TRACE_WITH_INFO("Returning %zu solutions from pool", solver.pooledSolutions.size());
+    return solver.pooledSolutions;
+  } else {
+    // If no solutions in pool, return empty vector
+    LOG_TRACE_WITH_INFO("No solutions found");
+    return std::vector<Output>();
   }
 }
 
