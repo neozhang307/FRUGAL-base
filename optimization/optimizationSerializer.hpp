@@ -81,4 +81,28 @@ void saveFirstStepOutput(const FirstStepSolver::Output& output, const std::strin
  */
 FirstStepSolver::Output loadFirstStepOutput(const std::string& path);
 
+// ========== FirstStepSolver::TopKOutput Serialization ==========
+
+/**
+ * @brief Save FirstStepSolver::TopKOutput to JSON file
+ *
+ * This function serializes multiple task scheduling solutions from the first
+ * optimization step, saving all Top-K solutions with their scores.
+ *
+ * @param topK The Top-K output containing multiple solutions
+ * @param path Path to the output JSON file
+ */
+void saveTopKSolutions(const FirstStepSolver::TopKOutput& topK, const std::string& path);
+
+/**
+ * @brief Load FirstStepSolver::TopKOutput from JSON file
+ *
+ * This function deserializes multiple task scheduling solutions from a JSON file
+ * created by saveTopKSolutions, allowing selection and use of different solutions.
+ *
+ * @param path Path to the input JSON file
+ * @return FirstStepSolver::TopKOutput The loaded Top-K solutions
+ */
+FirstStepSolver::TopKOutput loadTopKSolutions(const std::string& path);
+
 }  // namespace memopt

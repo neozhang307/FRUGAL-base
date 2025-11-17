@@ -14,7 +14,7 @@
     "byPassingFirstStep": false,
     "enableGapOverlap": true,
     "gapOverlapDecayFactor": 0.5,
-    "firstStepSolverType": "BEAN_SEARCH",
+    "firstStepSolverType": "BEAM_SEARCH",
     "enableEarlyTermination": true,
     "maxSolverIterations": 1000000,
     "beamWidth": 100,

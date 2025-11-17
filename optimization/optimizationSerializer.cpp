@@ -3,6 +3,8 @@
 #include <fstream>
 #include <vector>
 #include <ctime>
+#include <chrono>
+#include <algorithm>
 #include "../include/json.hpp"
 
 #include "../memory/memoryManager.hpp"
@@ -471,6 +473,83 @@ FirstStepSolver::Output loadFirstStepOutput(const std::string& path) {
            output.taskGroupExecutionOrder.size());
 
     return output;
+}
+
+// ========== FirstStepSolver::TopKOutput Serialization ==========
+
+void saveTopKSolutions(const FirstStepSolver::TopKOutput& topK, const std::string& path) {
+    nlohmann::json j;
+
+    // Save metadata
+    j["numSolutions"] = topK.solutions.size();
+    j["timestamp"] = std::chrono::system_clock::now().time_since_epoch().count();
+
+    // Save all solutions
+    j["solutions"] = nlohmann::json::array();
+    for (size_t i = 0; i < topK.solutions.size(); i++) {
+        nlohmann::json sol;
+        sol["rank"] = i + 1;
+        sol["taskGroupExecutionOrder"] = topK.solutions[i].taskGroupExecutionOrder;
+        sol["dataReuseScore"] = topK.solutions[i].dataReuseScore;
+        j["solutions"].push_back(sol);
+    }
+
+    // Write to file
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file for writing: " + path);
+    }
+    file << j.dump(2);
+    file.close();
+
+    LOG_TRACE_WITH_INFO("Saved TopKSolutions to %s", path.c_str());
+    printf("Saved %zu Top-K solutions to %s\n", topK.solutions.size(), path.c_str());
+
+    // Print summary of scores
+    printf("  Solution scores: ");
+    for (size_t i = 0; i < std::min(size_t(5), topK.solutions.size()); i++) {
+        printf("%zu ", topK.solutions[i].dataReuseScore);
+    }
+    if (topK.solutions.size() > 5) {
+        printf("... (showing first 5 of %zu)", topK.solutions.size());
+    }
+    printf("\n");
+}
+
+FirstStepSolver::TopKOutput loadTopKSolutions(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file for reading: " + path);
+    }
+
+    nlohmann::json j;
+    file >> j;
+    file.close();
+
+    FirstStepSolver::TopKOutput topK;
+
+    // Load all solutions
+    for (const auto& solJson : j["solutions"]) {
+        FirstStepSolver::Output solution;
+        solution.taskGroupExecutionOrder = solJson["taskGroupExecutionOrder"].get<std::vector<TaskGroupId>>();
+        solution.dataReuseScore = solJson["dataReuseScore"];
+        topK.solutions.push_back(solution);
+    }
+
+    LOG_TRACE_WITH_INFO("Loaded TopKSolutions from %s", path.c_str());
+    printf("Loaded %zu Top-K solutions from %s\n", topK.solutions.size(), path.c_str());
+
+    // Print summary of scores
+    printf("  Solution scores: ");
+    for (size_t i = 0; i < std::min(size_t(5), topK.solutions.size()); i++) {
+        printf("%zu ", topK.solutions[i].dataReuseScore);
+    }
+    if (topK.solutions.size() > 5) {
+        printf("... (showing first 5 of %zu)", topK.solutions.size());
+    }
+    printf("\n");
+
+    return topK;
 }
 
 }  // namespace memopt

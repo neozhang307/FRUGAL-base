@@ -35,11 +35,31 @@ class FirstStepSolver {
   /**
    * @struct Output
    * @brief Output of the FirstStepSolver
-   * 
+   *
    * @param taskGroupExecutionOrder Ordered sequence of task group IDs representing execution order
    */
   struct Output {
     std::vector<TaskGroupId> taskGroupExecutionOrder;   // Optimized execution order
+    size_t dataReuseScore = 0;                         // Data reuse overlap score for this ordering
+  };
+
+  /**
+   * @struct TopKOutput
+   * @brief Output containing multiple solutions from FirstStepSolver
+   */
+  struct TopKOutput {
+    std::vector<Output> solutions;  // Multiple solutions sorted by score (best first)
+
+    /**
+     * @brief Get the best solution (highest score)
+     * @return The best Output or empty if no solutions
+     */
+    Output getBest() const {
+      if (!solutions.empty()) {
+        return solutions[0];
+      }
+      return Output{};
+    }
   };
 
   /**
@@ -62,6 +82,13 @@ class FirstStepSolver {
    * @return Output containing the optimized task execution order
    */
   Output solve();
+
+  /**
+   * @brief Solves the optimization problem to find the top-K execution orders
+   * @param k Number of top solutions to return
+   * @return TopKOutput containing multiple solutions sorted by score
+   */
+  TopKOutput solveTopK(int k);
 
  private:
   /**
@@ -86,6 +113,9 @@ class FirstStepSolver {
   // Branch and bound statistics
   size_t totalStatesExplored = 0;               // Total states processed
   size_t totalStatesPruned = 0;                 // States pruned by branch and bound
+
+  // For Top-K support: store final beam states from beam search
+  std::vector<DFSState> finalBeamStates;        // Final beam states for Top-K extraction
 
   /**
    * @brief Recursive DFS to explore all valid topological orderings

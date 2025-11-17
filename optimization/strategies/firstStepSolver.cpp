@@ -74,9 +74,10 @@ FirstStepSolver::Output FirstStepSolver::solve() {
     std::vector<bool> tempVisited = this->visited;
     completePartialSolution(randomSolution, tempInDegree, tempVisited);
     this->output.taskGroupExecutionOrder = randomSolution;
-    
+
     // Calculate the actual overlap achieved by this random order
     this->maxTotalOverlap = calculateTotalOverlap(randomSolution);
+    this->output.dataReuseScore = this->maxTotalOverlap;
     
     // End timer
     auto endTime = std::chrono::high_resolution_clock::now();
@@ -108,9 +109,10 @@ FirstStepSolver::Output FirstStepSolver::solve() {
     std::vector<bool> tempVisited = this->visited;
     completePartialSolution(randomSolution, tempInDegree, tempVisited);
     this->output.taskGroupExecutionOrder = randomSolution;
-    
+
     // Calculate the actual overlap achieved by this random order
     this->maxTotalOverlap = calculateTotalOverlap(randomSolution);
+    this->output.dataReuseScore = this->maxTotalOverlap;
     
     // End timer
     auto endTime = std::chrono::high_resolution_clock::now();
@@ -204,6 +206,7 @@ void FirstStepSolver::dfs(size_t currentTotalOverlap) {
     if (currentTotalOverlap >= this->maxTotalOverlap) {
       this->maxTotalOverlap = currentTotalOverlap;
       this->output.taskGroupExecutionOrder = this->currentTopologicalSort;
+      this->output.dataReuseScore = currentTotalOverlap;
     }
     return;
   }
@@ -314,6 +317,7 @@ void FirstStepSolver::dfsIterative() {
       if (currentState.currentOverlap >= this->maxTotalOverlap) {
         this->maxTotalOverlap = currentState.currentOverlap;
         this->output.taskGroupExecutionOrder = currentState.currentPath;
+        this->output.dataReuseScore = currentState.currentOverlap;
       }
       stateStack.pop();
       continue;
@@ -405,7 +409,9 @@ void FirstStepSolver::dfsIterative() {
                          iterations, bestPartialSolution.size(), this->input.n);
       completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
       this->output.taskGroupExecutionOrder = bestPartialSolution;
-      this->maxTotalOverlap = 0; // Mark as non-optimal solution
+      this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0; // Mark as non-optimal solution
+      this->output.dataReuseScore = 0;
     } else {
       // No solution at all, create a random valid topological order
       fprintf(stderr, "[ERROR] Early termination triggered after %d iterations (limit: %d). No solution found at all. Creating random valid topological order.\n",
@@ -417,6 +423,8 @@ void FirstStepSolver::dfsIterative() {
       completePartialSolution(randomSolution, tempInDegree, tempVisited);
       this->output.taskGroupExecutionOrder = randomSolution;
       this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0;
+      this->output.dataReuseScore = 0;
     }
   }
 }
@@ -531,6 +539,7 @@ void FirstStepSolver::bruteForceSearch() {
       if (currentState.currentOverlap >= this->maxTotalOverlap) {
         this->maxTotalOverlap = currentState.currentOverlap;
         this->output.taskGroupExecutionOrder = currentState.currentPath;
+        this->output.dataReuseScore = currentState.currentOverlap;
       }
       stateStack.pop();
       continue;
@@ -610,7 +619,9 @@ void FirstStepSolver::bruteForceSearch() {
                          iterations, bestPartialSolution.size(), this->input.n);
       completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
       this->output.taskGroupExecutionOrder = bestPartialSolution;
-      this->maxTotalOverlap = 0; // Mark as non-optimal solution
+      this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0; // Mark as non-optimal solution
+      this->output.dataReuseScore = 0;
     } else {
       // No solution at all, create a random valid topological order
       fprintf(stderr, "[ERROR] Brute force early termination triggered after %d iterations (limit: %d). No solution found at all. Creating random valid topological order.\n",
@@ -622,6 +633,8 @@ void FirstStepSolver::bruteForceSearch() {
       completePartialSolution(randomSolution, tempInDegree, tempVisited);
       this->output.taskGroupExecutionOrder = randomSolution;
       this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0;
+      this->output.dataReuseScore = 0;
     }
   }
 }
@@ -685,6 +698,7 @@ void FirstStepSolver::beamSearch() {
         if (state.currentOverlap >= this->maxTotalOverlap) {
           this->maxTotalOverlap = state.currentOverlap;
           this->output.taskGroupExecutionOrder = state.currentPath;
+          this->output.dataReuseScore = state.currentOverlap;
         }
         continue;
       }
@@ -755,12 +769,16 @@ void FirstStepSolver::beamSearch() {
     currentBeam = std::move(nextBeam);
   }
   
+  // Save final beam states for Top-K extraction
+  this->finalBeamStates = currentBeam;
+
   // Check final beam for best solution
   for (const auto& state : currentBeam) {
-    if (state.currentPath.size() == this->input.n && 
+    if (state.currentPath.size() == this->input.n &&
         state.currentOverlap >= this->maxTotalOverlap) {
       this->maxTotalOverlap = state.currentOverlap;
       this->output.taskGroupExecutionOrder = state.currentPath;
+      this->output.dataReuseScore = state.currentOverlap;
     }
   }
   
@@ -776,6 +794,7 @@ void FirstStepSolver::beamSearch() {
       completePartialSolution(bestPartialSolution, bestPartialInDegree, bestPartialVisited);
       this->output.taskGroupExecutionOrder = bestPartialSolution;
       this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0;
     } else {
       fprintf(stderr, "[ERROR] Beam search early termination after %d iterations (limit: %d). No solution found. Creating random valid topological order.\n",
               iterations, maxIterations);
@@ -785,6 +804,8 @@ void FirstStepSolver::beamSearch() {
       completePartialSolution(randomSolution, tempInDegree, tempVisited);
       this->output.taskGroupExecutionOrder = randomSolution;
       this->maxTotalOverlap = 0;
+      this->output.dataReuseScore = 0;
+      this->output.dataReuseScore = 0;
     }
   }
   
@@ -936,6 +957,62 @@ void FirstStepSolver::completePartialSolution(std::vector<TaskGroupId>& partialS
       break;
     }
   }
+}
+
+/**
+ * Solves the optimization problem to find the top-K execution orders
+ * This method runs the normal solve() first, then extracts multiple solutions from the beam search
+ */
+FirstStepSolver::TopKOutput FirstStepSolver::solveTopK(int k) {
+  LOG_TRACE_WITH_INFO("solveTopK called with k=%d", k);
+
+  // Clear previous final beam states
+  this->finalBeamStates.clear();
+
+  // Run normal solve which will populate finalBeamStates if using beam search
+  Output bestSolution = solve();
+
+  TopKOutput result;
+
+  // Check which solver was used
+  std::string solverType = ConfigurationManager::getConfig().optimization.firstStepSolverType;
+
+  // If beam search was used and we have final beam states
+  if (solverType == "BEAM_SEARCH" && !this->finalBeamStates.empty()) {
+    // Sort final beam states by overlap (should already be sorted, but ensure it)
+    std::sort(this->finalBeamStates.begin(), this->finalBeamStates.end(),
+              [](const DFSState& a, const DFSState& b) {
+                return a.currentOverlap > b.currentOverlap;
+              });
+
+    // Extract top-k complete solutions
+    for (size_t i = 0; i < std::min(static_cast<size_t>(k), this->finalBeamStates.size()); i++) {
+      const auto& state = this->finalBeamStates[i];
+      // Only add complete solutions
+      if (state.currentPath.size() == static_cast<size_t>(this->input.n)) {
+        Output solution;
+        solution.taskGroupExecutionOrder = state.currentPath;
+        solution.dataReuseScore = state.currentOverlap;
+        result.solutions.push_back(solution);
+      }
+    }
+  }
+
+  // If no solutions found from beam states or not using beam search, add the best solution
+  if (result.solutions.empty() && !bestSolution.taskGroupExecutionOrder.empty()) {
+    result.solutions.push_back(bestSolution);
+  }
+
+  fprintf(stderr, "[FirstStepSolver::solveTopK] Found %zu solutions (requested k=%d)\n",
+          result.solutions.size(), k);
+
+  // Log the scores of all solutions
+  for (size_t i = 0; i < result.solutions.size(); i++) {
+    fprintf(stderr, "[FirstStepSolver::solveTopK] Solution %zu: score=%zu\n",
+            i + 1, result.solutions[i].dataReuseScore);
+  }
+
+  return result;
 }
 
 /**

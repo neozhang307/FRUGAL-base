@@ -185,12 +185,37 @@ int main(int argc, char* argv[]) {
         cmdl("--save-first-step", saveFirstStepPath) >> saveFirstStepPath;
         cmdl("--load-first-step", loadFirstStepPath) >> loadFirstStepPath;
 
+        // Top-K support parameters
+        int topK = 1;
+        cmdl("--top-k", 1) >> topK;
+
+        int solutionIndex = 0;
+        cmdl("--solution-index", 0) >> solutionIndex;
+
+        std::string saveTopKPath = "";
+        cmdl("--save-topk", saveTopKPath) >> saveTopKPath;
+
+        std::string loadTopKPath = "";
+        cmdl("--load-topk", loadTopKPath) >> loadTopKPath;
+
         if (!saveFirstStepPath.empty()) {
             fmt::print("Will save first step output to: {}\n", saveFirstStepPath);
         }
 
         if (!loadFirstStepPath.empty()) {
             fmt::print("Will load first step output from: {}\n", loadFirstStepPath);
+        }
+
+        if (topK > 1) {
+            fmt::print("Will extract top-{} solutions\n", topK);
+        }
+
+        if (!saveTopKPath.empty()) {
+            fmt::print("Will save top-K solutions to: {}\n", saveTopKPath);
+        }
+
+        if (!loadTopKPath.empty()) {
+            fmt::print("Will load top-K solutions from: {} (using solution index {})\n", loadTopKPath, solutionIndex);
         }
 
         // Instead of calling optimizer->optimizeGraph, inline the TwoStepOptimizationStrategy::run code
@@ -231,8 +256,30 @@ int main(int argc, char* argv[]) {
         }
 
         FirstStepSolver::Output firstStepOutput;
+        FirstStepSolver::TopKOutput topKSolutions;
 
-        if (!loadFirstStepPath.empty()) {
+        if (!loadTopKPath.empty()) {
+            // Load Top-K solutions from file and select one
+            fmt::print("\n=== LOADING TOP-K SOLUTIONS FROM FILE ===\n");
+            topKSolutions = loadTopKSolutions(loadTopKPath);
+
+            if (topKSolutions.solutions.empty()) {
+                fmt::print("Error: No solutions found in {}\n", loadTopKPath);
+                return 1;
+            }
+
+            // Select the requested solution
+            if (solutionIndex >= static_cast<int>(topKSolutions.solutions.size())) {
+                fmt::print("Error: Solution index {} out of range (file contains {} solutions)\n",
+                          solutionIndex, topKSolutions.solutions.size());
+                return 1;
+            }
+
+            firstStepOutput = topKSolutions.solutions[solutionIndex];
+            fmt::print("Using solution {} (score: {}) from loaded Top-K solutions\n",
+                      solutionIndex, firstStepOutput.dataReuseScore);
+            // Note: Sentinel task group already added before saving
+        } else if (!loadFirstStepPath.empty()) {
             // Load first step output from file
             fmt::print("\n=== LOADING FIRST STEP OUTPUT FROM FILE ===\n");
             firstStepOutput = loadFirstStepOutput(loadFirstStepPath);
@@ -249,14 +296,50 @@ int main(int argc, char* argv[]) {
             // STEP 1: Task Scheduling Optimization
             auto firstStepInput = convertToFirstStepInput(optimizationInput);
             FirstStepSolver firstStepSolver(std::move(firstStepInput));
-            firstStepOutput = firstStepSolver.solve();
 
-            // Add sentinel task group
-            firstStepOutput.taskGroupExecutionOrder.push_back(firstStepOutput.taskGroupExecutionOrder.size());
+            if (topK > 1) {
+                // Get multiple solutions
+                fmt::print("Extracting top-{} solutions from FirstStepSolver\n", topK);
+                topKSolutions = firstStepSolver.solveTopK(topK);
 
-            // Save first step output if requested
-            if (!saveFirstStepPath.empty()) {
-                saveFirstStepOutput(firstStepOutput, saveFirstStepPath);
+                if (topKSolutions.solutions.empty()) {
+                    fmt::print("Error: No solutions found by FirstStepSolver\n");
+                    return 1;
+                }
+
+                // Add sentinel task group to all solutions before saving
+                for (auto& solution : topKSolutions.solutions) {
+                    solution.taskGroupExecutionOrder.push_back(solution.taskGroupExecutionOrder.size());
+                }
+
+                // Save Top-K solutions if requested (with sentinel already added)
+                if (!saveTopKPath.empty()) {
+                    saveTopKSolutions(topKSolutions, saveTopKPath);
+                    fmt::print("Saved all {} Top-K solutions to {}\n",
+                              topKSolutions.solutions.size(), saveTopKPath);
+                }
+
+                // Use the selected solution (already has sentinel)
+                if (solutionIndex >= static_cast<int>(topKSolutions.solutions.size())) {
+                    fmt::print("Error: Solution index {} out of range (found {} solutions)\n",
+                              solutionIndex, topKSolutions.solutions.size());
+                    return 1;
+                }
+
+                firstStepOutput = topKSolutions.solutions[solutionIndex];
+                fmt::print("Using solution {} with score {}\n",
+                          solutionIndex, firstStepOutput.dataReuseScore);
+            } else {
+                // Get single best solution
+                firstStepOutput = firstStepSolver.solve();
+
+                // Add sentinel task group
+                firstStepOutput.taskGroupExecutionOrder.push_back(firstStepOutput.taskGroupExecutionOrder.size());
+
+                // Save first step output if requested
+                if (!saveFirstStepPath.empty()) {
+                    saveFirstStepOutput(firstStepOutput, saveFirstStepPath);
+                }
             }
         }
 
