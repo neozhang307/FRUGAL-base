@@ -1,6 +1,6 @@
 # FRUGAL Optimization - TODO List
 
-## ✅ Completed Tasks (November 2024)
+## ✅ Completed Tasks (November 2025)
 
 ### Infrastructure & Memory Management
 - [x] Fixed CUDA graph memory leak (21GB) using cudaDeviceGraphMemTrim
@@ -9,12 +9,12 @@
 - [x] Merged LU decomposition branch with task graph visualization
 - [x] Created playground test for CUDA graph memory behavior
 - [x] Documented CUDA graph memory management findings
-- [x] **Restructured memory management code** (2024-11-17)
+- [x] **Restructured memory management code** (2025-11-17)
   - Moved MemoryManager from profiling/ to dedicated memory/ folder
   - Better architectural organization
 
 ### Offline Optimization Workflow
-- [x] **Implemented complete offline optimization workflow** (2024-11-17)
+- [x] **Implemented complete offline optimization workflow** (2025-11-17)
   - Created `standaloneOptimizer` tool for CPU-only optimization
   - Implemented `tiledCholeskyAblation` with three modes:
     - Profile-only mode (saves to JSON)
@@ -23,14 +23,14 @@
   - Added `ProfilingContext` for managing dummy kernel handles
 
 ### Serialization Infrastructure
-- [x] **Implemented comprehensive serialization** (2024-11-17)
+- [x] **Implemented comprehensive serialization** (2025-11-17)
   - `OptimizationInput` serialization (profiling data)
   - `OptimizationOutput` serialization (execution plans)
   - `FirstStepSolver::Output` serialization (task scheduling results)
   - All serialization functions in `optimizationSerializer.{hpp,cpp}`
 
 ### Ablation Study Support
-- [x] **Enabled first/second step separation** (2024-11-17)
+- [x] **Enabled first/second step separation** (2025-11-17)
   - `--save-first-step=<path>` to save task scheduling
   - `--load-first-step=<path>` to skip task scheduling
   - Inline optimization in standaloneOptimizer (avoids linking issues)
@@ -45,11 +45,21 @@
 ## 🔧 Pending Tasks
 
 ### High Priority - Next Implementation
-- [ ] **Top-K Solutions Support** 🎯 NEXT
-  - Generate multiple alternative schedules from beam search
-  - Refine each with different weight configurations
-  - Enable solution diversity analysis
-  - See TOPK.md for detailed design
+- [x] **Top-K Solutions for First Step** ✅ COMPLETED (2025-11-17)
+  - Implemented `solveTopK()` method in FirstStepSolver
+  - Extracts multiple solutions from beam search final states
+  - Added `--top-k`, `--save-topk`, `--load-topk` flags to standaloneOptimizer
+  - Serialization implemented in optimizationSerializer
+  - Can extract and save multiple task orderings with data reuse scores
+
+- [x] **Gurobi Solution Pool Support** ✅ COMPLETED (2025-11-17)
+  - Implemented `solveWithPool()` method in SecondStepSolver
+  - Uses `NextSolution()` API to iterate through Gurobi's solution pool
+  - Extracts and saves all solutions as separate files (plan_sol0.json, plan_sol1.json, etc.)
+  - Added `--use-pool` flag to standaloneOptimizer
+  - Requires MIP solver (not GREEDY) for solution pool functionality
+  - Typically finds 1-2 solutions with relaxed pool parameters
+  - See ABLATION_README.md for usage guide
 
 ### Code Quality & Maintenance
 - [ ] **Reorganize tiledCholesky applications**

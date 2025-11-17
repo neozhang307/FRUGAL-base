@@ -1,9 +1,9 @@
 # FRUGAL Development Timeline - REVISED
 
-**Last Updated**: November 17, 2024
-**Status**: Infrastructure complete, ready for Top-K implementation
+**Last Updated**: November 17, 2025
+**Status**: Infrastructure complete, Top-K implemented for both steps
 
-## Completed Infrastructure (November 2024)
+## Completed Infrastructure (November 2025)
 
 ### ✅ Offline Optimization Workflow
 - **standaloneOptimizer**: CPU-only optimization tool
@@ -19,6 +19,12 @@
 - **Step separation**: Can run first/second steps independently
 - **Inline optimization**: Avoids cross-compilation unit issues
 - **Proper testing**: All paths verified and working
+
+### ✅ Top-K Solutions (November 17, 2025)
+- **First Step Top-K**: Extract multiple task orderings from beam search
+- **Gurobi Solution Pool**: Iterate through solutions with NextSolution()
+- **Multi-solution export**: Save as plan_sol0.json, plan_sol1.json, etc.
+- **Relaxed pool parameters**: Better chance of finding 2+ solutions
 
 ## Overview
 **Original Goal**: Complete all code modifications within 5 days
