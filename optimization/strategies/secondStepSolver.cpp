@@ -56,6 +56,10 @@ struct IntegerProgrammingSolver {
   std::map<std::string, double> warmStartValues;  // Variable name -> initial value mapping
   bool useWarmStart = false;  // Whether to use warm start
 
+  // Solution pool support
+  bool enableSolutionPool = false;  // Whether to enable solution pool
+  int poolSolutions = 10;           // Number of solutions to request
+
   // Decision variables for the integer programming problem
   
   // Binary variables for initial memory placement
@@ -1595,11 +1599,22 @@ struct IntegerProgrammingSolver {
     
     // Configure advanced Gurobi parameters
     MPSolverParameters solverParam;
-    
+
     // Set MIP gap tolerance (how close to optimal solution is acceptable)
     double mipGap = ConfigurationManager::getConfig().optimization.gurobiMipGap;
     solverParam.SetDoubleParam(MPSolverParameters::RELATIVE_MIP_GAP, mipGap);
-    
+
+    // Try to enable solution pool (may not work with all solver backends)
+    // This requests Gurobi to find multiple solutions if possible
+    if (enableSolutionPool) {
+      std::string poolParams = fmt::format(
+        "PoolSolutions {} PoolSearchMode 2 PoolGap {}",
+        poolSolutions, mipGap * 2
+      );
+      solver->SetSolverSpecificParametersAsString(poolParams);
+      LOG_TRACE_WITH_INFO("Requested %d solutions from solver pool", poolSolutions);
+    }
+
     // Set number of threads (0 = auto, use all available)
     int threads = ConfigurationManager::getConfig().optimization.gurobiThreads;
     if (threads > 0) {
