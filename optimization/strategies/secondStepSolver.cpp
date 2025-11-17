@@ -1711,6 +1711,73 @@ struct IntegerProgrammingSolver {
       output.optimal = false;
     }
 
+    // Try to get additional solutions from pool if enabled
+    // Note: NextSolution() only works with Gurobi backend in OR-Tools
+    if (enableSolutionPool && (resultStatus == MPSolver::OPTIMAL || resultStatus == MPSolver::FEASIBLE)) {
+      LOG_TRACE_WITH_INFO("Checking for additional solutions in pool");
+
+      int solutionCount = 1;  // We already have the first solution
+
+      // Try to get additional solutions using NextSolution()
+      // This only works with Gurobi backend
+      while (solver->NextSolution() && solutionCount < poolSolutions) {
+        solutionCount++;
+        LOG_TRACE_WITH_INFO("Found solution %d in pool", solutionCount);
+
+        // Here we could extract each solution
+        // For now, just count them
+      }
+
+      LOG_TRACE_WITH_INFO("Total solutions found: %d (requested: %d)", solutionCount, poolSolutions);
+
+      // Note: Currently we only return the best solution
+      // Future enhancement: store all solutions and return them
+    }
+
+    return output;
+  }
+
+  /**
+   * @brief Extract solution at given index (for future multi-solution support)
+   * Helper method to extract a specific solution when solution pool is available
+   */
+  SecondStepSolver::Output extractSolution(int solutionIndex = 0) {
+    SecondStepSolver::Output output;
+
+    // This would be called after solver->SetSolutionIndex(solutionIndex)
+    // For now, it extracts the current solution
+
+    output.optimal = true;
+    output.originalMemoryUsage = originalPeakMemoryUsage;
+    output.anticipatedPeakMemoryUsage = peakMemoryUsage->solution_value();
+
+    // Extract arrays that should be initially on the device
+    for (int i = 0; i < numberOfArraysManaged; i++) {
+      if (initiallyAllocatedOnDevice[i]->solution_value() > 0) {
+        output.indicesOfArraysInitiallyOnDevice.push_back(i);
+      }
+    }
+
+    // Extract prefetch operations
+    for (int i = 0; i < numberOfTaskGroups; i++) {
+      for (int j = 0; j < numberOfArraysManaged; j++) {
+        if (p[i][j]->solution_value() > 0) {
+          output.prefetches.push_back(std::make_tuple(i, j));
+        }
+      }
+    }
+
+    // Extract offload operations
+    for (int i = 0; i < numberOfTaskGroups; i++) {
+      for (int j = 0; j < numberOfArraysManaged; j++) {
+        for (int k = 0; k < numberOfTaskGroups; k++) {
+          if (o[i][j][k]->solution_value() > 0) {
+            output.offloadings.push_back(std::make_tuple(i, j, k));
+          }
+        }
+      }
+    }
+
     return output;
   }
 };
