@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -153,64 +152,13 @@ bool verifyCholeskyDecompositionPartially(double *A, std::vector<double *> &d_ti
   }
 }
 
-// GPU warmup function - runs for ~0.3 seconds
-void warmupGPU() {
-  const int warmup_size = 2048;
-  double *d_A, *d_B, *d_C;
-
-  checkCudaErrors(cudaMalloc(&d_A, warmup_size * warmup_size * sizeof(double)));
-  checkCudaErrors(cudaMalloc(&d_B, warmup_size * warmup_size * sizeof(double)));
-  checkCudaErrors(cudaMalloc(&d_C, warmup_size * warmup_size * sizeof(double)));
-
-  curandGenerator_t prng;
-  curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
-  curandSetPseudoRandomGeneratorSeed(prng, 42);
-  curandGenerateUniformDouble(prng, d_A, warmup_size * warmup_size);
-  curandGenerateUniformDouble(prng, d_B, warmup_size * warmup_size);
-
-  cublasHandle_t handle;
-  checkCudaErrors(cublasCreate(&handle));
-
-  double alpha = 1.0, beta = 0.0;
-  auto start = std::chrono::high_resolution_clock::now();
-  int iterations = 0;
-
-  while (true) {
-    checkCudaErrors(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                                warmup_size, warmup_size, warmup_size,
-                                &alpha, d_A, warmup_size,
-                                d_B, warmup_size,
-                                &beta, d_C, warmup_size));
-    iterations++;
-
-    if (iterations % 5 == 0) {
-      checkCudaErrors(cudaDeviceSynchronize());
-      auto now = std::chrono::high_resolution_clock::now();
-      auto elapsed = std::chrono::duration<double>(now - start).count();
-      if (elapsed >= 0.3) break;
-    }
-  }
-
-  checkCudaErrors(cudaDeviceSynchronize());
-  auto end = std::chrono::high_resolution_clock::now();
-  auto elapsed = std::chrono::duration<double>(end - start).count();
-  fmt::print("GPU warmup completed: {} iterations in {:.3f}s\n", iterations, elapsed);
-
-  cublasDestroy(handle);
-  curandDestroyGenerator(prng);
-  checkCudaErrors(cudaFree(d_A));
-  checkCudaErrors(cudaFree(d_B));
-  checkCudaErrors(cudaFree(d_C));
-}
-
 void tiledCholeskyNaiveGraph() {
   fmt::print("=== Tiled Cholesky Naive Graph Demo ===\n");
-  fmt::print("Matrix: {}x{}, {} tiles, {}x{} blocks ({:.2f} MB)\n",
-             N, N, T*T, B, B,
+  fmt::print("Matrix: {}x{}, {} tiles, {}x{} blocks ({:.2f} MB)\n", 
+             N, N, T*T, B, B, 
              (double)(N * N * sizeof(double)) / (1024.0 * 1024.0));
-
+  
   initializeCudaDevice();
-  warmupGPU();
 
   // =========================================================================
   // PHASE 1: SETUP AND ALLOCATE MEMORY
@@ -429,30 +377,12 @@ void tiledCholeskyNaiveGraph() {
   fmt::print("GPU Memory - Total: {:.2f} MB, Free: {:.2f} MB\n", 
              (double)total_mem / (1024.0 * 1024.0), (double)free_mem / (1024.0 * 1024.0));
   
-  // =========================================================================
-  // Run execution TWICE (like optimized version does profiling + execution)
-  // First run: dry run to match profiling overhead
-  // Second run: measured run
-  // =========================================================================
-
-  fmt::print("🔄 First execution (dry run, not measured)...\n");
-  float dryRunTime;
-  executeOptimizedGraph(
-    optimizedGraph,
-    [&tmanager_v2](int taskId, std::map<void*, void*> addressMapping, cudaStream_t stream) {
-      tmanager_v2.execute(taskId, stream);
-    },
-    dryRunTime,
-    memManager
-  );
-  fmt::print("  Dry run completed: {:.3f} ms\n", dryRunTime * 1000.0f);
-
-  // Start peak memory monitoring for second run
-  fmt::print("🔍 Second execution (measured) - Starting continuous GPU memory monitoring...\n");
+  // Start peak memory monitoring
+  fmt::print("🔍 Starting continuous GPU memory monitoring during execution...\n");
   PeakMemoryUsageProfiler peakProfiler(10); // Sample every 10ms
   peakProfiler.start();
-
-  // Run the optimized naive graph (second time - this is what we measure)
+  
+  // Run the optimized naive graph
   float runningTime;
   executeOptimizedGraph(
     optimizedGraph,
@@ -462,11 +392,11 @@ void tiledCholeskyNaiveGraph() {
     runningTime,
     memManager
   );
-
+  
   // Get peak memory usage
   size_t peakMemoryBytes = peakProfiler.end();
   double peakMemoryMB = (double)peakMemoryBytes / (1024.0 * 1024.0);
-
+  
   fmt::print("✅ Optimized naive graph execution completed!\n");
   fmt::print("Execution time: {:.3f} ms\n", runningTime * 1000.0f);
   fmt::print("📊 Peak GPU memory usage during execution: {:.2f} MB\n", peakMemoryMB);

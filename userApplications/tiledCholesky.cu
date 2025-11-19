@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <initializer_list>
@@ -33,6 +34,70 @@ const std::string INPUT_MATRIX_FILE_PATH = "tiledCholeskyInputMatrix.in";
 size_t N; // total matrix size (N×N)
 size_t B; // batch size in 1d (B×B per tile)
 size_t T; // tile amount in 1d (T×T tiles)
+
+// GPU warmup function - runs for ~0.3 seconds
+void warmupGPU() {
+  const int warmup_size = 2048;  // Matrix size for warmup
+  double *d_A, *d_B, *d_C;
+
+  // Allocate matrices for warmup
+  checkCudaErrors(cudaMalloc(&d_A, warmup_size * warmup_size * sizeof(double)));
+  checkCudaErrors(cudaMalloc(&d_B, warmup_size * warmup_size * sizeof(double)));
+  checkCudaErrors(cudaMalloc(&d_C, warmup_size * warmup_size * sizeof(double)));
+
+  // Initialize with random data
+  curandGenerator_t prng;
+  curandCreateGenerator(&prng, CURAND_RNG_PSEUDO_XORWOW);
+  curandSetPseudoRandomGeneratorSeed(prng, 42);
+  curandGenerateUniformDouble(prng, d_A, warmup_size * warmup_size);
+  curandGenerateUniformDouble(prng, d_B, warmup_size * warmup_size);
+
+  // Create cuBLAS handle
+  cublasHandle_t handle;
+  checkCudaErrors(cublasCreate(&handle));
+
+  double alpha = 1.0;
+  double beta = 0.0;
+
+  // Warmup: Run GEMM operations until ~0.3 seconds elapsed
+  auto start = std::chrono::high_resolution_clock::now();
+  int iterations = 0;
+
+  while (true) {
+    // C = alpha * A * B + beta * C
+    checkCudaErrors(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                                warmup_size, warmup_size, warmup_size,
+                                &alpha, d_A, warmup_size,
+                                d_B, warmup_size,
+                                &beta, d_C, warmup_size));
+
+    iterations++;
+
+    // Check elapsed time every 5 iterations
+    if (iterations % 5 == 0) {
+      checkCudaErrors(cudaDeviceSynchronize());
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsed = std::chrono::duration<double>(now - start).count();
+
+      if (elapsed >= 0.3) {
+        break;
+      }
+    }
+  }
+
+  checkCudaErrors(cudaDeviceSynchronize());
+  auto end = std::chrono::high_resolution_clock::now();
+  auto elapsed = std::chrono::duration<double>(end - start).count();
+
+  fmt::print("GPU warmup completed: {} iterations in {:.3f}s\n", iterations, elapsed);
+
+  // Cleanup
+  cublasDestroy(handle);
+  curandDestroyGenerator(prng);
+  checkCudaErrors(cudaFree(d_A));
+  checkCudaErrors(cudaFree(d_B));
+  checkCudaErrors(cudaFree(d_C));
+}
 
 __global__ void makeMatrixSymmetric(double *d_matrix, size_t n) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -629,7 +694,7 @@ void tiledCholesky(bool optimize, bool verify) {
     for (int j = 0; j < T; j++)
     {
       MemoryManager::getInstance().registerManagedMemoryAddress(getMatrixBlock(i, j), tileSize);
-      MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
+      // MemoryManager::getInstance().registerApplicationInput(getMatrixBlock(i, j));
       // MemoryManager::getInstance().registerApplicaftionOutput(getMatrixBlock(i, j));
     }  
   }  
@@ -1067,6 +1132,9 @@ int main(int argc, char **argv) {
   N = ConfigurationManager::getConfig().tiledCholesky.n;
   T = ConfigurationManager::getConfig().tiledCholesky.t;
   B = N / T;
+
+  // Warmup GPU before measurements
+  warmupGPU();
 
   tiledCholesky(
     ConfigurationManager::getConfig().generic.optimize,

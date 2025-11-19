@@ -36,7 +36,8 @@ class PerformanceValidator:
         self.results = []
 
         # Paths
-        self.baseline_executable = self.base_dir / "build/userApplications/tiledCholeskyNaiveGraph"
+        # baseline uses tiledCholesky (respects optimize flag), optimized uses Ablation
+        self.baseline_executable = self.base_dir / "build/userApplications/tiledCholesky"
         self.optimized_executable = self.base_dir / "build/userApplications/tiledCholeskyAblation"
         self.config_template = self.base_dir / "configs/config.json"
 
@@ -110,10 +111,29 @@ class PerformanceValidator:
         n = config['tiledCholesky']['n']
         t = config['tiledCholesky']['t']
 
-        # Copy config to main location (must be done before running executable)
-        subprocess.run(['cp', config_path, 'config.json'], check=True, cwd=self.base_dir)
-        # Ensure file is written to disk before executable starts
-        subprocess.run(['sync'], check=False)
+        # Write config directly to config.json (don't use cp - ensures file is actually updated)
+        target_config_path = self.base_dir / 'config.json'
+        with open(config_path, 'r') as src:
+            config_content = src.read()
+        with open(target_config_path, 'w') as dst:
+            dst.write(config_content)
+            dst.flush()
+            os.fsync(dst.fileno())  # Force write to disk
+
+        # Verify the file was actually written correctly
+        with open(target_config_path, 'r') as verify:
+            written_content = verify.read()
+        if written_content != config_content:
+            raise RuntimeError(f"Config file verification failed! File not written correctly.")
+
+        # Double-check the optimize flag is correct
+        written_config = json.loads(written_content)
+        expected_optimize = config['generic']['optimize']
+        actual_optimize = written_config['generic']['optimize']
+        if expected_optimize != actual_optimize:
+            raise RuntimeError(f"Config optimize flag mismatch! Expected {expected_optimize}, got {actual_optimize}")
+
+        print(f"  ✓ Config verified: optimize={actual_optimize}")
 
         # tiledCholeskyAblation uses --N= --T= format, tiledCholeskyNaiveGraph uses positional args
         if 'tiledCholeskyAblation' in executable:
@@ -185,19 +205,33 @@ class PerformanceValidator:
             output_log = self.results_dir / f"baseline_{n}_run{run_idx}.log"
             output = self.run_experiment(str(self.baseline_executable), str(config_path), str(output_log))
 
-            # Extract runtime from "Execution time: X.XXX ms"
+            # Extract runtime - support both formats
+            # Format 1: "Execution time: X.XXX ms" (tiledCholeskyNaiveGraph)
+            # Format 2: "Total time used (s): X.XXXXX" (tiledCholesky)
             runtime = self.extract_metric(output, r'Execution time:\s+([\d.]+)\s+ms')
             if runtime is not None:
                 runtimes.append(runtime / 1000.0)  # Convert to seconds
+            else:
+                runtime = self.extract_metric(output, r'Total time used \(s\):\s+([\d.]+)')
+                if runtime is not None:
+                    runtimes.append(runtime)  # Already in seconds
 
             # Memory metrics from first run
             if managed_memory is None:
-                # Managed memory (matrix tiles only)
+                # Managed memory (matrix tiles only) - support both formats
+                # Format 1: "Total managed memory: X.XX MB" (tiledCholeskyNaiveGraph)
+                # Format 2: "[MEMORY-INFO] Total managed memory size: X.XX MB" (tiledCholesky)
                 managed_memory = self.extract_metric(output, r'Total managed memory:\s+([\d.]+)\s+MB')
+                if managed_memory is None:
+                    managed_memory = self.extract_metric(output, r'\[MEMORY-INFO\] Total managed memory size:\s+([\d.]+)\s+MB')
 
             if peak_memory is None:
-                # Peak GPU memory (total including workspace, libraries, etc.)
+                # Peak GPU memory (total including workspace, libraries, etc.) - support both formats
+                # Format 1: "Peak GPU memory usage during execution: X.XX MB" (tiledCholeskyNaiveGraph)
+                # Format 2: "Peak memory usage (MiB): X.XX" (tiledCholesky)
                 peak_memory = self.extract_metric(output, r'Peak GPU memory usage during execution:\s+([\d.]+)\s+MB')
+                if peak_memory is None:
+                    peak_memory = self.extract_metric(output, r'Peak memory usage \(MiB\):\s+([\d.]+)')
 
         # Calculate statistics
         runtime_avg = np.mean(runtimes) if runtimes else None
@@ -482,8 +516,117 @@ class PerformanceValidator:
         print("\nNote: Managed Red = managed memory reduction, Peak Red = total GPU memory reduction")
         print("Slowdown values are multiplicative factors (e.g., 1.5x means 1.5 times slower)")
 
+    def run_baseline_only(self, domain_sizes: Optional[List[int]] = None):
+        """Run ONLY baseline experiments (separate invocation with optimize=false)"""
+        sizes = domain_sizes if domain_sizes else self.domain_sizes
+
+        print(f"\n🚀 Running BASELINE-ONLY Mode")
+        print(f"Domain sizes: {sizes}")
+        print(f"Tile size: {self.tile_size}")
+        print(f"Number of runs: {self.num_runs}")
+        print(f"Results directory: {self.results_dir}")
+
+        # Set optimize=false in config.json for entire run
+        baseline_config = self.create_config("baseline", sizes[0])
+        baseline_config_path = self.results_dir / "config_baseline_global.json"
+        with open(baseline_config_path, 'w') as f:
+            json.dump(baseline_config, f, indent=2)
+        import subprocess
+        subprocess.run(['cp', str(baseline_config_path), 'config.json'], check=True, cwd=self.base_dir)
+        subprocess.run(['sync'], check=False)
+        print(f"✓ Global config.json set to optimize=false\n")
+
+        for n in sizes:
+            print(f"\n{'='*60}")
+            print(f"BASELINE: N={n}, T={self.tile_size}")
+            print(f"{'='*60}")
+            try:
+                baseline = self.run_baseline(n)
+                # Save baseline results to JSON for later merging
+                baseline_file = self.results_dir / f"baseline_{n}.json"
+                with open(baseline_file, 'w') as f:
+                    json.dump(baseline, f, indent=2)
+                print(f"✅ Baseline for N={n} saved")
+            except Exception as e:
+                print(f"❌ Baseline failed for N={n}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print(f"\n✅ All baselines completed!")
+        print(f"📊 Results saved in: {self.results_dir}")
+
+    def run_optimized_only(self, domain_sizes: Optional[List[int]] = None):
+        """Run ONLY optimized experiments (separate invocation with optimize=true)"""
+        sizes = domain_sizes if domain_sizes else self.domain_sizes
+
+        print(f"\n🚀 Running OPTIMIZED-ONLY Mode")
+        print(f"Domain sizes: {sizes}")
+        print(f"Tile size: {self.tile_size}")
+        print(f"Number of runs: {self.num_runs}")
+        print(f"Results directory: {self.results_dir}")
+
+        # Set optimize=true in config.json for entire run
+        optimized_config = self.create_config("phase1", sizes[0])
+        optimized_config_path = self.results_dir / "config_optimized_global.json"
+        with open(optimized_config_path, 'w') as f:
+            json.dump(optimized_config, f, indent=2)
+        import subprocess
+        subprocess.run(['cp', str(optimized_config_path), 'config.json'], check=True, cwd=self.base_dir)
+        subprocess.run(['sync'], check=False)
+        print(f"✓ Global config.json set to optimize=true\n")
+
+        for n in sizes:
+            # Load baseline results
+            baseline_file = self.results_dir / f"baseline_{n}.json"
+            if not baseline_file.exists():
+                print(f"⚠️  Warning: No baseline found for N={n}, skipping optimized experiments")
+                continue
+
+            with open(baseline_file, 'r') as f:
+                baseline = json.load(f)
+
+            print(f"\n{'='*60}")
+            print(f"OPTIMIZED EXPERIMENT: N={n}, T={self.tile_size}")
+            print(f"{'='*60}")
+
+            try:
+                # Phase 1: Find minimal memory
+                phase1 = self.run_phase1_minimize_memory(n, baseline)
+
+                # Phase 2: Optimize performance at minimal memory
+                phase2 = self.run_phase2_optimize_performance(n, phase1['optimized_managed'], baseline)
+
+                # Store all results
+                result = {
+                    'n': n,
+                    't': self.tile_size,
+                    'baseline_runtime': baseline['runtime'],
+                    'baseline_managed_memory': baseline['managed_memory'],
+                    'baseline_peak_memory': baseline['peak_memory'],
+                    'baseline_tflops': baseline['tflops'],
+                    **phase1,
+                    **phase2
+                }
+
+                self.results.append(result)
+                self.save_results()
+
+                print(f"\n✅ Completed N={n}")
+
+            except Exception as e:
+                print(f"\n❌ Error for N={n}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print(f"\n✅ All optimized experiments completed!")
+        print(f"📊 Results saved in: {self.results_dir}")
+
     def run_all(self, domain_sizes: Optional[List[int]] = None):
-        """Run validation for all domain sizes"""
+        """Run validation for all domain sizes
+
+        Modified to run all baselines first, then all optimized experiments.
+        This ensures config.json filesystem sync is not an issue.
+        """
         sizes = domain_sizes if domain_sizes else self.domain_sizes
 
         print(f"\n🚀 Starting Performance Validation")
@@ -492,8 +635,91 @@ class PerformanceValidator:
         print(f"Number of runs: {self.num_runs}")
         print(f"Results directory: {self.results_dir}")
 
+        # Store baseline results for each size
+        baseline_results = {}
+
+        # STEP 1: Run ALL baselines first (with optimize=false)
+        print(f"\n{'='*60}")
+        print("STEP 1: Running ALL BASELINE experiments (optimize=false)")
+        print(f"{'='*60}")
+
+        # CRITICAL: Set optimize=false in config.json BEFORE running baselines
+        # This ensures all baselines use the same config state
+        baseline_config = self.create_config("baseline", sizes[0])
+        baseline_config_path = self.results_dir / "config_baseline_initial.json"
+        with open(baseline_config_path, 'w') as f:
+            json.dump(baseline_config, f, indent=2)
+        # Copy to main config location
+        import subprocess
+        subprocess.run(['cp', str(baseline_config_path), 'config.json'], check=True, cwd=self.base_dir)
+        subprocess.run(['sync'], check=False)
+        print(f"✓ Set config.json to optimize=false before baseline batch")
+
         for n in sizes:
-            self.run_full_experiment(n)
+            print(f"\n--- Baseline for N={n} ---")
+            try:
+                baseline_results[n] = self.run_baseline(n)
+            except Exception as e:
+                print(f"❌ Baseline failed for N={n}: {e}")
+                import traceback
+                traceback.print_exc()
+                baseline_results[n] = None
+
+        # STEP 2: Run ALL optimized experiments (with optimize=true)
+        print(f"\n{'='*60}")
+        print("STEP 2: Running ALL OPTIMIZED experiments (optimize=true)")
+        print(f"{'='*60}")
+
+        # CRITICAL: Set optimize=true in config.json BEFORE running optimized experiments
+        optimized_config = self.create_config("phase1", sizes[0])
+        optimized_config_path = self.results_dir / "config_optimized_initial.json"
+        with open(optimized_config_path, 'w') as f:
+            json.dump(optimized_config, f, indent=2)
+        # Copy to main config location
+        subprocess.run(['cp', str(optimized_config_path), 'config.json'], check=True, cwd=self.base_dir)
+        subprocess.run(['sync'], check=False)
+        print(f"✓ Set config.json to optimize=true before optimized batch")
+
+        for n in sizes:
+            print(f"\n{'='*60}")
+            print(f"OPTIMIZED EXPERIMENT: N={n}, T={self.tile_size}")
+            print(f"{'='*60}")
+
+            baseline = baseline_results.get(n)
+            if baseline is None:
+                print(f"⚠️  Skipping N={n} - baseline failed")
+                continue
+
+            try:
+                # Phase 1: Find minimal memory
+                phase1 = self.run_phase1_minimize_memory(n, baseline)
+
+                # Phase 2: Optimize performance at minimal memory
+                phase2 = self.run_phase2_optimize_performance(n, phase1['optimized_managed'], baseline)
+
+                # Store all results
+                result = {
+                    'n': n,
+                    't': self.tile_size,
+                    'baseline_runtime': baseline['runtime'],
+                    'baseline_managed_memory': baseline['managed_memory'],
+                    'baseline_peak_memory': baseline['peak_memory'],
+                    'baseline_tflops': baseline['tflops'],
+                    **phase1,
+                    **phase2
+                }
+
+                self.results.append(result)
+
+                # Save intermediate results
+                self.save_results()
+
+                print(f"\n✅ Completed N={n}")
+
+            except Exception as e:
+                print(f"\n❌ Error for N={n}: {e}")
+                import traceback
+                traceback.print_exc()
 
         print(f"\n✅ All experiments completed!")
         print(f"📊 Results saved in: {self.results_dir}")
@@ -509,6 +735,8 @@ def main():
                         help="Base directory of FRUGAL project")
     parser.add_argument('--num-runs', type=int, default=10,
                         help="Number of runs for averaging (default: 10, use 1 for quick test)")
+    parser.add_argument('--mode', type=str, default="all", choices=["all", "baseline-only", "optimized-only"],
+                        help="Run mode: all (default), baseline-only, or optimized-only")
 
     args = parser.parse_args()
 
@@ -522,8 +750,13 @@ def main():
         num_runs=args.num_runs
     )
 
-    # Run validation
-    validator.run_all(domain_sizes)
+    # Run validation based on mode
+    if args.mode == "all":
+        validator.run_all(domain_sizes)
+    elif args.mode == "baseline-only":
+        validator.run_baseline_only(domain_sizes)
+    elif args.mode == "optimized-only":
+        validator.run_optimized_only(domain_sizes)
 
 if __name__ == "__main__":
     main()
