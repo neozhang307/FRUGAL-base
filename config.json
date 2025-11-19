@@ -1,7 +1,7 @@
 {
   "generic": {
     "optimize": true,
-    "verify": true,
+    "verify": false,
     "repeat": 1,
     "useUM": false,
     "availableMemoryForUMInMiB": 4096
@@ -19,13 +19,13 @@
     "maxSolverIterations": 1000000,
     "beamWidth": 100,
     "prefetchingBandwidthInGB": 380,
-    "acceptableRunningTimeFactor": 2.0,
+    "acceptableRunningTimeFactor": 2,
     "minManagedArraySize": 0,
     "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
-    "maxPeakMemoryUsageInMiB": 150000,
+    "maxPeakMemoryUsageInMiB": 15000,
     "weightOfPeakMemoryUsage": 0,
     "weightOfTotalRunningTime": 1,
-    "weightOfNumberOfMigrations": 0.01,
+    "weightOfNumberOfMigrations": 0.00,
     "prefetchLookbackDistanceLimit": 30,
     "prefetchLookbackTimeBudgetFactor": 50.0,
     "offloadLookaheadDistanceLimit": 30,
@@ -33,10 +33,10 @@
     "gurobiTimeLimitSeconds": 60,
     "gurobiMipGap": 0.10,
     "gurobiThreads": 0,
-    "gurobiEnableHeuristics": true,
+    "gurobiEnableHeuristics": false,
     "disableLookahead": false,
     "disableLookback": false,
-    "secondStepSolverType": "GREEDY_WARMSTART",
+    "secondStepSolverType": "MIP",
     "greedySchedulerMode": "MIN_MEMORY"
   },
   "execution": {
@@ -59,7 +59,7 @@
     "iterationBatchSize": 1
   },
   "lu": {
-    "n": 10240,
+    "n": 102400,
     "t": 4,
     "mode": 0
   }
