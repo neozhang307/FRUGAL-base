@@ -11,7 +11,7 @@ FRUGAL is a sophisticated CUDA memory optimization framework that enables GPU ap
 - **Domain enlargement** for scaling optimization plans across problem sizes
 - **Multiple solver backends**: SCIP (open-source) and Gurobi (commercial)
 
-## Project Status (November 2024)
+## Project Status (November 2025)
 
 - ✅ **Phase 1 Optimization**: Solved with beam search (configurable width for quality/speed tradeoff)
 - ✅ **Phase 2 Optimization**: Variable reduction using dependencies as constraints
