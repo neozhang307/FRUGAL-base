@@ -128,8 +128,9 @@ auto optimizedGraph = profileAndOptimize(graph);
 
 **Execution:**
 ```bash
-./build/userApplications/tiledCholeskyNaiveGraph
-# Uses configuration from config.json
+./build/userApplications/tiledCholeskyNaiveGraph [N] [T]
+# Example: ./build/userApplications/tiledCholeskyNaiveGraph 2048 4
+# Uses positional arguments (N and T)
 ```
 
 ---
