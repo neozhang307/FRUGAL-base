@@ -38,11 +38,17 @@ class PerformanceAnalyzer:
         print("\n=== Summary Statistics ===")
 
         # Overall stats
-        print(f"\nMemory Reduction:")
-        print(f"  Mean: {self.df['memory_reduction'].mean():.1f}%")
-        print(f"  Std: {self.df['memory_reduction'].std():.1f}%")
-        print(f"  Min: {self.df['memory_reduction'].min():.1f}%")
-        print(f"  Max: {self.df['memory_reduction'].max():.1f}%")
+        print(f"\nManaged Memory Reduction:")
+        print(f"  Mean: {self.df['managed_reduction'].mean():.1f}%")
+        print(f"  Std: {self.df['managed_reduction'].std():.1f}%")
+        print(f"  Min: {self.df['managed_reduction'].min():.1f}%")
+        print(f"  Max: {self.df['managed_reduction'].max():.1f}%")
+
+        print(f"\nPeak Memory Reduction:")
+        print(f"  Mean: {self.df['peak_reduction'].mean():.1f}%")
+        print(f"  Std: {self.df['peak_reduction'].std():.1f}%")
+        print(f"  Min: {self.df['peak_reduction'].min():.1f}%")
+        print(f"  Max: {self.df['peak_reduction'].max():.1f}%")
 
         print(f"\nPrediction Error:")
         print(f"  Mean: {self.df['prediction_error'].mean():.1f}%")
@@ -106,26 +112,26 @@ class PerformanceAnalyzer:
         """Plot memory reduction rates"""
         plt.figure(figsize=(14, 6))
 
-        # Plot 1: Phase 1 vs Phase 2 memory reduction
+        # Plot 1: Managed vs Peak memory reduction
         plt.subplot(1, 2, 1)
         x = np.arange(len(self.df))
         width = 0.35
-        plt.bar(x - width/2, self.df['memory_reduction'], width, label='Phase 1 (Minimized)', alpha=0.8)
-        plt.bar(x + width/2, self.df['memory_reduction_maintained'], width, label='Phase 2 (Maintained)', alpha=0.8)
+        plt.bar(x - width/2, self.df['managed_reduction'], width, label='Managed Memory', alpha=0.8)
+        plt.bar(x + width/2, self.df['peak_reduction'], width, label='Peak Memory', alpha=0.8)
         plt.xlabel('Domain Size', fontsize=14)
         plt.ylabel('Memory Reduction (%)', fontsize=14)
-        plt.title('Memory Reduction: Phase 1 vs Phase 2', fontsize=16, fontweight='bold')
+        plt.title('Memory Reduction: Managed vs Peak', fontsize=16, fontweight='bold')
         plt.xticks(x, self.df['n'], rotation=45)
         plt.legend()
         plt.grid(True, alpha=0.3, axis='y')
 
         # Plot 2: Memory usage comparison
         plt.subplot(1, 2, 2)
-        plt.plot(self.df['n'], self.df['baseline_memory'], 'o-', label='Baseline', linewidth=2, markersize=8)
-        plt.plot(self.df['n'], self.df['min_memory'], 's-', label='Minimized', linewidth=2, markersize=8)
-        plt.plot(self.df['n'], self.df['final_memory'], '^-', label='Optimized', linewidth=2, markersize=8)
+        plt.plot(self.df['n'], self.df['baseline_peak_memory'], 'o-', label='Baseline Peak', linewidth=2, markersize=8)
+        plt.plot(self.df['n'], self.df['optimized_managed'], 's-', label='Optimized Managed', linewidth=2, markersize=8)
+        plt.plot(self.df['n'], self.df['actual_peak'], '^-', label='Optimized Peak', linewidth=2, markersize=8)
         plt.xlabel('Domain Size (N)', fontsize=14)
-        plt.ylabel('Memory Usage (MB)', fontsize=14)
+        plt.ylabel('Memory Usage (MB/MiB)', fontsize=14)
         plt.title('Memory Usage Comparison', fontsize=16, fontweight='bold')
         plt.legend()
         plt.grid(True, alpha=0.3)
@@ -216,10 +222,15 @@ class PerformanceAnalyzer:
         report.append(f"**Total Experiments**: {len(self.df)}\n\n")
 
         report.append("## Summary Statistics\n\n")
-        report.append("### Memory Reduction\n")
-        report.append(f"- Mean: {self.df['memory_reduction'].mean():.1f}%\n")
-        report.append(f"- Std: {self.df['memory_reduction'].std():.1f}%\n")
-        report.append(f"- Range: [{self.df['memory_reduction'].min():.1f}%, {self.df['memory_reduction'].max():.1f}%]\n\n")
+        report.append("### Managed Memory Reduction\n")
+        report.append(f"- Mean: {self.df['managed_reduction'].mean():.1f}%\n")
+        report.append(f"- Std: {self.df['managed_reduction'].std():.1f}%\n")
+        report.append(f"- Range: [{self.df['managed_reduction'].min():.1f}%, {self.df['managed_reduction'].max():.1f}%]\n\n")
+
+        report.append("### Peak Memory Reduction\n")
+        report.append(f"- Mean: {self.df['peak_reduction'].mean():.1f}%\n")
+        report.append(f"- Std: {self.df['peak_reduction'].std():.1f}%\n")
+        report.append(f"- Range: [{self.df['peak_reduction'].min():.1f}%, {self.df['peak_reduction'].max():.1f}%]\n\n")
 
         report.append("### Prediction Error\n")
         report.append(f"- Mean: {self.df['prediction_error'].mean():.1f}%\n")
@@ -238,7 +249,8 @@ class PerformanceAnalyzer:
                 report.append(f"### {cat} ({len(subset)} experiments)\n")
                 report.append(f"- Prediction Error: {subset['prediction_error'].mean():.1f}% ± {subset['prediction_error'].std():.1f}%\n")
                 report.append(f"- Slowdown: {subset['actual_slowdown'].mean():.2f}x ± {subset['actual_slowdown'].std():.2f}x\n")
-                report.append(f"- Memory Reduction: {subset['memory_reduction'].mean():.1f}% ± {subset['memory_reduction'].std():.1f}%\n\n")
+                report.append(f"- Managed Memory Reduction: {subset['managed_reduction'].mean():.1f}% ± {subset['managed_reduction'].std():.1f}%\n")
+                report.append(f"- Peak Memory Reduction: {subset['peak_reduction'].mean():.1f}% ± {subset['peak_reduction'].std():.1f}%\n\n")
 
         report.append("## Detailed Results\n\n")
         report.append(self.df.to_markdown(index=False))
