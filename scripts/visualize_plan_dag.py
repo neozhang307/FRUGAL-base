@@ -22,11 +22,95 @@ def load_plan(plan_file):
     with open(plan_file, 'r') as f:
         return json.load(f)
 
+def find_overlapping_migrations(G, node_info, profile):
+    """
+    Detect which migration nodes (prefetch/offload) overlap with task execution.
+
+    Overlap means: the migration starts after task X and finishes before task Y,
+    where there are other tasks executing between X and Y.
+
+    Returns a set of node_ids that are overlapping.
+    """
+    # Build taskId -> taskGroupId mapping
+    taskid_to_groupid = {}
+    for tg in profile.get('taskGroups', []):
+        for task_id in tg.get('taskIds', []):
+            taskid_to_groupid[task_id] = tg['id']
+
+    # Get task execution order from topological sort
+    topo_order = list(nx.topological_sort(G))
+    task_exec_order = {}
+    order = 0
+    for node_id in topo_order:
+        if node_info.get(node_id, {}).get('type') == 'task':
+            task_exec_order[node_id] = order
+            order += 1
+
+    def find_task_predecessors(node_id, visited=None):
+        """Find all task nodes that are predecessors (through control nodes)."""
+        if visited is None:
+            visited = set()
+        if node_id in visited:
+            return []
+        visited.add(node_id)
+
+        tasks = []
+        for pred in G.predecessors(node_id):
+            if node_info.get(pred, {}).get('type') == 'task':
+                tasks.append(pred)
+            else:
+                tasks.extend(find_task_predecessors(pred, visited))
+        return tasks
+
+    def find_task_successors(node_id, visited=None):
+        """Find all task nodes that are successors (through control nodes)."""
+        if visited is None:
+            visited = set()
+        if node_id in visited:
+            return []
+        visited.add(node_id)
+
+        tasks = []
+        for succ in G.successors(node_id):
+            if node_info.get(succ, {}).get('type') == 'task':
+                tasks.append(succ)
+            else:
+                tasks.extend(find_task_successors(succ, visited))
+        return tasks
+
+    overlapping_nodes = set()
+
+    for node_id, info in node_info.items():
+        if info.get('type') not in ['prefetch', 'offload']:
+            continue
+
+        task_preds = find_task_predecessors(node_id)
+        task_succs = find_task_successors(node_id)
+
+        # Get execution order of predecessor and successor tasks
+        pred_orders = [task_exec_order[t] for t in task_preds if t in task_exec_order]
+        succ_orders = [task_exec_order[t] for t in task_succs if t in task_exec_order]
+
+        # Migration starts after max(pred_orders), finishes before min(succ_orders)
+        start_after = max(pred_orders) if pred_orders else -1
+        finish_before = min(succ_orders) if succ_orders else len(task_exec_order)
+
+        # Overlap if there are tasks between start and finish
+        tasks_spanned = finish_before - start_after - 1
+
+        if tasks_spanned > 0:
+            overlapping_nodes.add(node_id)
+
+    return overlapping_nodes
+
+
 def visualize_plan_dag(profile, plan, output_dir):
     """
     Visualize the execution plan as a DAG.
     Shows only tasks and migrations (prefetch/offload) with their connections.
     Control nodes are removed, edges are connected through them.
+
+    Overlapping migrations (those that span multiple tasks) are shown in different colors.
     """
 
     # Build full graph from plan
@@ -196,7 +280,18 @@ def visualize_plan_dag(profile, plan, output_dir):
     offload_nodes = [n for n in G.nodes() if node_info.get(n, {}).get('type') == 'offload']
     control_nodes = [n for n in G.nodes() if node_info.get(n, {}).get('type') == 'control']
 
+    # Detect overlapping migrations
+    overlapping_nodes = find_overlapping_migrations(G, node_info, profile)
+
+    # Split prefetch/offload into overlapping and non-overlapping
+    prefetch_overlap = [n for n in prefetch_nodes if n in overlapping_nodes]
+    prefetch_non_overlap = [n for n in prefetch_nodes if n not in overlapping_nodes]
+    offload_overlap = [n for n in offload_nodes if n in overlapping_nodes]
+    offload_non_overlap = [n for n in offload_nodes if n not in overlapping_nodes]
+
     print(f"\nNode counts: {len(task_nodes)} tasks, {len(control_nodes)} control, {len(prefetch_nodes)} prefetch, {len(offload_nodes)} offload")
+    print(f"Overlapping migrations: {len(prefetch_overlap)} prefetch, {len(offload_overlap)} offload")
+    print(f"Non-overlapping migrations: {len(prefetch_non_overlap)} prefetch, {len(offload_non_overlap)} offload")
 
     # Use the full graph (with control nodes) for topological ordering
     # This gives us the proper execution order
@@ -297,18 +392,32 @@ def visualize_plan_dag(profile, plan, output_dir):
                               node_color='#3498db', node_shape='s',
                               node_size=800, edgecolors='black', linewidths=1.5, ax=ax)
 
-    # Draw prefetch nodes (green triangles) - smaller
-    prefetch_pos_dict = {n: pos[n] for n in prefetch_nodes if n in pos}
-    if prefetch_pos_dict:
-        nx.draw_networkx_nodes(G, prefetch_pos_dict, nodelist=prefetch_nodes,
-                              node_color='#2ecc71', node_shape='v',
+    # Draw prefetch nodes - different colors for overlapping vs non-overlapping
+    # Overlapping prefetch: darker green (#1a7a3e), Non-overlapping: lighter green (#7dcea0)
+    prefetch_non_overlap_pos = {n: pos[n] for n in prefetch_non_overlap if n in pos}
+    if prefetch_non_overlap_pos:
+        nx.draw_networkx_nodes(G, prefetch_non_overlap_pos, nodelist=prefetch_non_overlap,
+                              node_color='#7dcea0', node_shape='v',
                               node_size=800, edgecolors='black', linewidths=1.5, ax=ax)
 
-    # Draw offload nodes (red triangles) - smaller
-    offload_pos_dict = {n: pos[n] for n in offload_nodes if n in pos}
-    if offload_pos_dict:
-        nx.draw_networkx_nodes(G, offload_pos_dict, nodelist=offload_nodes,
-                              node_color='#e74c3c', node_shape='^',
+    prefetch_overlap_pos = {n: pos[n] for n in prefetch_overlap if n in pos}
+    if prefetch_overlap_pos:
+        nx.draw_networkx_nodes(G, prefetch_overlap_pos, nodelist=prefetch_overlap,
+                              node_color='#1a7a3e', node_shape='v',
+                              node_size=800, edgecolors='black', linewidths=1.5, ax=ax)
+
+    # Draw offload nodes - different colors for overlapping vs non-overlapping
+    # Overlapping offload: darker red (#922b21), Non-overlapping: lighter red (#f1948a)
+    offload_non_overlap_pos = {n: pos[n] for n in offload_non_overlap if n in pos}
+    if offload_non_overlap_pos:
+        nx.draw_networkx_nodes(G, offload_non_overlap_pos, nodelist=offload_non_overlap,
+                              node_color='#f1948a', node_shape='^',
+                              node_size=800, edgecolors='black', linewidths=1.5, ax=ax)
+
+    offload_overlap_pos = {n: pos[n] for n in offload_overlap if n in pos}
+    if offload_overlap_pos:
+        nx.draw_networkx_nodes(G, offload_overlap_pos, nodelist=offload_overlap,
+                              node_color='#922b21', node_shape='^',
                               node_size=800, edgecolors='black', linewidths=1.5, ax=ax)
 
     # Draw control nodes (gray diamonds) - much smaller (2x smaller than others)
@@ -339,18 +448,22 @@ def visualize_plan_dag(profile, plan, output_dir):
     ax.set_title('Execution Plan DAG: Nodes and Edges', fontsize=10, fontweight='bold', pad=10)
     ax.axis('off')
 
-    # Legend
+    # Legend - show overlapping vs non-overlapping migrations
     legend_elements = [
         mpatches.Patch(facecolor='#3498db', label=f'Tasks ({len(task_nodes)})',
                       edgecolor='black'),
-        mpatches.Patch(facecolor='#2ecc71', label=f'Prefetch ({len(prefetch_nodes)})',
+        mpatches.Patch(facecolor='#1a7a3e', label=f'Prefetch overlap ({len(prefetch_overlap)})',
                       edgecolor='black'),
-        mpatches.Patch(facecolor='#e74c3c', label=f'Offload ({len(offload_nodes)})',
+        mpatches.Patch(facecolor='#7dcea0', label=f'Prefetch non-overlap ({len(prefetch_non_overlap)})',
+                      edgecolor='black'),
+        mpatches.Patch(facecolor='#922b21', label=f'Offload overlap ({len(offload_overlap)})',
+                      edgecolor='black'),
+        mpatches.Patch(facecolor='#f1948a', label=f'Offload non-overlap ({len(offload_non_overlap)})',
                       edgecolor='black'),
         mpatches.Patch(facecolor='#95a5a6', label=f'Control ({len(control_nodes)})',
                       edgecolor='black'),
     ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=7, framealpha=0.95)
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=6, framealpha=0.95)
 
     # Summary
     summary = f"Total nodes: {len(G.nodes())}\nTotal edges: {len(G.edges())}"
