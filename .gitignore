@@ -12,6 +12,19 @@ memopt-config.json
 
 # Other JSON files to ignore
 *Plan*.json
+profile*.json
+*_plan.json
+*_output.json
+*_solution*.json
+
+# Experiment results (generated outputs)
+results/
+
+# Generated plots and data
+*.pdf
+*.png
+*.csv
+*.log
 
 # Artifacts
 *.dot

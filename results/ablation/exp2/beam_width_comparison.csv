@@ -1,4 +1,0 @@
-Beam Width,Beam Search Time (ms),Data Reuse Score (GB),MIP Predicted Runtime (ms),Actual GPU Runtime (ms)
-1,0.021,117.18,7038.0,6795.4
-10,0.15,119.62,7079.4,6829.3
-100,1.059,119.62,7079.4,6809.1
