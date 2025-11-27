@@ -131,20 +131,99 @@ This document describes the ablation studies conducted for the FRUGAL project an
 | File | Purpose |
 |------|---------|
 | `scripts/visualize_plan_dag.py` | Visualize execution plan DAG with tasks, prefetch/offload, control nodes |
+| `scripts/visualize_dag.py` | Visualize task dependency graph and data flow graph with execution order |
 
 ### Features
+
+**visualize_plan_dag.py**:
 - A4 landscape layout with 3-row format
 - Task nodes (blue), prefetch (green), offload (red), control (gray)
 - Array sizes displayed in GB
-- Topological ordering for execution flow
 
-### Usage
+**visualize_dag.py**:
+- Task dependency DAG with execution order overlay
+- Data flow graph showing array-task relationships
+- Color gradient from red (early) to blue (late) based on execution order
+- Execution order computed from topological sort of plan DAG
+
+### Generating Input Files (profile.json and plan.json)
+
+The visualization scripts require two JSON files:
+1. **profile.json** - Profiling data (task groups, arrays, dependencies)
+2. **plan.json** - Optimized execution plan (DAG with nodes and edges)
+
+#### Method 1: Using tiledCholeskyAblation (GPU required)
+
 ```bash
-python scripts/visualize_plan_dag.py \
-  --profile profile.json \
-  --plan optimized_plan.json \
-  --output results/visualization/
+# Step 1: Generate profile only (saves profiling data, no optimization)
+./build/userApplications/tiledCholeskyAblation \
+  --profile-only \
+  --save-profile=profile.json \
+  -N 102400 -T 4
+
+# Step 2: Generate optimized plan using standaloneOptimizer (CPU only)
+./build/tools/standaloneOptimizer \
+  profile.json \
+  plan.json \
+  --config=config.json
 ```
+
+#### Method 2: Using standaloneOptimizer only (CPU only, profile must exist)
+
+```bash
+# If you already have a profile.json from previous profiling:
+./build/tools/standaloneOptimizer \
+  profile.json \
+  plan.json \
+  --config=config.json \
+  --memory-bound=15000
+```
+
+#### Method 3: Full end-to-end run (generates both internally)
+
+```bash
+# Normal mode: profile + optimize + execute (no files saved by default)
+./build/userApplications/tiledCholeskyAblation -N 102400 -T 4
+
+# To save intermediate files, use --run-plan mode after profiling:
+./build/userApplications/tiledCholeskyAblation \
+  --run-plan \
+  --load-plan=plan.json \
+  -N 102400 -T 4
+```
+
+### Command Line Options (tiledCholeskyAblation)
+
+| Option | Description |
+|--------|-------------|
+| `--profile-only` | Only run profiling, save to JSON, then exit |
+| `--save-profile=<path>` | Path to save profiling data (default: `optimization_input.json`) |
+| `--run-plan` | Skip profiling/optimization, load and execute existing plan |
+| `--load-plan=<path>` | Path to load execution plan (default: `ablation_optimized_plan.json`) |
+
+### Usage Examples
+
+```bash
+# Visualize execution plan DAG
+python scripts/visualize_plan_dag.py \
+  --profile results/ablation/exp1/profile_N102400_T4.json \
+  --plan results/ablation/exp3/test1_abstract_window/plans/plan_dist10.json \
+  --output results/visualization/
+
+# Visualize task dependency graph with execution order
+python scripts/visualize_dag.py \
+  --profile results/ablation/exp1/profile_N102400_T4.json \
+  --plan results/ablation/exp3/test1_abstract_window/plans/plan_dist10.json \
+  --output results/visualization/ \
+  --graphs all
+```
+
+### Output Files
+
+| Script | Output Files |
+|--------|--------------|
+| `visualize_plan_dag.py` | `plan_dag_graph.pdf`, `plan_dag_graph.png` |
+| `visualize_dag.py` | `task_dependency_graph.pdf/png`, `data_flow_graph.pdf/png` |
 
 ---
 
@@ -173,7 +252,8 @@ experiments/performance_validation/
 └── generate_paper_plots.py      # Paper plots
 
 scripts/
-└── visualize_plan_dag.py        # DAG visualization
+├── visualize_plan_dag.py        # Execution plan DAG visualization
+└── visualize_dag.py             # Task dependency and data flow visualization
 ```
 
 ---
