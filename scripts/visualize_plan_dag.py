@@ -372,17 +372,45 @@ def visualize_plan_dag(profile, plan, output_dir):
 
     print(f"Figure size: {fig_width} x {fig_height} inches (A4 landscape)")
 
-    # Draw all edges in uniform gray color - thinner and smaller arrows
-    nx.draw_networkx_edges(G, pos, ax=ax,
-                          edge_color='#7f8c8d',
-                          arrows=True,
-                          arrowsize=8,
-                          arrowstyle='-|>',
-                          width=0.8,
-                          alpha=0.5,
-                          connectionstyle='arc3,rad=0.1',
-                          min_source_margin=10,
-                          min_target_margin=10)
+    # Separate edges into overlapping and non-overlapping
+    # Overlapping edges: any edge connected to an overlapping migration node
+    overlap_edges = []
+    non_overlap_edges = []
+    for u, v in G.edges():
+        if u in overlapping_nodes or v in overlapping_nodes:
+            overlap_edges.append((u, v))
+        else:
+            non_overlap_edges.append((u, v))
+
+    print(f"Edges: {len(overlap_edges)} overlapping, {len(non_overlap_edges)} non-overlapping")
+
+    # Draw non-overlapping edges in gray
+    if non_overlap_edges:
+        nx.draw_networkx_edges(G, pos, ax=ax,
+                              edgelist=non_overlap_edges,
+                              edge_color='#7f8c8d',
+                              arrows=True,
+                              arrowsize=8,
+                              arrowstyle='-|>',
+                              width=0.8,
+                              alpha=0.5,
+                              connectionstyle='arc3,rad=0.1',
+                              min_source_margin=10,
+                              min_target_margin=10)
+
+    # Draw overlapping edges in dark black
+    if overlap_edges:
+        nx.draw_networkx_edges(G, pos, ax=ax,
+                              edgelist=overlap_edges,
+                              edge_color='black',
+                              arrows=True,
+                              arrowsize=10,
+                              arrowstyle='-|>',
+                              width=1.5,
+                              alpha=0.9,
+                              connectionstyle='arc3,rad=0.1',
+                              min_source_margin=10,
+                              min_target_margin=10)
 
     # All tasks same size, draw with execution time labels - smaller
     task_pos_dict = {n: pos[n] for n in task_nodes if n in pos}
