@@ -36,6 +36,13 @@
   - Inline optimization in standaloneOptimizer (avoids linking issues)
   - Fixed argh command-line parsing (requires `--option=value` syntax)
 
+### Visualization Tools (2025-11-21)
+- [x] **DAG and Task Dependency Visualization**
+  - Created `scripts/visualize_plan_dag.py` for execution plan visualization
+  - Shows task nodes, prefetch/offload operations, and control nodes
+  - A4 landscape layout with 3-row format
+  - Array sizes displayed in GB on memory operations
+
 ## ✔️ Resolved/Proven Unnecessary
 - [x] **Phase 1 (Task Ordering)** - Solved with Beam Search (configurable width=100 provides fast, good solutions)
 - [x] **Phase 2 (Migration Scheduling)** - MIP solver improved with variable reduction using dependencies as constraints; Greedy scheduler and warmup MIP alternatives implemented
@@ -115,30 +122,17 @@
   - **Status**: Reverted, clean redesign planned
   - Documentation: See ABLATION.md for detailed failure analysis
 
-- [ ] **TopK Clean Redesign** ⏳ HIGH PRIORITY (For reviewers)
-  - **Why**: Reviewers require ablation studies to validate design decisions
-  - **Approach**: Three-stage decoupled pipeline + multi-weight strategy
-  - **Components Needed**:
-    1. `ProfilingSerializer` - Save/load profiling results
-    2. `Step1Serializer` - Save/load beam search Top-K candidates
-    3. `MultiRefinementSolver` - Refine each candidate with multiple weight configs
-    4. `PipelineController` - Mode-based execution (PROFILE/STEP1/STEP2)
-  - **Architecture**:
-    - Stage 0: Profile once, save JSON, reuse forever
-    - Stage 1: Beam search Top-K (fast exploration, ~2s) → produces task orderings
-    - Stage 2: Multi-weight refinement per candidate (precise, ~5-10s each)
-      - Step 1 task ordering used as INPUT CONSTRAINT (not warm start)
-      - Warm start from GreedyScheduler::generateWarmStart() (already implemented)
-  - **Benefits**:
-    - Fair comparisons (same profiling data)
-    - Rapid iteration (don't re-run entire pipeline)
-    - Reproducible results (no solution pool unreliability)
-  - **Deliverables**: Ablation studies for reviewers
-    - Data reuse metric validation
-    - Beam width analysis
-    - Solution diversity metrics
-  - Documentation: See TOPK.md for complete design
-  - Priority: **HIGH** - blocking paper acceptance
+- [x] **TopK Clean Redesign** ✅ COMPLETED (2025-11-21)
+  - **Implemented**: Three-stage decoupled pipeline
+  - **Components Delivered**:
+    1. `ProfilingSerializer` - Save/load profiling results ✅
+    2. `Step1Serializer` - Save/load beam search Top-K candidates ✅
+    3. Batch execution scripts for Top-K evaluation ✅
+  - **Architecture Implemented**:
+    - Stage 0: Profile once, save JSON, reuse forever ✅
+    - Stage 1: Beam search Top-K (generates 100 task orderings) ✅
+    - Stage 2: MIP refinement for each candidate ✅
+  - **Results**: See `results/ablation/exp1/` for Top-100 study results
 
 #### Epsilon-Constraint Refinement (Production Feature)
 - [ ] **Epsilon Refinement Implementation** ⏳ Medium Priority (After TopK)
@@ -195,169 +189,35 @@
 
 ### Evaluation Experiments - Model Validation
 
-#### Model Accuracy and Saturation Analysis
-- [ ] **Experiment 1: Memory-Runtime Tradeoff & Saturation Study**
-  - **Part A: Model Accuracy Verification**
-    - Configure optimization to use memory savings as constraint (e.g., save 20%, 40%, 60% memory)
-    - Optimize for runtime (set weightOfTotalRunningTime higher, weightOfPeakMemoryUsage=0)
-    - Test Case: Tiled Cholesky with fixed large domain size
-    - Verify if model accurately predicts performance impact
+#### ✅ Completed Ablation Studies (November 2025)
 
-  - **Part B: Saturation Analysis**
-    - Fix memory constraint to specific value (e.g., 50% memory savings)
-    - Vary domain size: small (not saturating) to large (saturating)
-    - Small domains may not generate enough parallelism to hide data movement
-    - Large domains should saturate device and better hide overhead
+- [x] **Ablation Exp 1: Top-K Task Ordering Performance Analysis** ✅ COMPLETED
+  - **Results Location**: `results/ablation/exp1/`
+  - **Configuration**: N=102400, T=4, Beam Width=100, Top-100 solutions
+  - **Key Findings**:
+    - Task ordering has minimal impact on final performance (<1% variation)
+    - MIP solver effectively compensates for different task orderings
+  - **Deliverables**: Top-100 analysis with GPU execution validation
 
-  - **Measurements**:
-    - Model-predicted overhead vs actual runtime overhead
-    - Prediction error: |predicted_overhead - actual_overhead| / actual_overhead
-    - Absolute runtime comparison: predicted vs actual execution time
-    - **Heatmap Output**: Domain Size × Memory Constraint → Prediction Error (%)
-    - Identify saturation point where prediction accuracy improves
+- [x] **Ablation Exp 2: Beam Width Ablation Study** ✅ COMPLETED
+  - **Results Location**: `results/ablation/exp2/`
+  - **Key Findings**: Beam width 10 achieves 99% of optimal, solve time scales linearly
 
-  - **Expected Results**:
-    - Small domains: **Higher prediction error** (model assumes saturation that doesn't exist)
-    - Large domains: **Lower prediction error** (model assumptions match reality)
-    - Model assumes device is saturated, but small workloads cannot achieve this
-    - Prediction accuracy improves as domain size increases and device saturates
+- [x] **Ablation Exp 3: Task Window Ablation Study** ✅ COMPLETED
+  - **Results Location**: `results/ablation/exp3/`
+  - **Tests**: Distance-based limits and time-based factors
 
-  - **Comparison**: Include Unified Memory (UM) as baseline
+- [x] **Saturation Analysis Study** ✅ COMPLETED
+  - **Code Location**: `experiments/performance_validation/`
+  - Validated model accuracy at different saturation levels
 
-- [ ] **Experiment 2: Compute-Communication Overlap Study (Independence)**
-  - **Setup**: Create stream-like workload with increasing compute intensity
-    - Base: `A = B * C` (memory-bound)
-    - Increase: `A = B * C * B * C` (more compute)
-    - Continue: `A = B * C * B * C * B * C...` (compute-bound)
-  - **Parameters**:
-    - Use large enough matrices to ensure memory pressure
-    - Gradually increase computation while keeping memory footprint constant
-  - **Measurements**:
-    - Compare predicted overhead vs actual overhead
-    - Compare predicted runtime vs actual runtime
-    - Track when prefetch/offload overhead becomes hidden by computation
-    - Measure actual vs predicted overlap efficiency
-    - Identify point where adding compute no longer helps
-  - **Expected Results**:
-    - Low compute: Higher prediction error (data movement dominates)
-    - High compute: Lower prediction error (compute hides data movement as model expects)
-    - Model accuracy improves as compute intensity increases
-  - **Validation**: Verify independence assumption between compute and data movement
-  - **Comparison**: UM performance as reference
+- [ ] ~~**Compute-Communication Overlap Study (Independence)**~~ ❌ NOT INCLUDED
+  - **Status**: Blocked due to a bug in the implementation
+  - **Original Goal**: Validate independence assumption between compute and data movement
 
-#### Implementation Details
-- [ ] **Create Evaluation Framework**
-  - Location: `experiments/model_validation/`
-  - Components:
-    - Configuration generator for parameter sweep
-    - Automated test runner for domain size × memory constraint matrix
-    - Heatmap generation scripts
-    - Performance comparison with UM baseline
-
-- [ ] **Metrics to Collect**:
-  - Model predicted: runtime, memory usage, overlap percentage
-  - Actual measured: runtime, peak memory, PCIe bandwidth utilization
-  - Derived: prediction error, saturation point, overlap efficiency
-
-### Design Decision Validation Experiments
-
-> **NOTE**: Experiments 3-6 require TopK tool implementation first (see "TopK Clean Redesign" above)
-
-#### Core Design Validation (For Reviewer Responses)
-- [ ] **Experiment 3: Data Reuse Metric Validation**
-  - **Objective**: Verify if data reuse is suitable metric to bridge two-stage optimization
-  - **Prerequisites**: ⚠️ Requires TopK tool with Step1 Top-K generation
-  - **Methodology**:
-    1. Use TopK tool to generate multiple task orderings (Step 1 Top-K)
-    2. Sort by data reuse metric
-    3. Refine each ordering with Step 2 MIP
-    4. Measure actual execution performance
-  - **Analysis**:
-    - Plot: Data Reuse Score vs Final Performance
-    - Question: Is higher reuse always better? What about order-2 reuse?
-    - Identify correlation strength and threshold effects
-  - **Implementation Needs**:
-    - TopK tool with profiling serialization (reuse same profiling data)
-    - Step 1 Top-K candidate generation (beam search output)
-    - Batch execution framework
-
-- [ ] **Experiment 4: Beam Search Effectiveness Analysis**
-  - **Objective**: Validate beam search quality vs computational cost
-  - **Prerequisites**: ⚠️ Requires TopK tool with configurable beam width
-  - **Methodology**:
-    - Use TopK tool to test beam sizes K = [1, 5, 10, 20, 50, 100, 200, 500]
-    - For each K, measure:
-      - Solution quality (data reuse score, final runtime)
-      - Step 1 optimization time
-      - Step 2 refinement time
-  - **Analysis**:
-    - Plot: Beam Size vs Solution Quality
-    - Plot: Beam Size vs Optimization Time
-    - Identify sweet spot for quality/time tradeoff
-  - **Implementation Needs**:
-    - Configurable beam width in TopK tool
-    - Timing instrumentation at each stage
-    - Decoupled pipeline for fair comparison
-
-- [ ] **Experiment 5: Window Size Impact Study**
-  - **Objective**: Understand preprocessing time vs performance tradeoff
-  - **Current Issue**: Window size not clearly defined in codebase
-  - **Proposed Definition**:
-    - Lookahead/lookback distance for prefetch/offload
-    - Or task grouping size for optimization
-  - **Methodology**:
-    - Vary window size parameters
-    - Measure preprocessing time and final performance
-  - **Analysis**:
-    - Plot: Window Size vs Preprocessing Time
-    - Plot: Window Size vs Runtime Performance
-    - Find optimal window configuration
-  - **Coding Effort**: MEDIUM-HIGH
-    - Need to clarify window concept in code
-    - May require optimizer modifications
-    - ~2-3 days implementation
-
-- [ ] **Experiment 6: Solution Space Diversity Analysis**
-  - **Objective**: Understand diversity of alternative scheduling solutions
-  - **Prerequisites**: ⚠️ Requires TopK tool (Step 2 multi-weight refinement)
-  - **Methodology**:
-    - Use TopK tool to generate diverse solutions via multi-weight strategy
-    - For each Step 1 candidate, refine with different weight configs:
-      - Pure speed: `{runtime: 1.0, migration: 0.0}`
-      - Balanced: `{runtime: 0.5, migration: 0.5}`
-      - Minimal migration: `{runtime: 0.0, migration: 1.0}`
-    - Test each solution's actual performance
-    - Measure diversity: Hamming distance, Pareto frontiers
-  - **Analysis**:
-    - Plot: Runtime vs Migrations (Pareto frontier)
-    - Hamming distance between solutions
-    - Identify solution clusters and trade-off regions
-  - **Implementation Needs**:
-    - TopK tool with multi-weight refinement (see TOPK.md)
-    - NOT Gurobi solution pool (unreliable - see ABLATION.md)
-
-#### Infrastructure Requirements
+#### Infrastructure (Completed)
 - [x] **Warm Start Infrastructure** ✅ COMPLETED (2025-11-11)
-  - Foundation for TopK tool (see WARMUP_IMP.md)
-
-- [ ] **TopK Tool Development** ⏳ HIGH PRIORITY
-  - **Components Needed** (see "TopK Clean Redesign" above):
-    1. **ProfilingSerializer**: Save/load profiling results
-    2. **Step1Serializer**: Save/load beam search Top-K
-    3. **MultiRefinementSolver**: Refine with multiple weights (uses existing GreedyScheduler for warm start)
-    4. **PipelineController**: Mode-based execution
-
-  - **Note**: Warm start already implemented via `GreedyScheduler::generateWarmStart()` (see WARMUP_IMP.md)
-    - Step 1 output (task ordering) = CONSTRAINT for Step 2, not warm start source
-    - Warm start = Greedy migration schedule for the given task ordering
-
-  - **Enables All Ablation Studies**:
-    - Experiment 3: Data reuse validation
-    - Experiment 4: Beam search effectiveness
-    - Experiment 6: Solution diversity
-
-  - **Estimated Effort**: 1-2 weeks for complete implementation
-  - Documentation: See TOPK.md for detailed design
+- [x] **TopK Tool Development** ✅ COMPLETED (2025-11-21)
 
 ### Benchmarks and Validation
 - [ ] **Add ResNet benchmark**
@@ -373,6 +233,51 @@
   - Compare memory usage: baseline vs optimized
   - Measure performance overhead
   - Generate comparison plots and statistics
+
+## 🧹 Codebase Cleanup for Open Source (TODO)
+
+### High Priority - Remove from Git Tracking
+- [ ] **Remove `results/` directory** - Experiment outputs should not be tracked
+- [ ] **Remove internal documentation files**:
+  - `TODO.md` - Internal task tracking
+  - `TODO_TIMELINE.md` - Internal timeline
+  - `VERIFIED_WORKING.md` - Internal verification notes
+  - `TOPK_EXECUTION_SUMMARY.md` - Experiment results summary
+  - `TOPK_GAPOVERLAP_RESULTS.md` - Experiment results
+
+### Medium Priority - Review and Decide
+- [ ] **Review documentation files**:
+  - `ABLATION_README.md` - May contain useful info, consider consolidating
+  - `EPSILON_REFINE.md` - Algorithm design notes
+  - `GAP_OVERLAP_CRITICAL_FINDING.md` - Important finding, may keep
+  - `METRICS.md` - Internal metrics docs
+  - `PROGRAM.md` - Program structure notes
+  - `VALIDATION_USAGE.md` - Usage docs
+  - `cuda_graph_notation.md` - Technical docs
+  - `execution_routine.md` - Internal notes
+  - `secondStepSolver_MIP_Reference.md` - Algorithm reference
+
+### Keep for Open Source
+- [x] `CLAUDE.md` - AI guidance for vibe coding developers
+- [x] `README.md` - Main project documentation
+- [x] All source code in `memory/`, `optimization/`, `profiling/`, `utilities/`, `public/`
+- [x] User applications in `userApplications/`
+- [x] Build files (`CMakeLists.txt`, `Makefile`, `vcpkg.json`)
+- [x] Scripts in `scripts/` (visualization tools)
+- [x] Experiment scripts in `experiments/` (for reproducibility)
+
+### Update .gitignore
+- [ ] Add patterns for:
+  ```
+  results/
+  *.pdf
+  *.png
+  *.csv
+  *.log
+  profile*.json
+  *_plan.json
+  *_output.json
+  ```
 
 ## 📝 Notes
 - All critical memory bugs have been resolved
