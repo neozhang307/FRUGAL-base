@@ -131,7 +131,7 @@ This document describes the ablation studies conducted for the FRUGAL project an
 | File | Purpose |
 |------|---------|
 | `scripts/visualize_plan_dag.py` | Visualize execution plan DAG with tasks, prefetch/offload, control nodes |
-| `scripts/visualize_dag.py` | Visualize task dependency graph and data flow graph with execution order |
+| `scripts/visualize_dag.py` | Visualize task dependency graph with execution order |
 
 ### Features
 
@@ -142,7 +142,6 @@ This document describes the ablation studies conducted for the FRUGAL project an
 
 **visualize_dag.py**:
 - Task dependency DAG with execution order overlay
-- Data flow graph showing array-task relationships
 - Color gradient from red (early) to blue (late) based on execution order
 - Execution order computed from topological sort of plan DAG
 
@@ -214,8 +213,7 @@ python scripts/visualize_plan_dag.py \
 python scripts/visualize_dag.py \
   --profile results/ablation/exp1/profile_N102400_T4.json \
   --plan results/ablation/exp3/test1_abstract_window/plans/plan_dist10.json \
-  --output results/visualization/ \
-  --graphs all
+  --output results/visualization/
 ```
 
 ### Output Files
@@ -223,7 +221,7 @@ python scripts/visualize_dag.py \
 | Script | Output Files |
 |--------|--------------|
 | `visualize_plan_dag.py` | `plan_dag_graph.pdf`, `plan_dag_graph.png` |
-| `visualize_dag.py` | `task_dependency_graph.pdf/png`, `data_flow_graph.pdf/png` |
+| `visualize_dag.py` | `task_dependency_graph.pdf`, `task_dependency_graph.png` |
 
 ---
 

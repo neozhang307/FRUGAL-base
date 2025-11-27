@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-Visualize the DAG (Directed Acyclic Graph) of task dependencies and data flow.
-Creates graphviz-style visualizations showing:
-1. Task dependency graph with execution order overlay
-2. Data flow showing which arrays connect which tasks
+Visualize the task dependency DAG (Directed Acyclic Graph).
+
+Creates a task dependency graph showing:
+- Task nodes with execution time
+- Dependencies between tasks (arrows)
+- Execution order overlay (color gradient and [#] labels) when plan is provided
+
+Execution order is computed from topological sort of the plan DAG,
+not from the order nodes appear in the JSON file.
 """
 
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
-import numpy as np
 from pathlib import Path
 import argparse
 from collections import defaultdict
@@ -257,160 +260,6 @@ def create_task_dependency_graph(profile, task_order=None, output_dir=None):
 
     return fig
 
-def create_data_flow_graph(profile, task_order=None, output_dir=None):
-    """
-    Create data flow graph showing how arrays flow through tasks.
-    Bipartite graph: tasks and arrays.
-    """
-
-    task_groups = profile.get('taskGroups', [])
-    arrays = profile.get('arrays', [])
-
-    # Build bipartite graph
-    G = nx.DiGraph()
-
-    # Add task nodes
-    for tg in task_groups:
-        task_id = tg['id']
-        G.add_node(f"T{task_id}", node_type='task',
-                   runtime=tg.get('runningTime', 0))
-
-    # Add array nodes
-    for arr in arrays:
-        arr_id = arr['id']
-        size_mb = arr.get('size', 0) / (1024**2)
-        G.add_node(f"A{arr_id}", node_type='array', size_mb=size_mb)
-
-    # Add edges: array -> task (input), task -> array (output)
-    for tg in task_groups:
-        task_id = tg['id']
-        task_node = f"T{task_id}"
-
-        # Input arrays
-        for arr_id in tg.get('inputArrays', []):
-            G.add_edge(f"A{arr_id}", task_node, edge_type='read')
-
-        # Output arrays
-        for arr_id in tg.get('outputArrays', []):
-            G.add_edge(task_node, f"A{arr_id}", edge_type='write')
-
-    # Create figure - narrow format for column layout
-    fig, ax = plt.subplots(figsize=(10, 14))
-
-    # Separate nodes by type for bipartite layout
-    task_nodes = [n for n in G.nodes() if G.nodes[n]['node_type'] == 'task']
-    array_nodes = [n for n in G.nodes() if G.nodes[n]['node_type'] == 'array']
-
-    # Position nodes in two columns
-    pos = {}
-
-    # Tasks on the right - order by execution schedule if available
-    num_tasks = len(task_nodes)
-    if task_order:
-        # Sort tasks by execution order
-        task_nodes_sorted = sorted(task_nodes, key=lambda x: task_order.get(int(x[1:]), 999))
-    else:
-        # Sort by task ID
-        task_nodes_sorted = sorted(task_nodes, key=lambda x: int(x[1:]))
-
-    for i, node in enumerate(task_nodes_sorted):
-        pos[node] = (1.5, 1 - (i / max(num_tasks-1, 1)))  # Invert Y so first task is at top
-
-    # Arrays on the left
-    num_arrays = len(array_nodes)
-    for i, node in enumerate(sorted(array_nodes, key=lambda x: int(x[1:]))):
-        pos[node] = (0, 1 - (i / max(num_arrays-1, 1)))  # Invert Y for consistency
-
-    # Draw edges
-    read_edges = [(u, v) for u, v, d in G.edges(data=True) if d['edge_type'] == 'read']
-    write_edges = [(u, v) for u, v, d in G.edges(data=True) if d['edge_type'] == 'write']
-
-    nx.draw_networkx_edges(G, pos, ax=ax, edgelist=read_edges,
-                          edge_color='#3498db',  # Blue for reads
-                          arrows=True, arrowsize=15,
-                          width=1.5, alpha=0.6,
-                          connectionstyle='arc3,rad=0.05')
-
-    nx.draw_networkx_edges(G, pos, ax=ax, edgelist=write_edges,
-                          edge_color='#e74c3c',  # Red for writes
-                          arrows=True, arrowsize=15,
-                          width=2, alpha=0.7,
-                          connectionstyle='arc3,rad=0.05')
-
-    # Draw task nodes (squares) - smaller for narrow layout
-    task_pos = {n: pos[n] for n in task_nodes}
-    runtimes = [G.nodes[n]['runtime'] for n in task_nodes]
-    max_runtime = max(runtimes) if runtimes else 1
-    task_sizes = [800 * (G.nodes[n]['runtime'] / max_runtime + 0.3) for n in task_nodes]
-
-    nx.draw_networkx_nodes(G, task_pos, nodelist=task_nodes, ax=ax,
-                          node_color='#2ecc71',  # Green
-                          node_shape='s',  # Square
-                          node_size=task_sizes,
-                          edgecolors='black',
-                          linewidths=2)
-
-    # Draw array nodes (circles) - smaller for narrow layout
-    array_pos = {n: pos[n] for n in array_nodes}
-    array_sizes = [600 for _ in array_nodes]  # Same size
-
-    nx.draw_networkx_nodes(G, array_pos, nodelist=array_nodes, ax=ax,
-                          node_color='#9b59b6',  # Purple
-                          node_shape='o',  # Circle
-                          node_size=array_sizes,
-                          edgecolors='black',
-                          linewidths=2)
-
-    # Labels with execution order
-    task_labels = {}
-    for n in task_nodes:
-        task_id = int(n[1:])
-        runtime = G.nodes[n]['runtime']
-        if task_order and task_id in task_order:
-            order = task_order[task_id]
-            task_labels[n] = f"{n}\n[{order}]\n{runtime:.2f}s"
-        else:
-            task_labels[n] = f"{n}\n{runtime:.2f}s"
-
-    array_labels = {n: n + f"\n{G.nodes[n]['size_mb']:.0f}MB" for n in array_nodes}
-
-    nx.draw_networkx_labels(G, task_pos, task_labels, ax=ax,
-                           font_size=7, font_weight='bold', font_color='white')
-    nx.draw_networkx_labels(G, array_pos, array_labels, ax=ax,
-                           font_size=7, font_weight='bold', font_color='white')
-
-    title = 'Data Flow Graph: Arrays ↔ Tasks'
-    if task_order:
-        title += '\n(Ordered by Schedule)'
-    ax.set_title(title, fontsize=13, fontweight='bold', pad=15)
-    ax.text(0, -0.05, 'Data Arrays', ha='center', va='top', fontsize=11, fontweight='bold')
-    ax.text(1.5, -0.05, 'Tasks\n(Top→Bottom:\nExec Order)' if task_order else 'Task Groups',
-            ha='center', va='top', fontsize=11, fontweight='bold')
-    ax.axis('off')
-
-    # Legend
-    legend_elements = [
-        mpatches.Patch(facecolor='#9b59b6', label='Arrays', edgecolor='black'),
-        mpatches.Patch(facecolor='#2ecc71', label='Tasks', edgecolor='black'),
-        mpatches.Patch(facecolor='none', edgecolor='#3498db', label='Read (input)'),
-        mpatches.Patch(facecolor='none', edgecolor='#e74c3c', label='Write (output)'),
-    ]
-    ax.legend(handles=legend_elements, loc='upper center',
-             bbox_to_anchor=(0.75, 1.0), fontsize=8, ncol=2)
-
-    plt.tight_layout()
-
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = output_dir / 'data_flow_graph.pdf'
-        png_path = output_dir / 'data_flow_graph.png'
-        plt.savefig(pdf_path, dpi=300, bbox_inches='tight')
-        plt.savefig(png_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved: {pdf_path}")
-        print(f"✅ Saved: {png_path}")
-
-    return fig
-
 def print_graph_summary(profile):
     """Print summary statistics about the DAG."""
     task_groups = profile.get('taskGroups', [])
@@ -436,15 +285,11 @@ def print_graph_summary(profile):
     print("="*60)
 
 def main():
-    parser = argparse.ArgumentParser(description='Visualize DAG structure')
+    parser = argparse.ArgumentParser(description='Visualize task dependency DAG')
     parser.add_argument('--profile', required=True, help='Profile JSON file')
-    parser.add_argument('--plan', help='Optimized plan JSON file (optional)')
+    parser.add_argument('--plan', help='Optimized plan JSON file (optional, for execution order)')
     parser.add_argument('--output', default='results/ablation/visualization',
                        help='Output directory for plots')
-    parser.add_argument('--graphs', nargs='+',
-                       choices=['task', 'data', 'all'],
-                       default=['all'],
-                       help='Which graphs to generate')
 
     args = parser.parse_args()
 
@@ -464,19 +309,8 @@ def main():
 
     print_graph_summary(profile)
 
-    graphs_to_generate = args.graphs
-    if 'all' in graphs_to_generate:
-        graphs_to_generate = ['task', 'data']
-
-    print("\nGenerating visualizations...")
-
-    if 'task' in graphs_to_generate:
-        print("\n📊 Creating task dependency graph...")
-        create_task_dependency_graph(profile, task_order, output_dir)
-
-    if 'data' in graphs_to_generate:
-        print("\n📊 Creating data flow graph...")
-        create_data_flow_graph(profile, task_order, output_dir)
+    print("\nGenerating task dependency graph...")
+    create_task_dependency_graph(profile, task_order, output_dir)
 
     print("\n✅ Visualization complete!")
 
