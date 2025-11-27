@@ -98,7 +98,7 @@ def plot_predicted_vs_actual(df, output_dir):
 
     # Add colorbar for score heatmap
     cbar = plt.colorbar(scatter, ax=ax, pad=0.02)
-    cbar.set_label('Task Execution Scheduling Score (GB)', fontweight='bold', fontsize=18)
+    cbar.set_label('Task Scheduling Score (Data Reuse) (GB)', fontweight='bold', fontsize=18)
     cbar.ax.tick_params(labelsize=16)
 
     # Calculate and display statistics (without correlation)

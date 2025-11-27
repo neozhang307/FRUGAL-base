@@ -388,12 +388,14 @@ void tiledCholeskyNaiveGraph() {
     // Profile
     auto optimizationInput = optimizer->profileGraph(graph);
 
+    // ALWAYS save profiling data (for debugging/comparison)
+    fmt::print("Saving profiling data to: {}\n", g_profileOutputPath);
+    saveOptimizationInput(optimizationInput, g_profileOutputPath);
+    fmt::print("✅ Profiling data saved\n");
+
     if (g_profileOnly) {
-      // PROFILE-ONLY MODE: Save profiling data and exit
-      fmt::print("\n=== Profile-only mode: Saving profiling data ===\n");
-      fmt::print("Saving to: {}\n", g_profileOutputPath);
-      saveOptimizationInput(optimizationInput, g_profileOutputPath);
-      fmt::print("✅ Profiling data saved successfully!\n");
+      // PROFILE-ONLY MODE: Exit after saving
+      fmt::print("\n=== Profile-only mode: Exiting ===\n");
 
       // Clean up and exit early
       for (auto ptr : d_tiles) {
