@@ -257,9 +257,9 @@ class PaperPlotGenerator:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate publication-quality plots")
-    parser.add_argument('--input-dir', type=str, default="results/production_validation",
+    parser.add_argument('--input-dir', type=str, default="results/saturation_study",
                         help="Directory containing validation results")
-    parser.add_argument('--output-dir', type=str, default="results/production_validation/paper_plots",
+    parser.add_argument('--output-dir', type=str, default="results/saturation_study/paper_plots",
                         help="Directory to save publication plots")
 
     args = parser.parse_args()

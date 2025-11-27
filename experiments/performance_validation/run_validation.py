@@ -70,8 +70,27 @@ class PerformanceValidator:
         elif phase == "phase1":
             config['generic']['optimize'] = True
             config['generic']['verify'] = True
+            # Use settings from config.json (except weights and maxPeakMemory)
             config['optimization']['firstStepSolverType'] = "BEAM_SEARCH"
             config['optimization']['secondStepSolverType'] = "MIP"
+            config['optimization']['solver'] = "GUROBI_MIXED_INTEGER_PROGRAMMING"
+            config['optimization']['enableGapOverlap'] = True
+            config['optimization']['gapOverlapDecayFactor'] = 0.5
+            config['optimization']['enableEarlyTermination'] = True
+            config['optimization']['beamWidth'] = 100
+            config['optimization']['prefetchingBandwidthInGB'] = 380.0
+            config['optimization']['acceptableRunningTimeFactor'] = 2.0
+            config['optimization']['mergeConcurrentCudaGraphNodes'] = False
+            config['optimization']['maxTaskGroupAmount'] = 500
+            config['optimization']['prefetchLookbackDistanceLimit'] = 30
+            config['optimization']['prefetchLookbackTimeBudgetFactor'] = 50.0
+            config['optimization']['offloadLookaheadDistanceLimit'] = 30
+            config['optimization']['offloadLookaheadComputeTimeFactor'] = 50.0
+            config['optimization']['gurobiTimeLimitSeconds'] = 60
+            config['optimization']['gurobiMipGap'] = 0.10
+            config['optimization']['gurobiEnableHeuristics'] = False
+            config['optimization']['greedySchedulerMode'] = "MIN_MEMORY"
+            # Phase 1 specific: minimize memory
             config['optimization']['maxPeakMemoryUsageInMiB'] = 0  # No constraint
             config['optimization']['weightOfPeakMemoryUsage'] = 1.0
             config['optimization']['weightOfTotalRunningTime'] = 0.0
@@ -84,12 +103,31 @@ class PerformanceValidator:
             assert memory_limit is not None, "phase2 requires memory_limit"
             config['generic']['optimize'] = True
             config['generic']['verify'] = True
+            # Use settings from config.json (except weights and maxPeakMemory)
             config['optimization']['firstStepSolverType'] = "BEAM_SEARCH"
             config['optimization']['secondStepSolverType'] = "MIP"
+            config['optimization']['solver'] = "GUROBI_MIXED_INTEGER_PROGRAMMING"
+            config['optimization']['enableGapOverlap'] = True
+            config['optimization']['gapOverlapDecayFactor'] = 0.5
+            config['optimization']['enableEarlyTermination'] = True
+            config['optimization']['beamWidth'] = 100
+            config['optimization']['prefetchingBandwidthInGB'] = 380.0
+            config['optimization']['acceptableRunningTimeFactor'] = 2.0
+            config['optimization']['mergeConcurrentCudaGraphNodes'] = False
+            config['optimization']['maxTaskGroupAmount'] = 500
+            config['optimization']['prefetchLookbackDistanceLimit'] = 30
+            config['optimization']['prefetchLookbackTimeBudgetFactor'] = 50.0
+            config['optimization']['offloadLookaheadDistanceLimit'] = 30
+            config['optimization']['offloadLookaheadComputeTimeFactor'] = 50.0
+            config['optimization']['gurobiTimeLimitSeconds'] = 60
+            config['optimization']['gurobiMipGap'] = 0.10
+            config['optimization']['gurobiEnableHeuristics'] = False
+            config['optimization']['greedySchedulerMode'] = "MIN_MEMORY"
+            # Phase 2 specific: optimize runtime within memory constraint
             config['optimization']['maxPeakMemoryUsageInMiB'] = memory_limit
             config['optimization']['weightOfPeakMemoryUsage'] = 0.0
             config['optimization']['weightOfTotalRunningTime'] = 1.0
-            config['optimization']['weightOfNumberOfMigrations'] = 0.001
+            config['optimization']['weightOfNumberOfMigrations'] = 0.0
             config['execution']['measurePeakMemoryUsage'] = True
             config['tiledCholesky']['n'] = n
             config['tiledCholesky']['t'] = self.tile_size
@@ -294,13 +332,29 @@ class PerformanceValidator:
         if actual_peak and baseline.get('peak_memory'):
             peak_reduction = (1 - actual_peak / baseline['peak_memory']) * 100
 
+        # Calculate theoretical minimum memory (3 tiles for GEMM)
+        tile_size_bytes = ((n // self.tile_size) ** 2) * 8  # double precision
+        tile_size_mib = tile_size_bytes / (1024**2)
+        theoretical_min_mib = 3 * tile_size_mib  # GEMM needs 3 tiles
+
+        # Check if optimized matches theoretical minimum
+        matches_theoretical = False
+        if optimized_managed is not None:
+            ratio = optimized_managed / theoretical_min_mib
+            matches_theoretical = abs(ratio - 1.0) < 0.01  # Within 1%
+
         # Print results
         managed_mem_str = f"{baseline['managed_memory']:.2f}" if baseline.get('managed_memory') is not None else "N/A"
         peak_mem_str = f"{baseline['peak_memory']:.2f}" if baseline.get('peak_memory') is not None else "N/A"
         print(f"  Baseline - Managed: {managed_mem_str}MB, Peak: {peak_mem_str}MB")
+        print(f"  Theoretical minimum: {theoretical_min_mib:.2f}MiB (3 tiles × {tile_size_mib:.2f}MiB)")
         if optimized_managed is not None:
             print(f"  Optimized - Managed: {optimized_managed:.2f}MB (reduction: {managed_reduction:.1f}%), Peak: {actual_peak:.2f}MB (reduction: {peak_reduction:.1f}%)")
             print(f"  Migrations: {migrations if migrations else 0}")
+            if matches_theoretical:
+                print(f"  ✓ Optimized memory MATCHES theoretical minimum")
+            else:
+                print(f"  ⚠ Optimized memory does NOT match theoretical minimum (ratio: {ratio:.2f}x)")
         else:
             print(f"  Failed to extract optimized memory metrics")
 
@@ -309,7 +363,9 @@ class PerformanceValidator:
             'actual_peak': actual_peak,
             'managed_reduction': managed_reduction,
             'peak_reduction': peak_reduction,
-            'migrations': migrations if migrations else 0
+            'migrations': migrations if migrations else 0,
+            'theoretical_min_mib': theoretical_min_mib,
+            'matches_theoretical': matches_theoretical
         }
 
     def run_phase2_optimize_performance(self, n: int, memory_limit: float, baseline: Dict) -> Dict:
@@ -499,21 +555,23 @@ class PerformanceValidator:
 
         # Print summary table with better formatting
         print("\n=== SUMMARY TABLE ===")
-        print(f"{'N':<8} {'Managed Red (%)':<15} {'Peak Red (%)':<15} {'Pred Slow (x)':<15} {'Actual Slow (x)':<16} {'Pred Err (%)':<13} {'Base TFLOPS':<13} {'Opt TFLOPS':<13}")
-        print("=" * 120)
+        print(f"{'N':<8} {'Opt Mem':<10} {'Theo Min':<10} {'Match?':<8} {'Pred Slow':<12} {'Act Slow':<12} {'Pred Err':<10} {'Base TF':<10} {'Opt TF':<10}")
+        print("=" * 100)
         for _, row in df.iterrows():
             # Format with proper None handling
-            managed_red = f"{row['managed_reduction']:.1f}" if pd.notna(row.get('managed_reduction')) else "N/A"
-            peak_red = f"{row['peak_reduction']:.1f}" if pd.notna(row.get('peak_reduction')) else "N/A"
-            pred_slow = f"{row['predicted_slowdown']:.2f}" if pd.notna(row.get('predicted_slowdown')) else "N/A"
-            actual_slow = f"{row['actual_slowdown']:.2f}" if pd.notna(row.get('actual_slowdown')) else "N/A"
-            pred_err = f"{row['prediction_error']:.1f}" if pd.notna(row.get('prediction_error')) else "N/A"
-            base_tflops = f"{row['baseline_tflops']:.2f}" if pd.notna(row.get('baseline_tflops')) else "N/A"
-            opt_tflops = f"{row['optimized_tflops']:.2f}" if pd.notna(row.get('optimized_tflops')) else "N/A"
+            opt_mem = f"{row['optimized_managed']:.1f}" if pd.notna(row.get('optimized_managed')) else "N/A"
+            theo_min = f"{row['theoretical_min_mib']:.1f}" if pd.notna(row.get('theoretical_min_mib')) else "N/A"
+            matches = "YES" if row.get('matches_theoretical') else "NO"
+            pred_slow = f"{row['predicted_slowdown']:.2f}x" if pd.notna(row.get('predicted_slowdown')) else "N/A"
+            actual_slow = f"{row['actual_slowdown']:.2f}x" if pd.notna(row.get('actual_slowdown')) else "N/A"
+            pred_err = f"{row['prediction_error']:.1f}%" if pd.notna(row.get('prediction_error')) else "N/A"
+            base_tflops = f"{row['baseline_tflops']:.1f}" if pd.notna(row.get('baseline_tflops')) else "N/A"
+            opt_tflops = f"{row['optimized_tflops']:.1f}" if pd.notna(row.get('optimized_tflops')) else "N/A"
 
-            print(f"{row['n']:<8.0f} {managed_red:<15} {peak_red:<15} {pred_slow:<15} {actual_slow:<16} {pred_err:<13} {base_tflops:<13} {opt_tflops:<13}")
+            print(f"{row['n']:<8.0f} {opt_mem:<10} {theo_min:<10} {matches:<8} {pred_slow:<12} {actual_slow:<12} {pred_err:<10} {base_tflops:<10} {opt_tflops:<10}")
 
-        print("\nNote: Managed Red = managed memory reduction, Peak Red = total GPU memory reduction")
+        print("\nNote: Opt Mem = optimized managed memory (MiB), Theo Min = theoretical minimum (MiB)")
+        print("Match? = whether optimized memory equals theoretical minimum")
         print("Slowdown values are multiplicative factors (e.g., 1.5x means 1.5 times slower)")
 
     def run_baseline_only(self, domain_sizes: Optional[List[int]] = None):
@@ -620,6 +678,62 @@ class PerformanceValidator:
 
         print(f"\n✅ All optimized experiments completed!")
         print(f"📊 Results saved in: {self.results_dir}")
+
+    def run_phase1_only(self, domain_sizes: Optional[List[int]] = None):
+        """Run ONLY Phase 1 (memory minimization) - quick test without baseline or Phase 2"""
+        sizes = domain_sizes if domain_sizes else self.domain_sizes
+
+        print(f"\n🚀 Running PHASE1-ONLY Mode (Quick Test)")
+        print(f"Domain sizes: {sizes}")
+        print(f"Tile size: {self.tile_size}")
+        print(f"Results directory: {self.results_dir}")
+        print(f"⚠ Skipping baseline and Phase 2 for fast testing\n")
+
+        # Set optimize=true in config.json
+        optimized_config = self.create_config("phase1", sizes[0])
+        optimized_config_path = self.results_dir / "config_phase1_global.json"
+        with open(optimized_config_path, 'w') as f:
+            json.dump(optimized_config, f, indent=2)
+        import subprocess
+        subprocess.run(['cp', str(optimized_config_path), 'config.json'], check=True, cwd=self.base_dir)
+        subprocess.run(['sync'], check=False)
+        print(f"✓ Global config.json set to optimize=true\n")
+
+        # Print summary header
+        print(f"{'N':<10} {'Tile Size':<12} {'Theo Min':<12} {'Optimized':<12} {'Match?':<8} {'Ratio':<8}")
+        print("=" * 70)
+
+        for n in sizes:
+            print(f"\n{'='*60}")
+            print(f"PHASE 1 ONLY: N={n}, T={self.tile_size}")
+            print(f"{'='*60}")
+
+            try:
+                # Create dummy baseline (just for the function signature)
+                tile_size_mib = ((n // self.tile_size) ** 2) * 8 / (1024**2)
+                total_tiles = self.tile_size * (self.tile_size + 1) // 2
+                dummy_baseline = {
+                    'managed_memory': total_tiles * tile_size_mib,
+                    'peak_memory': None
+                }
+
+                # Run Phase 1
+                phase1 = self.run_phase1_minimize_memory(n, dummy_baseline)
+
+                # Print summary row
+                theo_min = phase1.get('theoretical_min_mib', 0)
+                opt_mem = phase1.get('optimized_managed', 0)
+                matches = "YES" if phase1.get('matches_theoretical') else "NO"
+                ratio = opt_mem / theo_min if theo_min > 0 else 0
+
+                print(f"\n>>> {n:<10} {tile_size_mib:<12.2f} {theo_min:<12.2f} {opt_mem:<12.2f} {matches:<8} {ratio:<8.2f}")
+
+            except Exception as e:
+                print(f"❌ Phase 1 failed for N={n}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        print(f"\n✅ Phase 1 only tests completed!")
 
     def run_all(self, domain_sizes: Optional[List[int]] = None):
         """Run validation for all domain sizes
@@ -735,8 +849,8 @@ def main():
                         help="Base directory of FRUGAL project")
     parser.add_argument('--num-runs', type=int, default=10,
                         help="Number of runs for averaging (default: 10, use 1 for quick test)")
-    parser.add_argument('--mode', type=str, default="all", choices=["all", "baseline-only", "optimized-only"],
-                        help="Run mode: all (default), baseline-only, or optimized-only")
+    parser.add_argument('--mode', type=str, default="all", choices=["all", "baseline-only", "optimized-only", "phase1-only"],
+                        help="Run mode: all (default), baseline-only, optimized-only, or phase1-only (quick test without baseline)")
 
     args = parser.parse_args()
 
@@ -757,6 +871,8 @@ def main():
         validator.run_baseline_only(domain_sizes)
     elif args.mode == "optimized-only":
         validator.run_optimized_only(domain_sizes)
+    elif args.mode == "phase1-only":
+        validator.run_phase1_only(domain_sizes)
 
 if __name__ == "__main__":
     main()
