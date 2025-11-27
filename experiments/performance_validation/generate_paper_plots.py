@@ -111,7 +111,13 @@ class PaperPlotGenerator:
 
     def plot_slowdown_vs_domain_size(self):
         """Plot slowdown vs domain size (line plot only)"""
-        fig, ax = plt.subplots(figsize=(10, 6))
+        # Shrink height by 20%: 6 * 0.8 = 4.8
+        fig, ax = plt.subplots(figsize=(10, 4.8))
+
+        # Increase font sizes by 50%
+        label_fontsize = 24  # 16 * 1.5
+        tick_fontsize = 21   # 14 * 1.5
+        legend_fontsize = 21 # 14 * 1.5
 
         # Plot predicted and actual slowdown - using less saturated colors
         ax.plot(self.df['n'], self.df['predicted_slowdown'],
@@ -121,9 +127,9 @@ class PaperPlotGenerator:
                's-', linewidth=2.5, markersize=10,
                label='Actual', color='#5A7FA5', alpha=0.9)
 
-        ax.set_xlabel('Matrix Dimension (N)', fontweight='bold', color='black')
-        ax.set_ylabel('Slowdown Factor', fontweight='bold', color='black')
-        ax.legend(loc='upper right', framealpha=0.95, edgecolor='black')
+        ax.set_xlabel('Matrix Dimension (N)', fontweight='bold', color='black', fontsize=label_fontsize)
+        ax.set_ylabel('Slowdown', fontweight='bold', color='black', fontsize=label_fontsize)
+        ax.legend(loc='upper right', framealpha=0.95, edgecolor='black', fontsize=legend_fontsize)
         ax.grid(True, alpha=0.3, linestyle='--', color='gray')
         ax.set_xscale('log')
 
@@ -131,7 +137,8 @@ class PaperPlotGenerator:
         xticks = self.df['n'].values
         xticklabels = [self.format_domain_size(n) for n in xticks]
         ax.set_xticks(xticks)
-        ax.set_xticklabels(xticklabels, rotation=45, ha='right')
+        ax.set_xticklabels(xticklabels, rotation=45, ha='right', fontsize=tick_fontsize)
+        ax.tick_params(axis='y', labelsize=tick_fontsize)
 
         # Add horizontal line at 1.0 (no slowdown)
         ax.axhline(y=1.0, color='#555555', linestyle=':', linewidth=2, alpha=0.6, label='Baseline')
