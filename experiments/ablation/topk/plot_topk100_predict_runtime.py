@@ -195,7 +195,7 @@ class TopK100PlotGenerator:
 def main():
     parser = argparse.ArgumentParser(description="Generate Top-100 plots")
     parser.add_argument('--csv', type=str,
-                       default='results/ablation/exp1/topk_extensive/topk100_analysis.csv',
+                       default='results/ablation/exp1/topk_extensive/topk100_middle_results.csv',
                        help='Path to analysis CSV')
     parser.add_argument('--output-dir', type=str,
                        default='results/ablation/exp1/topk_extensive/plots/prediction',

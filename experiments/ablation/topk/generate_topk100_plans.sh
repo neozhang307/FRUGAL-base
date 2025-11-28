@@ -11,7 +11,7 @@ EXP_DIR="results/ablation/exp1/topk_extensive"
 PROFILE="results/ablation/exp1/profile_gapoverlap_enabled.json"
 TOPK_FILE="$EXP_DIR/first_step/topk100.json"
 PLAN_DIR="$EXP_DIR/second_step_plans"
-CONFIG="config.json"
+CONFIG="experiments/ablation/topk/config.json"
 
 echo "=========================================="
 echo "Generate Plans for All Top-100 Solutions"

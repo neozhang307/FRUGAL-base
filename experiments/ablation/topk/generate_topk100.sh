@@ -16,7 +16,7 @@ TOPK=100
 EXP_DIR="results/ablation/exp1/topk_extensive"
 PROFILE="results/ablation/exp1/profile_gapoverlap_enabled.json"
 TOPK_FILE="$EXP_DIR/first_step/topk100.json"
-CONFIG="config.json"
+CONFIG="experiments/ablation/topk/config.json"
 
 # Create directories
 mkdir -p "$EXP_DIR"/{first_step,second_step_plans,logs}

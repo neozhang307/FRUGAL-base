@@ -164,7 +164,7 @@ def main():
                        default='results/ablation/exp1/topk_extensive',
                        help='Experiment directory')
     parser.add_argument('--output-csv', type=str,
-                       default='results/ablation/exp1/topk_extensive/topk100_analysis.csv',
+                       default='results/ablation/exp1/topk_extensive/topk100_middle_results.csv',
                        help='Output CSV file')
 
     args = parser.parse_args()
