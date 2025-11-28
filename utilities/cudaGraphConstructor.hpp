@@ -7,6 +7,8 @@
 #include <memory>
 #include <set>
 
+#include "cudaGraphUtilities.hpp"
+
 namespace memopt {
 
 /**
@@ -149,19 +151,19 @@ public:
     
     /**
      * @brief Begin capturing operation with input and output memory dependencies
-     * 
+     *
      * @param inputs Vector of input memory pointers (read from)
      * @param outputs Vector of output memory pointers (written to)
      */
     void beginCaptureOperation(const std::vector<void*>& inputs, const std::vector<void*>& outputs) {
         // Calculate dependencies based on memory addresses
         auto dependencies = getDependencies(inputs, outputs);
-        
+
         // Store inputs and outputs for later tracking
         currentInputs = inputs;
         currentOutputs = outputs;
         lastDependencies = dependencies;
-        
+
         // Begin stream capture with dependencies
         if (dependencies.empty()) {
             cudaStreamBeginCaptureToGraph(this->stream, this->graph, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal);
@@ -169,10 +171,76 @@ public:
             cudaStreamBeginCaptureToGraph(this->stream, this->graph, dependencies.data(), nullptr, dependencies.size(), cudaStreamCaptureModeGlobal);
         }
     }
-    
+
+    /**
+     * @brief Find the leaf node of a task subgraph starting from a given root
+     *
+     * Traverses from the root following dependent nodes until reaching either:
+     * - A node with no dependents (true leaf)
+     * - A node whose next dependent is an annotation (start of next task)
+     *
+     * This ensures we find the last kernel of the current task without
+     * crossing into the next task's subgraph.
+     *
+     * @param root The root node (annotation) to start from
+     * @return The leaf node of this task's subgraph
+     */
+    cudaGraphNode_t findLeafNode(cudaGraphNode_t root) {
+        cudaGraphNode_t current = root;
+        while (true) {
+            size_t numDeps;
+            cudaGraphNodeGetDependentNodes(current, nullptr, &numDeps);
+            if (numDeps == 0) {
+                return current;  // Found leaf - no outgoing edges
+            }
+            auto deps = std::make_unique<cudaGraphNode_t[]>(numDeps);
+            cudaGraphNodeGetDependentNodes(current, deps.get(), &numDeps);
+
+            // Check if next node is an annotation (start of new task)
+            if (isAnnotationNode(deps[0])) {
+                return current;  // Stop here - don't cross into next task
+            }
+
+            current = deps[0];  // Follow first dependent
+        }
+    }
+
+    /**
+     * @brief Ensure the graph has a single root node
+     *
+     * If the graph has multiple root nodes (nodes with no incoming edges),
+     * this method connects all other roots to the leaf node of the first root's
+     * subgraph. This ensures proper DFS traversal order where each task's
+     * kernels are visited before moving to the next task's annotation.
+     *
+     * Graph structure: [Ann1] → [K1] → ... → [KN] ──→ [Ann2] → ...
+     *                                            └──→ [Ann3] → ...
+     *
+     * Call this method after all capture operations are complete.
+     */
+    void ensureSingleRoot() {
+        size_t numRootNodes;
+        cudaGraphGetRootNodes(this->graph, nullptr, &numRootNodes);
+
+        if (numRootNodes <= 1) {
+            return;  // Already single root, nothing to do
+        }
+
+        auto rootNodes = std::make_unique<cudaGraphNode_t[]>(numRootNodes);
+        cudaGraphGetRootNodes(this->graph, rootNodes.get(), &numRootNodes);
+
+        // Find the leaf node of the first root's subgraph
+        cudaGraphNode_t firstRootLeaf = findLeafNode(rootNodes[0]);
+
+        // Connect all other roots to the first root's leaf
+        for (size_t i = 1; i < numRootNodes; i++) {
+            cudaGraphAddDependencies(this->graph, &firstRootLeaf, &rootNodes[i], 1);
+        }
+    }
+
     /**
      * @brief End capturing operation and update the dependency tracking
-     * 
+     *
      * @return Vector of new leaf nodes added during this capture
      */
     std::vector<cudaGraphNode_t> endCaptureOperation() override {

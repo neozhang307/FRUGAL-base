@@ -42,6 +42,9 @@ void registerDummyKernelHandles() {
   getKernelNodeParams(getRootNode(dummyKernelForAnnotationGraph), rootNodeParams);
   dummyKernelForAnnotationHandle = rootNodeParams.func;
 
+  // Also register the handle globally for isAnnotationNode() checks
+  registerAnnotationKernelHandle(dummyKernelForAnnotationHandle);
+
   cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal);
   dummyKernelForStageSeparator<<<1, 1, 0, s>>>();
   cudaStreamEndCapture(s, &(dummyKernelForStageSeparatorGraph));

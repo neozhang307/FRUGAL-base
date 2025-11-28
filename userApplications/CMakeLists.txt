@@ -68,4 +68,12 @@ target_link_libraries(
   fmt::fmt
 )
 
+add_executable(streamMatrixOperations streamMatrixOperations.cu)
+target_link_libraries(
+  streamMatrixOperations
+  memopt
+  CUDA::curand
+  fmt::fmt
+)
+
 #add_subdirectory(lulesh)
