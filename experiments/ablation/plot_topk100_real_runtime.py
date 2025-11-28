@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parse Top-100 execution results and generate analysis plots
+Plot Top-100 results based on real GPU execution runtime
 Focuses on: predicted vs actual runtime, and score vs actual runtime
 """
 
@@ -87,7 +87,7 @@ def plot_predicted_vs_actual(df, output_dir):
     ax.plot([x_min, x_max], [x_min, x_max], '--',
            color='black', label='Perfect Prediction', linewidth=3.5, alpha=0.9, zorder=1000)
 
-    ax.set_xlabel('MIP Predicted Runtime (ms)', fontweight='bold', fontsize=22)
+    ax.set_xlabel('Predicted Runtime (ms)', fontweight='bold', fontsize=22)
     ax.set_ylabel('Actual GPU Runtime (ms)', fontweight='bold', fontsize=22)
     ax.tick_params(axis='both', labelsize=18)
     ax.grid(True, alpha=0.3, linestyle='--')
@@ -180,64 +180,6 @@ def plot_score_vs_actual_runtime(df, output_dir):
     print(f"✅ Saved: {output_base}.pdf and .png")
     plt.close()
 
-def plot_actual_runtime_distribution(df, output_dir):
-    """Bar chart: Actual runtime for all 100 solutions sorted by speed"""
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    # Sort by actual time
-    df_sorted = df.sort_values('actual_time_ms')
-    df_sorted = df_sorted.reset_index(drop=True)
-
-    # Color by score tier
-    unique_scores = sorted(df['score_gb'].unique(), reverse=True)
-    colors_palette = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(unique_scores)))
-    color_map = {score: colors_palette[i] for i, score in enumerate(unique_scores)}
-    colors = [color_map[score] for score in df_sorted['score_gb']]
-
-    bars = ax.bar(range(len(df_sorted)), df_sorted['actual_time_ms'],
-                 color=colors, alpha=0.8, edgecolor='black', linewidth=0.3)
-
-    ax.set_xlabel('Solution Rank (Sorted by Actual Runtime)', fontweight='bold', fontsize=16)
-    ax.set_ylabel('Actual GPU Execution Time (ms)', fontweight='bold', fontsize=16)
-    ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-
-    # Annotate fastest and slowest
-    fastest_idx = 0
-    slowest_idx = len(df_sorted) - 1
-    ax.annotate(f"Fastest\nSol #{df_sorted.iloc[fastest_idx]['solution_id']}\n"
-               f"{df_sorted.iloc[fastest_idx]['score_gb']:.2f} GB",
-               (fastest_idx, df_sorted.iloc[fastest_idx]['actual_time_ms']),
-               xytext=(10, 20), textcoords='offset points',
-               ha='left', fontweight='bold', fontsize=11,
-               bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8),
-               arrowprops=dict(arrowstyle='->', lw=1.5))
-
-    ax.annotate(f"Slowest\nSol #{df_sorted.iloc[slowest_idx]['solution_id']}\n"
-               f"{df_sorted.iloc[slowest_idx]['score_gb']:.2f} GB",
-               (slowest_idx, df_sorted.iloc[slowest_idx]['actual_time_ms']),
-               xytext=(-10, 20), textcoords='offset points',
-               ha='right', fontweight='bold', fontsize=11,
-               bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
-               arrowprops=dict(arrowstyle='->', lw=1.5))
-
-    # Statistics
-    variance_ms = df_sorted['actual_time_ms'].max() - df_sorted['actual_time_ms'].min()
-    variance_pct = 100 * variance_ms / df_sorted['actual_time_ms'].min()
-
-    ax.text(0.98, 0.98,
-           f'Runtime Variance:\n'
-           f'{variance_ms:.1f} ms ({variance_pct:.2f}%)',
-           transform=ax.transAxes, ha='right', va='top',
-           fontsize=13, fontweight='bold',
-           bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
-
-    plt.tight_layout()
-    output_base = output_dir / 'topk100_actual_runtime_distribution'
-    plt.savefig(f'{output_base}.pdf', dpi=300, bbox_inches='tight')
-    plt.savefig(f'{output_base}.png', dpi=300, bbox_inches='tight')
-    print(f"✅ Saved: {output_base}.pdf and .png")
-    plt.close()
-
 def print_summary(df):
     """Print comprehensive summary"""
     print("\n" + "="*70)
@@ -290,7 +232,7 @@ def main():
                        default='results/ablation/exp1/topk_extensive/first_step/topk100.json',
                        help='TopK solutions file')
     parser.add_argument('--output-dir', type=str,
-                       default='results/ablation/exp1/topk_extensive/execution_plots',
+                       default='results/ablation/exp1/topk_extensive/plots/real',
                        help='Output directory for plots')
     parser.add_argument('--output-csv', type=str,
                        default='results/ablation/exp1/topk_extensive/topk100_execution_results.csv',
@@ -314,7 +256,6 @@ def main():
     print("\n📊 Generating plots...")
     plot_predicted_vs_actual(df, output_dir)
     plot_score_vs_actual_runtime(df, output_dir)
-    plot_actual_runtime_distribution(df, output_dir)
 
     print(f"\n✅ All plots saved to: {output_dir}")
 

@@ -43,8 +43,10 @@ def parse_optimization_log(log_path):
     if match:
         metrics['peak_memory_mib'] = float(match.group(1))
 
-    # Extract optimality
-    match = re.search(r'MIP status: (OPTIMAL|INFEASIBLE|FEASIBLE)', content)
+    # Extract optimality - try multiple patterns
+    match = re.search(r'Optimization completed: (OPTIMAL|INFEASIBLE|FEASIBLE)', content)
+    if not match:
+        match = re.search(r'MIP status: (OPTIMAL|INFEASIBLE|FEASIBLE)', content)
     if match:
         metrics['status'] = match.group(1)
     else:
@@ -127,18 +129,6 @@ def print_summary(df):
     for status, count in status_counts.items():
         print(f"  {status}: {count} solutions")
 
-    # Memory statistics
-    print("\nPeak Memory Statistics (MiB):")
-    memory_stats = df['peak_memory_mib'].describe()
-    print(f"  Min:  {memory_stats['min']:.2f}")
-    print(f"  Max:  {memory_stats['max']:.2f}")
-    print(f"  Mean: {memory_stats['mean']:.2f}")
-    print(f"  Std:  {memory_stats['std']:.2f}")
-
-    # Unique memory values
-    unique_mem = df['peak_memory_mib'].nunique()
-    print(f"  Unique values: {unique_mem}")
-
     # Runtime statistics
     print("\nPredicted Runtime Statistics (seconds):")
     runtime_stats = df['predicted_time_s'].describe()
@@ -158,15 +148,15 @@ def print_summary(df):
 
     # Top 10 by score
     print("\nTop 10 Solutions by Beam Score:")
-    print("  Rank  Score (GB)  Predicted (s)  Peak (MiB)  Status")
+    print("  Rank  Score (GB)  Predicted (s)  Status")
     for idx, row in df.head(10).iterrows():
-        print(f"  #{row['solution_id']:3d}  {row['score_gb']:10.2f}  {row['predicted_time_s']:12.3f}  {row['peak_memory_mib']:10.0f}  {row['status']}")
+        print(f"  #{row['solution_id']:3d}  {row['score_gb']:10.2f}  {row['predicted_time_s']:12.3f}  {row['status']}")
 
     # Bottom 10 by score
     print("\nBottom 10 Solutions by Beam Score:")
-    print("  Rank  Score (GB)  Predicted (s)  Peak (MiB)  Status")
+    print("  Rank  Score (GB)  Predicted (s)  Status")
     for idx, row in df.tail(10).iterrows():
-        print(f"  #{row['solution_id']:3d}  {row['score_gb']:10.2f}  {row['predicted_time_s']:12.3f}  {row['peak_memory_mib']:10.0f}  {row['status']}")
+        print(f"  #{row['solution_id']:3d}  {row['score_gb']:10.2f}  {row['predicted_time_s']:12.3f}  {row['status']}")
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze Top-100 solutions")

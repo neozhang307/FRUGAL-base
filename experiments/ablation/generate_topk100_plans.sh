@@ -56,8 +56,9 @@ for i in $(seq 0 $((NUM_SOLUTIONS - 1))); do
 
     if [ -f "$PLAN_FILE" ]; then
         # Extract key metrics from plan
-        PEAK_MEM=$(jq -r '.peakMemoryUsageInMiB' "$PLAN_FILE" 2>/dev/null || echo "N/A")
-        RUNTIME=$(jq -r '.totalRunningTimeInSeconds' "$PLAN_FILE" 2>/dev/null || echo "N/A")
+        PEAK_MEM=$(jq -r '.anticipatedPeakMemoryUsage' "$PLAN_FILE" 2>/dev/null || echo "N/A")
+        # Runtime is extracted from log since it's not in plan JSON
+        RUNTIME=$(grep -oP 'Total running time \(s\): \K[\d.]+' "$PLAN_DIR/optimization_sol${i}.log" 2>/dev/null || echo "N/A")
         echo "✅ Peak: ${PEAK_MEM} MiB, Runtime: ${RUNTIME}s"
     else
         echo "❌ FAILED (see log: $PLAN_DIR/optimization_sol${i}.log)"
@@ -83,15 +84,15 @@ echo ""
 echo "Peak Memory Distribution:"
 for plan in $PLAN_DIR/plan_sol*.json; do
     if [ -f "$plan" ]; then
-        jq -r '.peakMemoryUsageInMiB' "$plan" 2>/dev/null
+        jq -r '.anticipatedPeakMemoryUsage' "$plan" 2>/dev/null
     fi
 done | sort -n | uniq -c | awk '{printf "  %s solutions: %.0f MiB\n", $1, $2}'
 
 echo ""
 echo "Runtime Distribution (seconds):"
-for plan in $PLAN_DIR/plan_sol*.json; do
-    if [ -f "$plan" ]; then
-        jq -r '.totalRunningTimeInSeconds' "$plan" 2>/dev/null
+for log in $PLAN_DIR/optimization_sol*.log; do
+    if [ -f "$log" ]; then
+        grep -oP 'Total running time \(s\): \K[\d.]+' "$log" 2>/dev/null
     fi
 done | sort -n | awk 'BEGIN{min=999999; max=0; sum=0; count=0}
     {

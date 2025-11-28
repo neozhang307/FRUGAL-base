@@ -45,21 +45,52 @@ This document describes the ablation studies conducted for the FRUGAL project an
 
 **Results Location**: `results/ablation/exp1/`
 
+### Prerequisites: Generate Profile File
+
+Before running the Top-K study, you need to generate the profile file `profile_gapoverlap_enabled.json`. This file contains profiling data (task groups, arrays, dependencies, running times) for the optimizer.
+
+```bash
+# Option 1: Use the provided script (recommended)
+./experiments/ablation/generate_profile.sh 102400 4
+
+# Option 2: Manual command (requires GPU)
+mkdir -p results/ablation/exp1
+./build/userApplications/tiledCholeskyAblation \
+  --profile-only \
+  --save-profile=results/ablation/exp1/profile_gapoverlap_enabled.json \
+  --N=102400 --T=4
+
+# Verify the profile was created
+ls -la results/ablation/exp1/profile_gapoverlap_enabled.json
+```
+
+**Note**: The profile file includes:
+- Array definitions (id, size) - for N=102400, T=4: each tile is ~4.88 GB
+- Task group definitions (id, inputArrays, outputArrays, runningTime)
+- Task group edges (dependencies)
+- Metadata (timestamp, originalTotalRunningTime)
+
+If you have pre-existing profile data, you can copy it:
+```bash
+cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/exp1/
+```
+
 ### Scripts (Run Order)
 
 | Step | File | Purpose |
 |------|------|---------|
+| 0 | `experiments/ablation/generate_profile.sh` | Generate profile file (prerequisite, requires GPU) |
 | 1 | `experiments/ablation/generate_topk100.sh` | Generate Top-100 task orderings from beam search |
 | 2 | `experiments/ablation/generate_topk100_plans.sh` | Generate MIP-optimized execution plans for each ordering |
 | 3 | `experiments/ablation/run_all_topk100.sh` | Execute all 100 plans on GPU and collect actual runtime |
 
 ### Analysis Scripts
 
-| File | Purpose |
-|------|---------|
-| `experiments/ablation/analyze_topk100.py` | Analyze Top-100 results (score distribution, runtime analysis) |
-| `experiments/ablation/parse_topk100_execution.py` | Parse GPU execution logs, compare predicted vs actual runtime |
-| `experiments/ablation/plot_topk100.py` | Generate plots (score distribution, runtime histogram, etc.) |
+| File | Purpose | Output Directory |
+|------|---------|------------------|
+| `experiments/ablation/analyze_topk100.py` | Analyze Top-100 results, generate CSV | `topk100_analysis.csv` |
+| `experiments/ablation/plot_topk100_predict_runtime.py` | Plot based on MIP predicted runtime (no GPU required) | `plots/prediction/` |
+| `experiments/ablation/plot_topk100_real_runtime.py` | Plot based on real GPU execution runtime | `plots/real/` |
 
 ### Key Metrics
 - Task scheduling score (data reuse in GB)
@@ -231,18 +262,19 @@ python scripts/visualize_dag.py \
 
 ```
 experiments/ablation/
-├── generate_topk100.sh          # Exp1: Generate Top-100 orderings
-├── generate_topk100_plans.sh    # Exp1: Generate plans
-├── run_all_topk100.sh           # Exp1: Run on GPU
-├── analyze_topk100.py           # Exp1: Analysis
-├── parse_topk100_execution.py   # Exp1: Parse results
-├── plot_topk100.py              # Exp1: Plotting
-├── beam_width_ablation.sh       # Exp2: Beam width runner
-├── run_beam_solutions.sh        # Exp2: Run solutions
-├── analyze_beam_width.py        # Exp2: Analysis
-├── parse_beam_execution.py      # Exp2: Parse results
-├── run_test1_abstract_window.sh # Exp3: Window distance test
-└── run_test2_time_factor.sh     # Exp3: Time factor test
+├── generate_profile.sh              # Exp1: Generate profile file (prerequisite)
+├── generate_topk100.sh              # Exp1: Generate Top-100 orderings
+├── generate_topk100_plans.sh        # Exp1: Generate plans
+├── run_all_topk100.sh               # Exp1: Run on GPU
+├── analyze_topk100.py               # Exp1: Analysis (generates CSV)
+├── plot_topk100_predict_runtime.py  # Exp1: Plots based on MIP prediction -> plots/prediction/
+├── plot_topk100_real_runtime.py     # Exp1: Plots based on real GPU runtime -> plots/real/
+├── beam_width_ablation.sh           # Exp2: Beam width runner
+├── run_beam_solutions.sh            # Exp2: Run solutions
+├── analyze_beam_width.py            # Exp2: Analysis
+├── parse_beam_execution.py          # Exp2: Parse results
+├── run_test1_abstract_window.sh     # Exp3: Window distance test
+└── run_test2_time_factor.sh         # Exp3: Time factor test
 
 experiments/performance_validation/
 ├── run_validation.py            # Saturation validation
@@ -265,31 +297,32 @@ scripts/
 
 ### Execution Order
 
+All commands should be run from the **project root directory**.
+
 ```bash
 # 1. Model Validation (Saturation)
-cd experiments/performance_validation
-python run_validation.py
-python analyze_results.py
-python generate_paper_plots.py
+python experiments/performance_validation/run_validation.py
+python experiments/performance_validation/analyze_results.py
+python experiments/performance_validation/generate_paper_plots.py
 
 # 2. Top-K Study (Exp1)
-cd experiments/ablation
-./generate_topk100.sh
-./generate_topk100_plans.sh
-./run_all_topk100.sh
-python analyze_topk100.py
-python parse_topk100_execution.py
-python plot_topk100.py
+./experiments/ablation/generate_profile.sh 102400 4  # Generate profile first (requires GPU)
+./experiments/ablation/generate_topk100.sh
+./experiments/ablation/generate_topk100_plans.sh
+./experiments/ablation/run_all_topk100.sh
+python experiments/ablation/analyze_topk100.py
+python experiments/ablation/plot_topk100_predict_runtime.py  # Plots based on MIP prediction
+python experiments/ablation/plot_topk100_real_runtime.py     # Plots based on real GPU runtime
 
 # 3. Beam Width Study (Exp2)
-./beam_width_ablation.sh
-./run_beam_solutions.sh
-python analyze_beam_width.py
-python parse_beam_execution.py
+./experiments/ablation/beam_width_ablation.sh
+./experiments/ablation/run_beam_solutions.sh
+python experiments/ablation/analyze_beam_width.py
+python experiments/ablation/parse_beam_execution.py
 
 # 4. Window Size Study (Exp3)
-./run_test1_abstract_window.sh
-./run_test2_time_factor.sh
+./experiments/ablation/run_test1_abstract_window.sh
+./experiments/ablation/run_test2_time_factor.sh
 
 # 5. Visualization
 python scripts/visualize_plan_dag.py --profile <profile.json> --plan <plan.json> --output <output_dir>

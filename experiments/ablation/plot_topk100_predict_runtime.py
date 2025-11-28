@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate publication-quality plots for Top-100 results
+Plot Top-100 results based on MIP predicted runtime (no GPU execution required)
 """
 
 import pandas as pd
@@ -30,47 +30,6 @@ class TopK100PlotGenerator:
         plt.rcParams['figure.figsize'] = (10, 6)
         plt.rcParams['pdf.fonttype'] = 42
         plt.rcParams['ps.fonttype'] = 42
-
-    def plot_score_distribution(self):
-        """Plot beam score distribution across all 100 solutions"""
-        fig, ax = plt.subplots(figsize=(12, 6))
-
-        # Group by score
-        score_groups = self.df.groupby('score_gb').size().sort_index(ascending=False)
-
-        # Create colors for different tiers
-        colors = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(score_groups)))
-
-        # Bar plot
-        bars = ax.bar(range(len(self.df)), self.df['score_gb'],
-                     color=[colors[list(score_groups.index).index(s)]
-                           for s in self.df['score_gb']],
-                     alpha=0.8, edgecolor='black', linewidth=0.5)
-
-        ax.set_xlabel('Solution Rank (0-99)', fontweight='bold')
-        ax.set_ylabel('Beam Search Score (GB)', fontweight='bold')
-        ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-
-        # Add tier annotations
-        ax.text(0.02, 0.98, f'Top Tier (119.63 GB): 5 solutions',
-               transform=ax.transAxes, ha='left', va='top',
-               bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
-
-        # Add score distribution legend
-        legend_text = "Score Tiers:\n"
-        for i, (score, count) in enumerate(score_groups.items()):
-            legend_text += f"{score:.2f} GB: {count} sols\n"
-        ax.text(0.98, 0.02, legend_text.strip(),
-               transform=ax.transAxes, ha='right', va='bottom',
-               fontsize=11, family='monospace',
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
-
-        plt.tight_layout()
-        output_base = self.output_dir / 'topk100_score_distribution'
-        plt.savefig(f'{output_base}.pdf', dpi=300, bbox_inches='tight')
-        plt.savefig(f'{output_base}.png', dpi=300, bbox_inches='tight')
-        print(f"✅ Saved: {output_base}.pdf and .png")
-        plt.close()
 
     def plot_runtime_vs_score(self):
         """Scatter plot: beam score vs predicted runtime"""
@@ -226,7 +185,6 @@ class TopK100PlotGenerator:
         """Generate all plots"""
         print("\n📊 Generating Top-100 plots...\n")
 
-        self.plot_score_distribution()
         self.plot_runtime_vs_score()
         self.plot_runtime_histogram()
         self.plot_score_tier_comparison()
@@ -240,7 +198,7 @@ def main():
                        default='results/ablation/exp1/topk_extensive/topk100_analysis.csv',
                        help='Path to analysis CSV')
     parser.add_argument('--output-dir', type=str,
-                       default='results/ablation/exp1/topk_extensive/plots',
+                       default='results/ablation/exp1/topk_extensive/plots/prediction',
                        help='Directory to save plots')
 
     args = parser.parse_args()
