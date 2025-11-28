@@ -43,6 +43,8 @@ This document describes the ablation studies conducted for the FRUGAL project an
 
 **Goal**: Generate Top-100 task orderings from beam search, run MIP optimization for each, compare predicted runtime vs actual GPU execution runtime.
 
+**Location**: `experiments/ablation/topk/`
+
 **Results Location**: `results/ablation/exp1/`
 
 ### Prerequisites: Generate Profile File
@@ -51,7 +53,7 @@ Before running the Top-K study, you need to generate the profile file `profile_g
 
 ```bash
 # Option 1: Use the provided script (recommended)
-./experiments/ablation/generate_profile.sh 102400 4
+./experiments/ablation/topk/generate_profile.sh 102400 4
 
 # Option 2: Manual command (requires GPU)
 mkdir -p results/ablation/exp1
@@ -79,18 +81,18 @@ cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/ex
 
 | Step | File | Purpose |
 |------|------|---------|
-| 0 | `experiments/ablation/generate_profile.sh` | Generate profile file (prerequisite, requires GPU) |
-| 1 | `experiments/ablation/generate_topk100.sh` | Generate Top-100 task orderings from beam search |
-| 2 | `experiments/ablation/generate_topk100_plans.sh` | Generate MIP-optimized execution plans for each ordering |
-| 3 | `experiments/ablation/run_all_topk100.sh` | Execute all 100 plans on GPU and collect actual runtime |
+| 0 | `experiments/ablation/topk/generate_profile.sh` | Generate profile file (prerequisite, requires GPU) |
+| 1 | `experiments/ablation/topk/generate_topk100.sh` | Generate Top-100 task orderings from beam search |
+| 2 | `experiments/ablation/topk/generate_topk100_plans.sh` | Generate MIP-optimized execution plans for each ordering |
+| 3 | `experiments/ablation/topk/run_all_topk100.sh` | Execute all 100 plans on GPU and collect actual runtime |
 
 ### Analysis Scripts
 
 | File | Purpose | Output Directory |
 |------|---------|------------------|
-| `experiments/ablation/analyze_topk100.py` | Analyze Top-100 results, generate CSV | `topk100_analysis.csv` |
-| `experiments/ablation/plot_topk100_predict_runtime.py` | Plot based on MIP predicted runtime (no GPU required) | `plots/prediction/` |
-| `experiments/ablation/plot_topk100_real_runtime.py` | Plot based on real GPU execution runtime | `plots/real/` |
+| `experiments/ablation/topk/analyze_topk100.py` | Analyze Top-100 results, generate CSV | `topk100_analysis.csv` |
+| `experiments/ablation/topk/plot_topk100_predict_runtime.py` | Plot based on MIP predicted runtime (no GPU required) | `plots/prediction/` |
+| `experiments/ablation/topk/plot_topk100_real_runtime.py` | Plot based on real GPU execution runtime | `plots/real/` |
 
 ### Key Metrics
 - Task scheduling score (data reuse in GB)
@@ -262,13 +264,14 @@ python scripts/visualize_dag.py \
 
 ```
 experiments/ablation/
-├── generate_profile.sh              # Exp1: Generate profile file (prerequisite)
-├── generate_topk100.sh              # Exp1: Generate Top-100 orderings
-├── generate_topk100_plans.sh        # Exp1: Generate plans
-├── run_all_topk100.sh               # Exp1: Run on GPU
-├── analyze_topk100.py               # Exp1: Analysis (generates CSV)
-├── plot_topk100_predict_runtime.py  # Exp1: Plots based on MIP prediction -> plots/prediction/
-├── plot_topk100_real_runtime.py     # Exp1: Plots based on real GPU runtime -> plots/real/
+├── topk/                            # Exp1: Top-K Task Ordering Study
+│   ├── generate_profile.sh          # Generate profile file (prerequisite)
+│   ├── generate_topk100.sh          # Generate Top-100 orderings
+│   ├── generate_topk100_plans.sh    # Generate plans
+│   ├── run_all_topk100.sh           # Run on GPU
+│   ├── analyze_topk100.py           # Analysis (generates CSV)
+│   ├── plot_topk100_predict_runtime.py  # Plots based on MIP prediction -> plots/prediction/
+│   └── plot_topk100_real_runtime.py     # Plots based on real GPU runtime -> plots/real/
 ├── beam_width_ablation.sh           # Exp2: Beam width runner
 ├── run_beam_solutions.sh            # Exp2: Run solutions
 ├── analyze_beam_width.py            # Exp2: Analysis
@@ -306,13 +309,13 @@ python experiments/performance_validation/analyze_results.py
 python experiments/performance_validation/generate_paper_plots.py
 
 # 2. Top-K Study (Exp1)
-./experiments/ablation/generate_profile.sh 102400 4  # Generate profile first (requires GPU)
-./experiments/ablation/generate_topk100.sh
-./experiments/ablation/generate_topk100_plans.sh
-./experiments/ablation/run_all_topk100.sh
-python experiments/ablation/analyze_topk100.py
-python experiments/ablation/plot_topk100_predict_runtime.py  # Plots based on MIP prediction
-python experiments/ablation/plot_topk100_real_runtime.py     # Plots based on real GPU runtime
+./experiments/ablation/topk/generate_profile.sh 102400 4  # Generate profile first (requires GPU)
+./experiments/ablation/topk/generate_topk100.sh
+./experiments/ablation/topk/generate_topk100_plans.sh
+./experiments/ablation/topk/run_all_topk100.sh
+python experiments/ablation/topk/analyze_topk100.py
+python experiments/ablation/topk/plot_topk100_predict_runtime.py  # Plots based on MIP prediction
+python experiments/ablation/topk/plot_topk100_real_runtime.py     # Plots based on real GPU runtime
 
 # 3. Beam Width Study (Exp2)
 ./experiments/ablation/beam_width_ablation.sh
