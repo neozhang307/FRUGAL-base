@@ -14,7 +14,7 @@ PLAN_DIR="$EXP_DIR/plans"
 OUTPUT_LOG="$EXP_DIR/execution.log"
 
 # Time factors tested
-TIME_FACTORS=(1 5 10 20 30 40 50)
+TIME_FACTORS=(1 5 10 20 30 40 50 60 70 80 90 100)
 
 echo "==========================================" | tee "$OUTPUT_LOG"
 echo "Execute Test 2 (Time Factor) Plans on GPU" | tee -a "$OUTPUT_LOG"

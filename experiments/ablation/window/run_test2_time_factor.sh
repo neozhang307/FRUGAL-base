@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test 2: Relative Time Factor Ablation
-# Variable: Time factors (1, 5, 10, 20, 30, 40, 50)
+# Variable: Time factors (1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
 # Fixed: Distance limits = 1000 (effectively infinite)
 
 set -e
@@ -23,7 +23,7 @@ mkdir -p "$EXP_DIR/plans"
 OUTPUT_CSV="$EXP_DIR/window_time_factor_middle_results.csv"
 
 # Time factors to test
-TIME_FACTORS=(1 5 10 20 30 40 50)
+TIME_FACTORS=(1 5 10 20 30 40 50 60 70 80 90 100)
 
 # Fixed distance limit (set to very large = infinite)
 DIST_LIMIT=1000

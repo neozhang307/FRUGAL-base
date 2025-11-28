@@ -33,10 +33,23 @@ def parse_execution_log(log_file, test_type):
         param_value = int(sections[i])
         section_content = sections[i + 1]
 
+        # Check if skipped (infeasible - 0 nodes)
+        if 'Skipping: Plan has 0 nodes' in section_content:
+            print(f"Info: {param_name}={param_value} was infeasible (0 nodes), using NaN")
+            results.append({
+                param_name: param_value,
+                'actual_time_ms': np.nan
+            })
+            continue
+
         # Extract actual execution time
         actual_match = re.search(r'Execution time: ([\d.]+) ms', section_content)
         if not actual_match:
             print(f"Warning: Could not find actual runtime for {param_name}={param_value}")
+            results.append({
+                param_name: param_value,
+                'actual_time_ms': np.nan
+            })
             continue
         actual_time_ms = float(actual_match.group(1))
 
@@ -56,30 +69,38 @@ def load_middle_results(middle_csv, test_type):
 
 def plot_predicted_vs_actual(df, output_dir, test_type, param_name):
     """Plot predicted vs actual runtime."""
+    # Filter out rows with NaN actual_time_ms (infeasible plans)
+    df_valid = df.dropna(subset=['actual_time_ms', 'predicted_time_ms'])
+
+    if df_valid.empty:
+        print("⚠️  No valid data points to plot (all infeasible)")
+        return
+
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Scatter plot with parameter as color
-    scatter = ax.scatter(df['predicted_time_ms'], df['actual_time_ms'],
-                        c=df[param_name], cmap='viridis',
+    scatter = ax.scatter(df_valid['predicted_time_ms'], df_valid['actual_time_ms'],
+                        c=df_valid[param_name], cmap='viridis',
                         s=300, alpha=0.8,
                         edgecolors='black', linewidth=1.5)
 
-    # Add labels to each point
-    for idx, row in df.iterrows():
-        ax.annotate(f"{param_name.split('_')[0]}={row[param_name]}",
+    # Add labels to each point (only valid ones)
+    for idx, row in df_valid.iterrows():
+        ax.annotate(f"{param_name.split('_')[0]}={int(row[param_name])}",
                    (row['predicted_time_ms'], row['actual_time_ms']),
                    xytext=(5, 5), textcoords='offset points',
                    fontsize=10, fontweight='bold')
 
     # Perfect prediction line
-    min_val = min(df['predicted_time_ms'].min(), df['actual_time_ms'].min())
-    max_val = max(df['predicted_time_ms'].max(), df['actual_time_ms'].max())
+    min_val = min(df_valid['predicted_time_ms'].min(), df_valid['actual_time_ms'].min())
+    max_val = max(df_valid['predicted_time_ms'].max(), df_valid['actual_time_ms'].max())
     ax.plot([min_val, max_val], [min_val, max_val],
            'r--', linewidth=2, alpha=0.7, label='Perfect Prediction')
 
-    # Calculate prediction errors
-    df['error_pct'] = abs(df['predicted_time_ms'] - df['actual_time_ms']) / df['actual_time_ms'] * 100
-    avg_error = df['error_pct'].mean()
+    # Calculate prediction errors (on valid data only)
+    df_valid = df_valid.copy()
+    df_valid['error_pct'] = abs(df_valid['predicted_time_ms'] - df_valid['actual_time_ms']) / df_valid['actual_time_ms'] * 100
+    avg_error = df_valid['error_pct'].mean()
 
     ax.text(0.02, 0.98, f'Avg Prediction Error: {avg_error:.2f}%',
            transform=ax.transAxes, ha='left', va='top',
@@ -107,9 +128,16 @@ def plot_predicted_vs_actual(df, output_dir, test_type, param_name):
 
 def plot_mip_time_vs_param(df, output_dir, test_type, param_name):
     """Plot MIP solve time vs parameter."""
+    # Filter out rows with NaN mip_solve_time
+    df_valid = df.dropna(subset=['mip_solve_time_s'])
+
+    if df_valid.empty:
+        print("⚠️  No valid MIP time data to plot")
+        return
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(df[param_name], df['mip_solve_time_s'],
+    ax.plot(df_valid[param_name], df_valid['mip_solve_time_s'],
            'o-', linewidth=2, markersize=10,
            color='steelblue', markeredgecolor='black', markeredgewidth=1.5)
 
@@ -168,8 +196,8 @@ def main():
     print(f"\n📖 Loading middle results from {middle_csv}")
     df_middle = load_middle_results(middle_csv, args.test)
 
-    # Merge
-    df = pd.merge(df_exec, df_middle, on=param_name, how='left')
+    # Merge - use outer join to preserve all entries from middle results
+    df = pd.merge(df_middle, df_exec, on=param_name, how='left')
     df['predicted_time_ms'] = df['predicted_runtime_s'] * 1000
 
     # Reorder columns
@@ -188,9 +216,17 @@ def main():
     print("=" * 60)
     print(df.to_string(index=False))
 
-    # Calculate errors
-    df['error_pct'] = abs(df['predicted_time_ms'] - df['actual_time_ms']) / df['actual_time_ms'] * 100
-    print(f"\nPrediction Error: Mean={df['error_pct'].mean():.2f}%, Max={df['error_pct'].max():.2f}%")
+    # Calculate errors (only for valid entries)
+    df_valid = df.dropna(subset=['actual_time_ms', 'predicted_time_ms'])
+    if not df_valid.empty:
+        df_valid = df_valid.copy()
+        df_valid['error_pct'] = abs(df_valid['predicted_time_ms'] - df_valid['actual_time_ms']) / df_valid['actual_time_ms'] * 100
+        print(f"\nPrediction Error: Mean={df_valid['error_pct'].mean():.2f}%, Max={df_valid['error_pct'].max():.2f}%")
+
+    # Report infeasible entries
+    n_infeasible = df['actual_time_ms'].isna().sum()
+    if n_infeasible > 0:
+        print(f"Infeasible entries (NaN): {n_infeasible}")
 
     # Generate plots
     print("\n" + "=" * 60)
