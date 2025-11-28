@@ -33,6 +33,15 @@ for DIST in "${DISTANCES[@]}"; do
         continue
     fi
 
+    # Check if plan has nodes (skip empty plans)
+    NODE_COUNT=$(jq '.nodes | length' "$PLAN_FILE")
+    if [ "$NODE_COUNT" -eq 0 ]; then
+        echo "=== Distance Limit: $DIST ===" | tee -a "$OUTPUT_LOG"
+        echo "⚠️  Skipping: Plan has 0 nodes (infeasible)" | tee -a "$OUTPUT_LOG"
+        echo "" | tee -a "$OUTPUT_LOG"
+        continue
+    fi
+
     echo "=== Distance Limit: $DIST ===" | tee -a "$OUTPUT_LOG"
 
     # Get predicted runtime from middle results CSV
@@ -42,6 +51,7 @@ for DIST in "${DISTANCES[@]}"; do
         echo "Predicted runtime: ${PREDICTED}s" | tee -a "$OUTPUT_LOG"
     fi
 
+    echo "Plan nodes: $NODE_COUNT" | tee -a "$OUTPUT_LOG"
     echo "Executing solution..." | tee -a "$OUTPUT_LOG"
 
     # Run on GPU
