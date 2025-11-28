@@ -19,8 +19,8 @@ EXP_DIR="results/ablation/exp3/test1_abstract_window"
 mkdir -p "$EXP_DIR/logs"
 mkdir -p "$EXP_DIR/plans"
 
-# Output CSV
-OUTPUT_CSV="$EXP_DIR/window_distance_results.csv"
+# Output CSV (middle results - optimizer only, no GPU execution)
+OUTPUT_CSV="$EXP_DIR/window_distance_middle_results.csv"
 
 # Distance limits to test
 DISTANCES=(1 5 10 20 30)

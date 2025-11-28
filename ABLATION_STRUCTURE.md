@@ -140,12 +140,21 @@ cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/ex
 
 **Results Location**: `results/ablation/exp3/`
 
-### Scripts
+### Scripts (Run Order)
 
-| File | Purpose |
-|------|---------|
-| `experiments/ablation/window/run_test1_abstract_window.sh` | Test distance-based window limits (1, 5, 10, 20, 30) |
-| `experiments/ablation/window/run_test2_time_factor.sh` | Test time-based factors (1.0 - 50.0) |
+| Step | File | Purpose |
+|------|------|---------|
+| 1a | `experiments/ablation/window/run_test1_abstract_window.sh` | Test distance-based window limits → `window_distance_middle_results.csv` |
+| 1b | `experiments/ablation/window/run_test2_time_factor.sh` | Test time-based factors → `window_time_factor_middle_results.csv` |
+| 2a | `experiments/ablation/window/run_test1_solutions.sh` | Execute Test 1 plans on GPU |
+| 2b | `experiments/ablation/window/run_test2_solutions.sh` | Execute Test 2 plans on GPU |
+
+### Analysis Scripts
+
+| File | Purpose | Output |
+|------|---------|--------|
+| `experiments/ablation/window/plot_window_real_runtime.py --test test1` | Parse Test 1 execution, generate plots | `window_distance_results.csv` |
+| `experiments/ablation/window/plot_window_real_runtime.py --test test2` | Parse Test 2 execution, generate plots | `window_time_factor_results.csv` |
 
 ### Parameters Tested
 - `prefetchLookbackDistanceLimit` - How many tasks to look back for prefetch
@@ -286,8 +295,11 @@ experiments/ablation/
 │   └── plot_beam_real_runtime.py    # Plots based on real GPU runtime
 └── window/                          # Exp3: Window Size Analysis
     ├── config.json                  # Configuration for window experiments
-    ├── run_test1_abstract_window.sh # Window distance test
-    └── run_test2_time_factor.sh     # Time factor test
+    ├── run_test1_abstract_window.sh # Window distance test -> middle_results.csv
+    ├── run_test2_time_factor.sh     # Time factor test -> middle_results.csv
+    ├── run_test1_solutions.sh       # Execute Test 1 plans on GPU
+    ├── run_test2_solutions.sh       # Execute Test 2 plans on GPU
+    └── plot_window_real_runtime.py  # Parse execution, generate final results.csv
 
 experiments/performance_validation/
 ├── run_validation.py            # Saturation validation
@@ -334,8 +346,12 @@ python experiments/ablation/beam/plot_beam_predict_runtime.py  # Plots based on 
 python experiments/ablation/beam/plot_beam_real_runtime.py     # Plots based on real GPU runtime
 
 # 4. Window Size Study (Exp3)
-./experiments/ablation/window/run_test1_abstract_window.sh
-./experiments/ablation/window/run_test2_time_factor.sh
+./experiments/ablation/window/run_test1_abstract_window.sh  # Generate middle results
+./experiments/ablation/window/run_test2_time_factor.sh      # Generate middle results
+./experiments/ablation/window/run_test1_solutions.sh        # Execute on GPU
+./experiments/ablation/window/run_test2_solutions.sh        # Execute on GPU
+python experiments/ablation/window/plot_window_real_runtime.py --test test1
+python experiments/ablation/window/plot_window_real_runtime.py --test test2
 
 # 5. Visualization
 python scripts/visualize_plan_dag.py --profile <profile.json> --plan <plan.json> --output <output_dir>

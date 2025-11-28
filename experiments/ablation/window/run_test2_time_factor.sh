@@ -19,8 +19,8 @@ EXP_DIR="results/ablation/exp3/test2_time_factor"
 mkdir -p "$EXP_DIR/logs"
 mkdir -p "$EXP_DIR/plans"
 
-# Output CSV
-OUTPUT_CSV="$EXP_DIR/window_time_factor_results.csv"
+# Output CSV (middle results - optimizer only, no GPU execution)
+OUTPUT_CSV="$EXP_DIR/window_time_factor_middle_results.csv"
 
 # Time factors to test
 TIME_FACTORS=(1 5 10 20 30 40 50)
