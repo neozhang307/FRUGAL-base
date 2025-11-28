@@ -208,7 +208,7 @@ class BeamWidthAnalyzer:
 def main():
     parser = argparse.ArgumentParser(description="Analyze beam width ablation study")
     parser.add_argument('--csv', type=str,
-                       default='results/ablation/exp2/beam_width_results.csv',
+                       default='results/ablation/exp2/beam_middle_results.csv',
                        help='Path to results CSV')
     parser.add_argument('--output-dir', type=str,
                        default='results/ablation/exp2/plots',

@@ -39,8 +39,8 @@ for BEAM_WIDTH in "${BEAM_WIDTHS[@]}"; do
 
     echo "=== Beam Width: $BEAM_WIDTH ===" | tee -a "$OUTPUT_LOG"
 
-    # Extract MIP predicted runtime from beam_width_results.csv
-    CSV_FILE="$EXP_DIR/beam_width_results.csv"
+    # Extract MIP predicted runtime from beam_middle_results.csv
+    CSV_FILE="$EXP_DIR/beam_middle_results.csv"
     if [ -f "$CSV_FILE" ]; then
         PREDICTED=$(awk -F',' -v bw="$BEAM_WIDTH" '$1 == bw {print $5}' "$CSV_FILE")
     else

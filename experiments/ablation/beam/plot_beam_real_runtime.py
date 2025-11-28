@@ -15,7 +15,7 @@ from pathlib import Path
 PROJECT_ROOT = Path("/home/users/lingqi.zhang/workspace_x64/FRUGAL/BASE/optimize-cuda-memory-usage-v1")
 EXP_DIR = PROJECT_ROOT / "results/ablation/exp2"
 LOG_FILE = EXP_DIR / "beam_execution_results.log"
-OUTPUT_CSV = EXP_DIR / "beam_execution_results.csv"
+OUTPUT_CSV = EXP_DIR / "beam_results.csv"
 PLOT_DIR = EXP_DIR / "plots"
 
 # Create output directory
@@ -50,10 +50,10 @@ def parse_execution_log(log_file):
     return pd.DataFrame(results)
 
 def load_predicted_times():
-    """Load predicted runtimes from beam_width_results.csv."""
-    beam_results_csv = EXP_DIR / "beam_width_results.csv"
+    """Load predicted runtimes and beam search time from beam_middle_results.csv."""
+    beam_results_csv = EXP_DIR / "beam_middle_results.csv"
     df = pd.read_csv(beam_results_csv)
-    return df[['beam_width', 'predicted_runtime_s']].copy()
+    return df[['beam_width', 'predicted_runtime_s', 'solve_time_ms', 'score_gb']].copy()
 
 def plot_mip_prediction_by_beam(df, output_dir):
     """Plot MIP predicted vs actual runtime, colored by beam width."""
@@ -199,16 +199,17 @@ def main():
 
     print(f"✅ Found {len(df_exec)} beam width execution results")
 
-    # Load predicted times from beam_width_results.csv
-    print(f"\n📖 Loading predicted times from beam_width_results.csv")
+    # Load predicted times from beam_middle_results.csv
+    print(f"\n📖 Loading predicted times from beam_middle_results.csv")
     df_pred = load_predicted_times()
 
     # Merge execution results with predictions
     df = pd.merge(df_exec, df_pred, on='beam_width', how='left')
     df['predicted_time_ms'] = df['predicted_runtime_s'] * 1000  # Convert to ms
-    df = df[['beam_width', 'predicted_time_ms', 'actual_time_ms']]  # Reorder columns
+    df['beam_search_time_ms'] = df['solve_time_ms']  # Rename for clarity
+    df = df[['beam_width', 'score_gb', 'beam_search_time_ms', 'predicted_time_ms', 'actual_time_ms']]  # Reorder columns
 
-    print(f"✅ Merged with predicted runtimes")
+    print(f"✅ Merged with predicted runtimes and beam search times")
 
     # Save to CSV
     df.to_csv(OUTPUT_CSV, index=False)

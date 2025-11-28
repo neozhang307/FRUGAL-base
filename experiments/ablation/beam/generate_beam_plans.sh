@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 PROFILE="results/ablation/exp1/profile_gapoverlap_enabled.json"
 CONFIG="experiments/ablation/beam/config.json"
 EXP_DIR="results/ablation/exp2"
-OUTPUT_CSV="$EXP_DIR/beam_width_results.csv"
+OUTPUT_CSV="$EXP_DIR/beam_middle_results.csv"
 
 # Create directories
 mkdir -p "$EXP_DIR/beam_analysis"
