@@ -177,20 +177,20 @@ cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/ex
 
 | File | Purpose |
 |------|---------|
-| `scripts/visualize_plan_dag.py` | Visualize execution plan DAG with tasks, prefetch/offload, control nodes |
-| `scripts/visualize_dag.py` | Visualize task dependency graph with execution order |
+| `scripts/visualize.py` | Unified visualization tool (generates both graphs) |
 
 ### Features
 
-**visualize_plan_dag.py**:
-- A4 landscape layout with 3-row format
-- Task nodes (blue), prefetch (green), offload (red), control (gray)
-- Array sizes displayed in GB
-
-**visualize_dag.py**:
+**Task Dependency Graph** (`task_dependency_graph.pdf`):
 - Task dependency DAG with execution order overlay
 - Color gradient from red (early) to blue (late) based on execution order
 - Execution order computed from topological sort of plan DAG
+
+**Execution Plan DAG** (`plan_dag_graph.pdf`):
+- A4 landscape layout with 3-row format
+- Task nodes (blue), prefetch (green), offload (red), control (gray)
+- Overlapping vs non-overlapping migrations distinguished by color
+- Array sizes displayed in GB
 
 ### Generating Input Files (profile.json and plan.json)
 
@@ -250,25 +250,30 @@ The visualization scripts require two JSON files:
 ### Usage Examples
 
 ```bash
-# Visualize execution plan DAG
-python scripts/visualize_plan_dag.py \
-  --profile results/ablation/exp1/profile_N102400_T4.json \
+# Generate both visualizations
+python scripts/visualize.py \
+  --profile results/ablation/exp1/profile_gapoverlap_enabled.json \
   --plan results/ablation/exp3/test1_abstract_window/plans/plan_dist10.json \
   --output results/visualization/
 
-# Visualize task dependency graph with execution order
-python scripts/visualize_dag.py \
-  --profile results/ablation/exp1/profile_N102400_T4.json \
-  --plan results/ablation/exp3/test1_abstract_window/plans/plan_dist10.json \
-  --output results/visualization/
+# Generate only task dependency graph (no plan needed)
+python scripts/visualize.py \
+  --profile results/ablation/exp1/profile_gapoverlap_enabled.json \
+  --only-dependency
+
+# Generate only execution plan DAG
+python scripts/visualize.py \
+  --profile results/ablation/exp1/profile_gapoverlap_enabled.json \
+  --plan results/ablation/exp3/test2_time_factor/plans/plan_factor50.json \
+  --only-plan
 ```
 
 ### Output Files
 
-| Script | Output Files |
-|--------|--------------|
-| `visualize_plan_dag.py` | `plan_dag_graph.pdf`, `plan_dag_graph.png` |
-| `visualize_dag.py` | `task_dependency_graph.pdf`, `task_dependency_graph.png` |
+| Output | Description |
+|--------|-------------|
+| `task_dependency_graph.pdf/png` | Task dependency DAG with execution order |
+| `plan_dag_graph.pdf/png` | Full execution plan with memory operations |
 
 ---
 
@@ -307,8 +312,7 @@ experiments/performance_validation/
 └── generate_paper_plots.py      # Paper plots
 
 scripts/
-├── visualize_plan_dag.py        # Execution plan DAG visualization
-└── visualize_dag.py             # Task dependency and data flow visualization
+└── visualize.py                 # Unified visualization (task DAG + plan DAG)
 ```
 
 ---
@@ -354,5 +358,5 @@ python experiments/ablation/window/plot_window_real_runtime.py --test test1
 python experiments/ablation/window/plot_window_real_runtime.py --test test2
 
 # 5. Visualization
-python scripts/visualize_plan_dag.py --profile <profile.json> --plan <plan.json> --output <output_dir>
+python scripts/visualize.py --profile <profile.json> --plan <plan.json> --output <output_dir>
 ```
