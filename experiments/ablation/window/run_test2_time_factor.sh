@@ -19,6 +19,9 @@ EXP_DIR="results/ablation/exp3/test2_time_factor"
 mkdir -p "$EXP_DIR/logs"
 mkdir -p "$EXP_DIR/plans"
 
+# Output CSV
+OUTPUT_CSV="$EXP_DIR/window_time_factor_results.csv"
+
 # Time factors to test
 TIME_FACTORS=(1 5 10 20 30 40 50)
 
@@ -34,6 +37,9 @@ echo "Time factors: ${TIME_FACTORS[@]}"
 echo "Distance limits (fixed): $DIST_LIMIT"
 echo "Output: $EXP_DIR"
 echo ""
+
+# Create CSV header
+echo "time_factor,mip_solve_time_s,predicted_runtime_s,peak_memory_mib,status" > "$OUTPUT_CSV"
 
 # Test each time factor
 for FACTOR in "${TIME_FACTORS[@]}"; do
@@ -72,15 +78,18 @@ for FACTOR in "${TIME_FACTORS[@]}"; do
         STATUS="UNKNOWN"
     fi
 
-    MIP_TIME=$(grep "Time for solving the MIP problem" "$LOG_FILE" | awk '{print $8}' || echo "N/A")
-    PREDICTED=$(grep "Total running time (s):" "$LOG_FILE" | head -1 | awk '{print $5}' || echo "N/A")
-    PEAK_MEM=$(grep "Optimal peak memory usage (MiB):" "$LOG_FILE" | awk '{print $6}' || echo "N/A")
+    MIP_TIME=$(grep "Time for solving the MIP problem" "$LOG_FILE" | awk '{print $NF}' || echo "N/A")
+    PREDICTED=$(grep "Total running time (s):" "$LOG_FILE" | head -1 | awk '{print $NF}' || echo "N/A")
+    PEAK_MEM=$(grep "Optimal peak memory usage (MiB):" "$LOG_FILE" | awk '{print $NF}' || echo "N/A")
 
     echo "  Time factor: $FACTOR"
     echo "  MIP solve time: ${MIP_TIME}s"
     echo "  Predicted runtime: ${PREDICTED}s"
     echo "  Peak memory: ${PEAK_MEM} MiB"
     echo "  Status: $STATUS"
+
+    # Append to CSV
+    echo "$FACTOR,$MIP_TIME,$PREDICTED,$PEAK_MEM,$STATUS" >> "$OUTPUT_CSV"
 
     # Clean up temp config
     rm "$CONFIG_TEMP"
@@ -89,10 +98,8 @@ done
 echo ""
 echo "=========================================="
 echo "✅ Test 2 complete"
-echo "Results saved to: $EXP_DIR"
+echo "Results saved to: $OUTPUT_CSV"
 echo "=========================================="
 echo ""
-echo "Next steps:"
-echo "  1. Parse results: experiments/ablation/parse_window_results.sh test2"
-echo "  2. Run on GPU: experiments/ablation/run_window_solutions.sh test2"
-echo "  3. Analyze: python experiments/ablation/analyze_task_window.py"
+echo "Summary:"
+column -t -s',' "$OUTPUT_CSV"
