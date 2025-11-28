@@ -14,6 +14,9 @@ EXP_DIR="results/ablation/exp2"
 PLAN_DIR="$EXP_DIR/beam_analysis"
 OUTPUT_LOG="$EXP_DIR/beam_execution_results.log"
 
+# Create directories
+mkdir -p "$EXP_DIR"
+
 # Beam widths to test
 BEAM_WIDTHS=(1 10 20 30 40 50 60 70 80 90 100)
 
@@ -36,8 +39,13 @@ for BEAM_WIDTH in "${BEAM_WIDTHS[@]}"; do
 
     echo "=== Beam Width: $BEAM_WIDTH ===" | tee -a "$OUTPUT_LOG"
 
-    # Extract MIP predicted runtime from plan
-    PREDICTED=$(jq -r '.metadata.predictedRuntime // "N/A"' "$PLAN_FILE")
+    # Extract MIP predicted runtime from beam_width_results.csv
+    CSV_FILE="$EXP_DIR/beam_width_results.csv"
+    if [ -f "$CSV_FILE" ]; then
+        PREDICTED=$(awk -F',' -v bw="$BEAM_WIDTH" '$1 == bw {print $5}' "$CSV_FILE")
+    else
+        PREDICTED="N/A"
+    fi
     echo "MIP predicted runtime: ${PREDICTED}s" | tee -a "$OUTPUT_LOG"
 
     echo "Executing solution..." | tee -a "$OUTPUT_LOG"

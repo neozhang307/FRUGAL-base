@@ -9,9 +9,13 @@ cd "$PROJECT_ROOT"
 
 # Configuration
 PROFILE="results/ablation/exp1/profile_gapoverlap_enabled.json"
-CONFIG="config.json"
+CONFIG="experiments/ablation/beam/config.json"
 EXP_DIR="results/ablation/exp2"
 OUTPUT_CSV="$EXP_DIR/beam_width_results.csv"
+
+# Create directories
+mkdir -p "$EXP_DIR/beam_analysis"
+mkdir -p "$EXP_DIR/logs"
 
 # Beam widths to test
 BEAM_WIDTHS=(1 10 20 30 40 50 60 70 80 90 100)
@@ -50,11 +54,11 @@ for BEAM_WIDTH in "${BEAM_WIDTHS[@]}"; do
         > "$LOG_FILE" 2>&1
 
     # Extract metrics from log
-    SCORE=$(grep "Solution found with total overlap:" "$LOG_FILE" | awk '{print $7}')
-    SOLVE_TIME=$(grep "Solver execution completed in" "$LOG_FILE" | awk '{print $5}')
-    PREDICTED_TIME=$(grep "Total running time (s):" "$LOG_FILE" | head -1 | awk '{print $5}')
-    PEAK_MEM=$(grep "Optimal peak memory usage (MiB):" "$LOG_FILE" | awk '{print $6}')
-    MIP_TIME=$(grep "Time for solving the MIP problem" "$LOG_FILE" | awk '{print $8}')
+    SCORE=$(grep "Solution found with total overlap:" "$LOG_FILE" | awk '{print $(NF-1)}')
+    SOLVE_TIME=$(grep "Solver execution completed in" "$LOG_FILE" | grep -oP '[\d.]+(?= seconds)')
+    PREDICTED_TIME=$(grep "Total running time (s):" "$LOG_FILE" | head -1 | awk '{print $NF}')
+    PEAK_MEM=$(grep "Optimal peak memory usage (MiB):" "$LOG_FILE" | awk '{print $NF}')
+    MIP_TIME=$(grep "Time for solving the MIP problem" "$LOG_FILE" | awk '{print $NF}')
 
     # Check MIP status
     if grep -q "OPTIMAL" "$LOG_FILE"; then

@@ -106,26 +106,29 @@ cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/ex
 
 **Goal**: Analyze how beam width affects solution quality and solve time.
 
+**Location**: `experiments/ablation/beam/`
+
 **Results Location**: `results/ablation/exp2/`
 
-### Scripts
+### Scripts (Run Order)
 
-| File | Purpose |
-|------|---------|
-| `experiments/ablation/beam_width_ablation.sh` | Run beam width experiments (width 1-100) |
-| `experiments/ablation/run_beam_solutions.sh` | Execute beam solutions on GPU |
+| Step | File | Purpose |
+|------|------|---------|
+| 1 | `experiments/ablation/beam/generate_beam_plans.sh` | Generate plans for different beam widths (1-100) |
+| 2 | `experiments/ablation/beam/run_beam_solutions.sh` | Execute beam solutions on GPU |
 
 ### Analysis Scripts
 
-| File | Purpose |
-|------|---------|
-| `experiments/ablation/analyze_beam_width.py` | Analyze beam width vs score/time tradeoff |
-| `experiments/ablation/parse_beam_execution.py` | Parse beam execution results |
+| File | Purpose | Output Directory |
+|------|---------|------------------|
+| `experiments/ablation/beam/plot_beam_predict_runtime.py` | Plot based on MIP predicted runtime (no GPU required) | `plots/` |
+| `experiments/ablation/beam/plot_beam_real_runtime.py` | Plot based on real GPU execution runtime | `plots/` |
 
 ### Key Metrics
 - Beam width vs task scheduling score
 - Beam width vs first-step solve time
 - Score convergence point
+- MIP prediction accuracy across beam widths
 
 ---
 
@@ -265,6 +268,7 @@ python scripts/visualize_dag.py \
 ```
 experiments/ablation/
 ├── topk/                            # Exp1: Top-K Task Ordering Study
+│   ├── config.json                  # Configuration for topk experiments
 │   ├── generate_profile.sh          # Generate profile file (prerequisite)
 │   ├── generate_topk100.sh          # Generate Top-100 orderings
 │   ├── generate_topk100_plans.sh    # Generate plans
@@ -272,10 +276,12 @@ experiments/ablation/
 │   ├── analyze_topk100.py           # Analysis (generates CSV)
 │   ├── plot_topk100_predict_runtime.py  # Plots based on MIP prediction -> plots/prediction/
 │   └── plot_topk100_real_runtime.py     # Plots based on real GPU runtime -> plots/real/
-├── beam_width_ablation.sh           # Exp2: Beam width runner
-├── run_beam_solutions.sh            # Exp2: Run solutions
-├── analyze_beam_width.py            # Exp2: Analysis
-├── parse_beam_execution.py          # Exp2: Parse results
+├── beam/                            # Exp2: Beam Width Analysis
+│   ├── config.json                  # Configuration for beam experiments
+│   ├── generate_beam_plans.sh       # Generate plans for different beam widths
+│   ├── run_beam_solutions.sh        # Run solutions on GPU
+│   ├── plot_beam_predict_runtime.py # Plots based on MIP prediction
+│   └── plot_beam_real_runtime.py    # Plots based on real GPU runtime
 ├── run_test1_abstract_window.sh     # Exp3: Window distance test
 └── run_test2_time_factor.sh         # Exp3: Time factor test
 
@@ -318,10 +324,10 @@ python experiments/ablation/topk/plot_topk100_predict_runtime.py  # Plots based 
 python experiments/ablation/topk/plot_topk100_real_runtime.py     # Plots based on real GPU runtime
 
 # 3. Beam Width Study (Exp2)
-./experiments/ablation/beam_width_ablation.sh
-./experiments/ablation/run_beam_solutions.sh
-python experiments/ablation/analyze_beam_width.py
-python experiments/ablation/parse_beam_execution.py
+./experiments/ablation/beam/generate_beam_plans.sh
+./experiments/ablation/beam/run_beam_solutions.sh
+python experiments/ablation/beam/plot_beam_predict_runtime.py  # Plots based on MIP prediction
+python experiments/ablation/beam/plot_beam_real_runtime.py     # Plots based on real GPU runtime
 
 # 4. Window Size Study (Exp3)
 ./experiments/ablation/run_test1_abstract_window.sh
