@@ -1,0 +1,66 @@
+{
+  "execution": {
+    "enableDebugOutput": false,
+    "enableVerboseOutput": false,
+    "mainDeviceId": 0,
+    "measurePeakMemoryUsage": true,
+    "storageDeviceId": 1,
+    "useNvlink": false
+  },
+  "generic": {
+    "availableMemoryForUMInMiB": 40960,
+    "optimize": true,
+    "repeat": 1,
+    "useUM": false,
+    "verify": true
+  },
+  "lu": {
+    "mode": 0,
+    "n": 1024,
+    "t": 8
+  },
+  "lulesh": {
+    "constrainIterationCount": false,
+    "iterationBatchSize": 1,
+    "s": 45,
+    "targetIterationCount": 3000
+  },
+  "optimization": {
+    "acceptableRunningTimeFactor": 2.0,
+    "beamWidth": 100,
+    "byPassingFirstStep": false,
+    "disableLookahead": false,
+    "disableLookback": false,
+    "enableEarlyTermination": true,
+    "enableGapOverlap": true,
+    "firstStepSolverType": "BEAM_SEARCH",
+    "gapOverlapDecayFactor": 0.5,
+    "greedySchedulerMode": "MIN_MEMORY",
+    "gurobiEnableHeuristics": false,
+    "gurobiMipGap": 0.1,
+    "gurobiThreads": 0,
+    "gurobiTimeLimitSeconds": 60,
+    "loadExistingPlan": false,
+    "maxPeakMemoryUsageInMiB": 15000.0,
+    "maxSolverIterations": 1000000,
+    "maxTaskGroupAmount": 500,
+    "mergeConcurrentCudaGraphNodes": false,
+    "minManagedArraySize": 0,
+    "offloadLookaheadComputeTimeFactor": 50.0,
+    "offloadLookaheadDistanceLimit": 30,
+    "planPath": "optimizationPlan.json",
+    "prefetchLookbackDistanceLimit": 30,
+    "prefetchLookbackTimeBudgetFactor": 50.0,
+    "prefetchingBandwidthInGB": 380.0,
+    "secondStepSolverType": "MIP",
+    "solver": "GUROBI_MIXED_INTEGER_PROGRAMMING",
+    "weightOfNumberOfMigrations": 0.0,
+    "weightOfPeakMemoryUsage": 0.0,
+    "weightOfTotalRunningTime": 1.0
+  },
+  "tiledCholesky": {
+    "mode": 0,
+    "n": 102400,
+    "t": 4
+  }
+}

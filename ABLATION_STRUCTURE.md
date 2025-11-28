@@ -136,14 +136,16 @@ cp results_pre/ablation/exp1/profile_gapoverlap_enabled.json results/ablation/ex
 
 **Goal**: Understand how prefetch/offload window parameters affect MIP solver performance and solution quality.
 
+**Location**: `experiments/ablation/window/`
+
 **Results Location**: `results/ablation/exp3/`
 
 ### Scripts
 
 | File | Purpose |
 |------|---------|
-| `experiments/ablation/run_test1_abstract_window.sh` | Test distance-based window limits (1, 5, 10, 20, 30) |
-| `experiments/ablation/run_test2_time_factor.sh` | Test time-based factors (1.0 - 50.0) |
+| `experiments/ablation/window/run_test1_abstract_window.sh` | Test distance-based window limits (1, 5, 10, 20, 30) |
+| `experiments/ablation/window/run_test2_time_factor.sh` | Test time-based factors (1.0 - 50.0) |
 
 ### Parameters Tested
 - `prefetchLookbackDistanceLimit` - How many tasks to look back for prefetch
@@ -282,8 +284,10 @@ experiments/ablation/
 │   ├── run_beam_solutions.sh        # Run solutions on GPU
 │   ├── plot_beam_predict_runtime.py # Plots based on MIP prediction
 │   └── plot_beam_real_runtime.py    # Plots based on real GPU runtime
-├── run_test1_abstract_window.sh     # Exp3: Window distance test
-└── run_test2_time_factor.sh         # Exp3: Time factor test
+└── window/                          # Exp3: Window Size Analysis
+    ├── config.json                  # Configuration for window experiments
+    ├── run_test1_abstract_window.sh # Window distance test
+    └── run_test2_time_factor.sh     # Time factor test
 
 experiments/performance_validation/
 ├── run_validation.py            # Saturation validation
@@ -330,8 +334,8 @@ python experiments/ablation/beam/plot_beam_predict_runtime.py  # Plots based on 
 python experiments/ablation/beam/plot_beam_real_runtime.py     # Plots based on real GPU runtime
 
 # 4. Window Size Study (Exp3)
-./experiments/ablation/run_test1_abstract_window.sh
-./experiments/ablation/run_test2_time_factor.sh
+./experiments/ablation/window/run_test1_abstract_window.sh
+./experiments/ablation/window/run_test2_time_factor.sh
 
 # 5. Visualization
 python scripts/visualize_plan_dag.py --profile <profile.json> --plan <plan.json> --output <output_dir>

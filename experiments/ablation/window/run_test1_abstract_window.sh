@@ -12,7 +12,7 @@ cd "$PROJECT_ROOT"
 PROFILE="results/ablation/exp1/profile_gapoverlap_enabled.json"
 FIRST_STEP_SOLUTION="results/ablation/exp1/topk_extensive/first_step/topk100.json"
 SOLUTION_ID=84  # 6th fastest solution
-CONFIG="config.json"
+CONFIG="experiments/ablation/window/config.json"
 EXP_DIR="results/ablation/exp3/test1_abstract_window"
 
 # Create directories
