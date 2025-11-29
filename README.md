@@ -249,6 +249,15 @@ For detailed investigation, see: [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP
 
 See [CLAUDE.md](CLAUDE.md) for detailed development guidelines, coding standards, and best practices.
 
+## For AI Agents (Vibe Coding)
+
+If you're an AI agent working on this codebase, read these files in order:
+
+1. **[CLAUDE.md](CLAUDE.md)** - Project guidelines, build commands, coding standards, git rules
+2. **[PROGRAM.md](PROGRAM.md)** - High-level architecture, two-phase optimization design, core components
+3. **[docs/METRICS.md](docs/METRICS.md)** - Understanding performance metrics and measurements
+4. **[docs/secondStepSolver_MIP_Reference.md](docs/secondStepSolver_MIP_Reference.md)** - MIP solver formulation details (if working on optimization)
+
 ## Documentation
 
 ### Main Documentation
