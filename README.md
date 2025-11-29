@@ -230,7 +230,7 @@ Full pipeline testing confirms:
 - ✅ Algorithm correctness verified across all optimization paths
 - ✅ Profile quality (not implementation) determines optimization success
 
-For detailed investigation, see: `PIPELINE_TEST_RESULTS.md`
+For detailed investigation, see: [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP_OVERLAP_CRITICAL_FINDING.md)
 
 ## Known Issues
 
@@ -251,7 +251,22 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidelines, coding standards
 
 ## Documentation
 
+### Main Documentation
+- [PROGRAM.md](PROGRAM.md): High-level program architecture and design
 - [userApplications/CholeskyShowCase.md](userApplications/CholeskyShowCase.md): Comparison of different Cholesky implementations
+
+### Technical Documentation (docs/)
+- [docs/ABLATION_README.md](docs/ABLATION_README.md): Ablation study guide and instructions
+- [docs/ABLATION_STRUCTURE.md](docs/ABLATION_STRUCTURE.md): Ablation experiment structure
+- [docs/METRICS.md](docs/METRICS.md): Performance metrics explanation
+- [docs/VALIDATION_USAGE.md](docs/VALIDATION_USAGE.md): Validation system usage guide
+- [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP_OVERLAP_CRITICAL_FINDING.md): Gap overlap analysis findings
+- [docs/EPSILON_REFINE.md](docs/EPSILON_REFINE.md): Epsilon refinement documentation
+
+### Reference Documentation (docs/)
+- [docs/cuda_graph_notation.md](docs/cuda_graph_notation.md): CUDA graph notation reference
+- [docs/execution_routine.md](docs/execution_routine.md): Execution routine documentation
+- [docs/secondStepSolver_MIP_Reference.md](docs/secondStepSolver_MIP_Reference.md): MIP solver reference
 
 ## Requirements
 

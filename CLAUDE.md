@@ -1,10 +1,11 @@
 # CUDA Memory Optimization Project Guidelines
 
-## Project Status (Updated: November 2024)
+## Project Status (Updated: November 2025)
 - **Branch**: CGO26/master (main development)
 - **Phase 1 (Task Ordering)**: ✅ SOLVED - Beam search with configurable width provides fast solutions
 - **Phase 2 (Migration Scheduling)**: ✅ IMPROVED - MIP solver with variable reduction optimization; Greedy scheduler and warmup MIP alternatives implemented
-- **Current Focus**: Warm start implementation, Top-K solutions, validation experiments
+- **Independent Tasks**: ✅ FIXED - Graph construction now handles tasks with no shared data pointers
+- **Current Focus**: CGO26 paper revision, validation experiments
 
 ## Git Usage Rules (IMPORTANT - ALWAYS FOLLOW)
 - **NEVER use `git add -A` or `git add .`** - Only add specific files that were modified
@@ -40,16 +41,19 @@
 - Document all public APIs with detailed parameter descriptions
 - Use Doxygen-style documentation for classes and methods
 - Explain complex algorithms with comments that describe the purpose
+- Technical docs are in `docs/` folder (ablation, metrics, validation, etc.)
+- See `README.md` for full documentation index
 
 ## Known Issues
 - **Stage Logic Bug**: Different behavior between CGO26/master (working) and CGO26/stage-showcase (buggy) for out-of-core initialization
 - **Minor**: cudaFreeHost error in domain enlargement (doesn't affect functionality)
 
-## Upcoming Features (In Development)
+## Completed Features
 - **Warm Start for Gurobi**: Heuristic initial solution to speed up optimization
 - **Top-K Solutions**: Using Gurobi solution pool to explore alternative schedules
 - **Minimal Memory Calculation**: Theoretical lower bound for memory usage
-- **Batch Testing Infrastructure**: Automated parameter sweeps and evaluation
+- **Ablation Study Infrastructure**: Automated experiments in `experiments/ablation/`
+- **Performance Validation**: Scripts in `experiments/performance_validation/`
 
 ## Configuration Parameters
 - **Solver**: `firstStepSolverType` should be "BEAM_SEARCH" (note: typo "BEAN_SEARCH" in some configs)
