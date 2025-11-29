@@ -261,11 +261,9 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidelines, coding standards
 - [docs/METRICS.md](docs/METRICS.md): Performance metrics explanation
 - [docs/VALIDATION_USAGE.md](docs/VALIDATION_USAGE.md): Validation system usage guide
 - [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP_OVERLAP_CRITICAL_FINDING.md): Gap overlap analysis findings
-- [docs/EPSILON_REFINE.md](docs/EPSILON_REFINE.md): Epsilon refinement documentation
 
 ### Reference Documentation (docs/)
 - [docs/cuda_graph_notation.md](docs/cuda_graph_notation.md): CUDA graph notation reference
-- [docs/execution_routine.md](docs/execution_routine.md): Execution routine documentation
 - [docs/secondStepSolver_MIP_Reference.md](docs/secondStepSolver_MIP_Reference.md): MIP solver reference
 
 ## Requirements
