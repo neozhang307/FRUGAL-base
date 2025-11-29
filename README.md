@@ -258,8 +258,8 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidelines, coding standards
 ### Technical Documentation (docs/)
 - [docs/ABLATION.md](docs/ABLATION.md): Ablation study guide and experiment structure
 - [docs/METRICS.md](docs/METRICS.md): Performance metrics explanation
-- [docs/VALIDATION_USAGE.md](docs/VALIDATION_USAGE.md): Validation system usage guide
 - [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP_OVERLAP_CRITICAL_FINDING.md): Gap overlap analysis findings
+- [experiments/performance_validation/README.md](experiments/performance_validation/README.md): Validation system usage guide
 
 ### Reference Documentation (docs/)
 - [docs/cuda_graph_notation.md](docs/cuda_graph_notation.md): CUDA graph notation reference
