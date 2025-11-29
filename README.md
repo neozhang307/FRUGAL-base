@@ -256,8 +256,7 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidelines, coding standards
 - [userApplications/CholeskyShowCase.md](userApplications/CholeskyShowCase.md): Comparison of different Cholesky implementations
 
 ### Technical Documentation (docs/)
-- [docs/ABLATION_README.md](docs/ABLATION_README.md): Ablation study guide and instructions
-- [docs/ABLATION_STRUCTURE.md](docs/ABLATION_STRUCTURE.md): Ablation experiment structure
+- [docs/ABLATION.md](docs/ABLATION.md): Ablation study guide and experiment structure
 - [docs/METRICS.md](docs/METRICS.md): Performance metrics explanation
 - [docs/VALIDATION_USAGE.md](docs/VALIDATION_USAGE.md): Validation system usage guide
 - [docs/GAP_OVERLAP_CRITICAL_FINDING.md](docs/GAP_OVERLAP_CRITICAL_FINDING.md): Gap overlap analysis findings
