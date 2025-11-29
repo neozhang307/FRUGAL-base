@@ -60,4 +60,20 @@ target_link_libraries(
   OpenMP::OpenMP_CXX
 )
 
+add_executable(streamArithmeticIntensity streamArithmeticIntensity.cu)
+target_link_libraries(
+  streamArithmeticIntensity
+  memopt
+  CUDA::curand
+  fmt::fmt
+)
+
+add_executable(streamMatrixOperations streamMatrixOperations.cu)
+target_link_libraries(
+  streamMatrixOperations
+  memopt
+  CUDA::curand
+  fmt::fmt
+)
+
 #add_subdirectory(lulesh)

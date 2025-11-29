@@ -707,16 +707,23 @@ public:
         
         // Synchronize to ensure all captures are complete
         checkCudaErrors(cudaStreamSynchronize(stream));
-        
+
+        // Ensure graph has single root node for proper DFS traversal during profiling.
+        // Independent tasks (no shared pointers) create multiple root nodes, which breaks
+        // the annotation mapping that assumes single-root DFS traversal.
+        // Note: isAnnotationNode() requires registerAnnotationKernelHandle() to be called first,
+        // which happens in registerDummyKernelHandles() during optimizer initialization.
+        graphConstructor->ensureSingleRoot();
+
         // Get final graph statistics
         size_t numNodes;
         checkCudaErrors(cudaGraphGetNodes(graph, nullptr, &numNodes));
-        
+
         if (debugMode && ConfigurationManager::getConfig().execution.enableVerboseOutput) {
             std::cout << "=== Naive Graph Generation Complete ===" << std::endl;
             std::cout << "Final graph contains " << numNodes << " nodes" << std::endl;
         }
-        
+
         return graph;
     }
 };

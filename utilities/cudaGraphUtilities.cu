@@ -146,4 +146,18 @@ bool compareKernelNodeFunctionHandle(cudaGraphNode_t kernelNode, CUfunction func
   return false;
 }
 
+// Static handle for annotation kernel - set by setAnnotationKernelHandle()
+static CUfunction annotationKernelHandle = nullptr;
+
+void registerAnnotationKernelHandle(CUfunction handle) {
+  annotationKernelHandle = handle;
+}
+
+bool isAnnotationNode(cudaGraphNode_t node) {
+  if (annotationKernelHandle == nullptr) {
+    return false;  // Handle not registered yet
+  }
+  return compareKernelNodeFunctionHandle(node, annotationKernelHandle);
+}
+
 }  // namespace memopt
